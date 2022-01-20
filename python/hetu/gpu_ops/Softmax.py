@@ -4,7 +4,7 @@ from .Node import Op
 from .._base import DNNL_LIB
 from ..cpu_links import softmax as cpu_softmax
 from ..gpu_links import CuDNN_softmax
-from ..gpu_links import CuDNN_softmax_gradient
+from ..gpu_links import CuDNN_softmax_gradient, CuDNN_softmax_gradient_recompute
 
 
 def softmax_func(y):
@@ -21,8 +21,9 @@ def softmax_gradient_func(y, dy):
 
 
 class SoftmaxOp(Op):
-    def __init__(self, node_A, ctx=None):
+    def __init__(self, node_A, recompute = False, ctx=None):
         super().__init__(SoftmaxOp, [node_A], ctx)
+        self.recompute = recompute
 
     def compute(self, input_vals, output_val, stream_handle=None):
         if self.on_cpu:
@@ -36,12 +37,29 @@ class SoftmaxOp(Op):
     def gradient(self, output_grad):
         # Do not directly use SoftmaxOp, use SoftmaxCrossEntropyOp instead.
         # Not allowing taking 2nd derivative of SoftmaxCrossEntropyOp.
-        return [softmax_gradient_op(self, output_grad, ctx=self.raw_ctx)]
+        if self.recompute:
+            return [softmax_gradient_recompute_op(self.inputs[0], output_grad, ctx=self.raw_ctx)]
+        else:
+            return [softmax_gradient_op(self, output_grad, ctx=self.raw_ctx)]
 
     def infer_shape(self, input_shapes):
         assert len(input_shapes) == 1
         return input_shapes[0]
 
+class SoftmaxGradientRecomputeOp(Op):
+    def __init__(self, node_x, grad, ctx=None):
+        super().__init__(SoftmaxGradientRecomputeOp, [node_x, grad], ctx)
+
+    def compute(self, input_vals, output_val, stream_handle=None):
+        CuDNN_softmax_gradient_recompute(
+            input_vals[0], input_vals[1], output_val, stream_handle)
+
+    def gradient(self, output_grad):
+        raise NotImplementedError
+
+    def infer_shape(self, input_shapes):
+        assert len(input_shapes) == 2
+        return input_shapes[0]
 
 class SoftmaxGradientOp(Op):
     def __init__(self, node_y, grad, ctx=None):
@@ -63,7 +81,7 @@ class SoftmaxGradientOp(Op):
         return input_shapes[0]
 
 
-def softmax_op(node, ctx=None):
+def softmax_op(node, recompute = False, ctx=None):
     """ This function computes its softmax along an axis.
 
     Parameters:
@@ -76,8 +94,10 @@ def softmax_op(node, ctx=None):
     A new Node instance created by Op.
 
     """
-    return SoftmaxOp(node, ctx=ctx)
+    return SoftmaxOp(node, recompute, ctx=ctx)
 
+def softmax_gradient_recompute_op(node_in, grad, ctx=None):
+    return SoftmaxGradientRecomputeOp(node_in, grad, ctx=ctx)
 
 def softmax_gradient_op(node_y, grad, ctx=None):
     """ This function computes softmax gradient.

@@ -85,6 +85,18 @@ class Optimizer(object):
         optimizer_node = OptimizerOp(grads, self)
         return optimizer_node
 
+    def minimize_per_grad(self, loss, var_list=None):
+        self.loss = loss
+        if not var_list:
+            var_list = self.get_var_list(loss)
+        self.params = var_list
+        grads, self.backward2forward, self.forward2backward = ht.gradients(
+            loss, self.params, return_all=True)
+        self.optimizer_nodes = []
+        for idx in range(len(grads)):
+            self.optimizer_nodes.append(Optimizer_per_grad_Op([grads[idx]], self, idx))
+        return self.optimizer_nodes
+
     def __deepcopy__(self, memo):
         assert not self.initiated, 'Should not deep copy optimizer if already initiated!'
         new_opt = copy(self)
@@ -96,6 +108,80 @@ class Optimizer(object):
                                          for k, v in self.forward2backward.items()])
         return new_opt
 
+
+class Optimizer_per_grad_Op(Op):
+    def __init__(self, grad, optimizer, idx):
+        super().__init__(Optimizer_per_grad_Op, grad, None)
+        self.name = "Optimizer_%s_%s" % (optimizer.name, grad[0].name)
+        self.optimizer = optimizer
+        self.idx = idx
+
+    def compute(self, input_vals, output_val, stream_handle=None, new_tensors_map=None):
+        assert output_val is None
+        # For PS op, this input_vals is None
+        # PS mode doesn't need local update
+        if new_tensors_map is not None:
+            self.optimizer.update_tensors_version(new_tensors_map)
+        if self.comm_mode != 'PS':
+            self.optimizer.update_coefficients()
+            self.optimizer.update_per_grad(input_vals[0], self.idx, stream_handle)
+
+    def gradient(self, output_grad):
+        raise NotImplementedError
+
+    def infer_shape(self, input_shapes):
+        return None
+
+    def forward_hook(self, config):
+        # disable inplace if not lazy execution
+        # previously we use array reshape lazy callback to do this, which is deprecated (not efficient)
+        for node in self.inputs:
+            node.inplace = False
+
+        # if self.idx == len(self.optimizer.params_ori) - 1 or self.idx == 0:
+        #     self.optimizer.initiate_states(config)
+        if not self.optimizer.initiated:
+            self.optimizer.initiate_states(config)
+        self.on_cpu = self.on_gpu = None
+        self.comm_mode = config.comm_mode
+        # some things todo.
+        if self.comm_mode != 'PS':
+            for i in range(len(self.inputs)):
+                # Though the gradients for transfer ops are well defined,
+                # we called gradients in optimizer op before transfer ops are added.
+                # So here we also add tranfer ops for gradients update.
+                # Could be optimized later.
+                if not isinstance(self.inputs[i], ParameterServerCommunicateOp):
+                    paramctx = self.optimizer.params[i].ctx
+                    self.inputs[i] = super().add_transfer_op(
+                        self.inputs[i], paramctx, config.h2d_ops, config.d2h_ops)
+        #print(self.optimizer.params_ori)
+        param = self.optimizer.params_ori[self.idx]
+        self.idx = self.optimizer.params.index(param)
+
+    def backward_hook(self, config):
+        self.comm_mode = config.comm_mode
+        new_inputs = []
+        for i, node in enumerate(self.inputs):
+            current_strategy = config.node_strategy.get(
+                self.optimizer.params[i], self.comm_mode)
+            cur_node = node
+            if current_strategy == 'AllReduce' or (current_strategy == 'Hybrid' and not isinstance(node, EmbeddingLookUp_Gradient)):
+                cur_node = ht.allreduceCommunicate_op(
+                    node, config.param_allreduce_group.get(self.optimizer.params[i], config.nccl_comm))
+                if config.layer_indices is not None and node in config.layer_indices:
+                    config.layer_indices[cur_node] = config.layer_indices[node] + 1
+            elif current_strategy == 'PS' or (current_strategy == 'Hybrid' and isinstance(node, EmbeddingLookUp_Gradient)):
+                cur_node = ht.parameterServerCommunicate_op(
+                    node, self.optimizer.params[i], self.optimizer.get_config())
+                if config.layer_indices is not None and node in config.layer_indices:
+                    config.layer_indices[cur_node] = config.layer_indices[node] + 1
+            new_inputs.append(cur_node)
+        self.inputs = new_inputs
+
+    def re_minimize(self):
+        new_grads = ht.gradients(self.optimizer.loss, self.optimizer.params)
+        self.inputs = new_grads
 
 class OptimizerOp(Op):
     def __init__(self, grads, optimizer):
@@ -474,6 +560,38 @@ class AdamWOptimizer(Optimizer):
                     update = mc / (np.sqrt(vc) + self.epsilon)
                     self.tensors[i][:] = prev_param - \
                         self.learning_rate * (update + self.weight_decay * self.tensors[i])
+
+    def update_coefficients(self):
+        self.beta1_t *= self.beta1
+        self.beta2_t *= self.beta2
+
+    def update_per_grad(self, grad, i, stream_handle=None):
+        assert self.initiated is True
+        if grad == None:
+            return
+        if self.params[i].on_gpu:
+            assert isinstance(self.tensors[i], ndarray.NDArray)
+            assert isinstance(
+                grad, (ndarray.NDArray, ndarray.IndexedSlices))
+            assert isinstance(self.m[i], ndarray.NDArray)
+            assert isinstance(self.v[i], ndarray.NDArray)
+            gpu_op.adamw_update(self.tensors[i], grad, self.m[i], self.v[i], self.learning_rate, self.beta1,
+                                self.beta2, self.beta1_t, self.beta2_t, self.epsilon, self.weight_decay, stream_handle)
+        else:
+            if isinstance(grad, ndarray.IndexedSlices):
+                raise NotImplementedError
+            else:
+                prev_param = self.tensors[i].asnumpy()
+                grad = grad.asnumpy()
+                self.m[i][:] = self.beta1 * \
+                    self.m[i].asnumpy() + (1 - self.beta1) * grad
+                self.v[i][:] = self.beta2 * self.v[i].asnumpy() + \
+                    (1 - self.beta2) * grad * grad
+                mc = self.m[i].asnumpy() / (1 - self.beta1_t)
+                vc = self.v[i].asnumpy() / (1 - self.beta2_t)
+                update = mc / (np.sqrt(vc) + self.epsilon)
+                self.tensors[i][:] = prev_param - \
+                    self.learning_rate * (update + self.weight_decay * self.tensors[i])
 
 class LambOptimizer(Optimizer):
     def __init__(self, learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-7, weight_decay=0):

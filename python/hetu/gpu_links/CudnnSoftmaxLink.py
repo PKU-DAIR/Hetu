@@ -18,3 +18,10 @@ def CuDNN_softmax_gradient(y_arr, grad_arr, out_arr, stream=None):
     assert isinstance(out_arr, _nd.NDArray)
     _LIB.CuDNN_DLGpuSoftmaxGradient(
         y_arr.handle, grad_arr.handle, out_arr.handle, stream.handle if stream else None)
+
+def CuDNN_softmax_gradient_recompute(x_arr, grad_arr, out_arr, stream=None):
+    assert isinstance(x_arr, _nd.NDArray)
+    assert isinstance(grad_arr, _nd.NDArray)
+    assert isinstance(out_arr, _nd.NDArray)
+    _LIB.CuDNN_DLGpuSoftmaxGradientRecompute(
+        x_arr.handle, grad_arr.handle, out_arr.handle, stream.handle if stream else None)

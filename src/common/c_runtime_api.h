@@ -297,6 +297,22 @@ HETUSYS_EXTERN_C {
     int DLGpuSoftmax(const DLArrayHandle input, DLArrayHandle output,
                      DLStreamHandle stream_handle);
 
+    int DLGpuSoftmaxDropout(const DLArrayHandle input, const float dropout,
+                    DLArrayHandle output, unsigned long long *pseed,
+                    DLStreamHandle stream_handle);
+
+    int CuDNN_DLGpuSoftmaxGradientRecompute(const DLArrayHandle softmax_input,
+                                const DLArrayHandle grad, DLArrayHandle output,
+                                DLStreamHandle stream_handle);
+
+    int DLGpuSoftmaxDropoutGradient(DLArrayHandle grad, DLArrayHandle softmax_input, const float dropout,
+                            DLArrayHandle output, unsigned long long seed,
+                            DLStreamHandle stream_handle);
+
+    int DLGpuDropoutResidual(const DLArrayHandle input, const DLArrayHandle matB, const float dropout,
+                    DLArrayHandle output, unsigned long long *pseed,
+                    DLStreamHandle stream_handle);
+
     /*!
      * \brief Compute softmax_cross_entropy.
      *  np.mean(-np.sum(y_ * np.log(softmax(y)), axis=1), keepdims=True)

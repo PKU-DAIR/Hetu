@@ -26,6 +26,7 @@ from .LeakyReluLink import *
 from .ReshapeLink import *
 from .SoftmaxCrossEntropyLink import *
 from .SoftmaxCrossEntropySparseLink import *
+from .SoftmaxDropoutLink import *
 from .SoftmaxLink import *
 from .MatrixDivideConstLink import *
 from .MatrixDivideLink import *
@@ -48,6 +49,7 @@ from .ReduceMeanLink import *
 from .OptimizerLink import *
 from .IndexedSliceLink import *
 from .DropoutLink import *
+from .DropoutResidualLink import *
 from .Dropout2dLink import *
 from .CudnnSoftmaxLink import *
 from .CudnnSoftmaxCrossEntropyLink import *
@@ -135,12 +137,16 @@ __all__ = [
     'reduce_mean',
     'dropout',
     'dropout_gradient',
+    'dropoutresidual',
     'dropout2d',
     'dropout2d_gradient',
+    'softmaxdropout',
+    'softmaxdropout_gradient',
     'CuDNN_softmax',
     'CuDNN_softmax_gradient',
     'CuDNN_softmax_cross_entropy',
     'CuDNN_softmax_cross_entropy_gradient',
+    'CuDNN_softmax_gradient_recompute',
     'one_hot',
     'matmul_with_bias',
     'CuDNN_conv2d_with_bias',

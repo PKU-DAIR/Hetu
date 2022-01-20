@@ -14,7 +14,7 @@ from .Sum import sum_op
 from .DataTransfer import DataH2DOp, DataD2HOp, DataD2HSparseOp
 from ..communicator.mpi_nccl_comm import ncclDataType_t, GroupStart, GroupEnd
 from .EmbeddingLookUp import EmbeddingLookUp, EmbeddingLookUp_Gradient
-from ..optimizer import OptimizerOp
+from ..optimizer import OptimizerOp, Optimizer_per_grad_Op
 from . import OnesLike
 from ..stream import create_stream_handle, Event
 from ..context import get_current_context, get_launch_config_by_traverse_nodes, assign_context_by_traverse_nodes, DeviceGroup
@@ -531,7 +531,7 @@ class SubExecutor(object):
         self.name = name
         self.eval_node_list = eval_node_list
         self.config = config
-        inference = not any([isinstance(node, OptimizerOp)
+        inference = not any([isinstance(node, OptimizerOp) or isinstance(node, Optimizer_per_grad_Op)
                              for node in eval_node_list])
         self.inference = inference
 
@@ -617,6 +617,9 @@ class SubExecutor(object):
             self.batch_num) == 0 else self.batch_num.pop()
         self.init_need_allocation = (self.need_feed_nodes == []) and (
             self.dataloader_nodes == [])
+
+        self.tensor_memory_allocated = 0
+        self.change_topo = False
 
     def profile(self, feed_shapes, log_file, profiler='cpu'):
         # !!! we should profile before using distributed settings
@@ -781,6 +784,7 @@ class SubExecutor(object):
             make_group()
 
     def from_memory_pool(self, key, node):
+        return False
         if key in self.memory_pool:
             self.node_to_arr_map[node] = self.memory_pool[key].pop()
             if not len(self.memory_pool[key]):
@@ -793,10 +797,25 @@ class SubExecutor(object):
         if isinstance(self.node_to_arr_map[node], ndarray.NDArray) and self.node_to_arr_map[node].no_free:
             self.node_to_arr_map[node] = None
             return
+        if isinstance(self.node_to_arr_map[node], ndarray.NDArray):
+            self.tensor_memory_allocated -= self.shape2size(key)
+        del self.node_to_arr_map[node]
+        return 
         if key not in self.memory_pool:
             self.memory_pool[key] = []
         self.memory_pool[key].append(self.node_to_arr_map[node])
         self.node_to_arr_map[node] = None
+
+    def shape2size(self, shape):
+        size = 4.0
+        for s in shape:
+            size *= s
+        return size
+
+    def memory_profile(self):
+        size_MB = self.tensor_memory_allocated / 2**20
+        print("Memory allocated: %.3fMB"%size_MB)
+        return size_MB
 
     def node_memory_plan(self, node):
         """Allocates ndarray.NDArray for the specified node, used when dynamic_memory == True
@@ -839,6 +858,7 @@ class SubExecutor(object):
                     if not self.from_memory_pool(shape, node):
                         self.node_to_arr_map[node] = ndarray.empty(
                             shape, ctx=node.ctx)
+                        self.tensor_memory_allocated += self.shape2size(shape)
             else:
                 if not self.from_memory_pool(shape, node):
                     self.node_to_arr_map[node] = ndarray.empty(
@@ -1030,7 +1050,33 @@ class SubExecutor(object):
             for n in grouping_nodes:
                 end_node(n)
             grouping_nodes.clear()
+
+        if not self.change_topo:
+            self.change_topo = True
+            index = -1
+            out_idx = 999999
+            for idx, node in enumerate(self.computing_nodes):
+                shape = self.node_to_shape_map[node]
+                if shape is not None:
+                    size = self.shape2size(shape)/2**20
+                    # print(node.name, size)
+                    if size>200:
+                        if len(node.inputs)>0 and len(node.inputs[0].inputs)>0 and "SoftmaxCrossEntropySparseGradientOp" in node.inputs[0].inputs[0].name:
+                            index = idx
+                            for i, n in enumerate(self.computing_nodes):
+                                if node in n.inputs:
+                                    out_idx=min(out_idx, i)
+                                    #print(n.name, n.inputs, node)
+                            #print(node.name, idx, out_idx)
+            if index>0:
+                n = self.computing_nodes.pop(index)
+                self.computing_nodes.insert(out_idx-1, n)
+
+
+        
         for node in self.computing_nodes:
+            # print(node.name, [n.name for n in node.inputs], [self.node_ref_cnt[n] for n in node.inputs], end=" ")
+            
             if self.dynamic_memory:
                 # allocate memory for the node when dynamic_memory == True
                 if self.node_ref_cnt[node] is None or need_reallocation:
@@ -1039,6 +1085,8 @@ class SubExecutor(object):
                     if n not in self.node_to_arr_map:
                         self.node_memory_plan(n)
 
+            # self.memory_profile()
+
             if node.on_cpu and isinstance(self.node_to_arr_map[node], ndarray.NDArray):
                 if DNNL_LIB['cpu_ArraySet'] and not isinstance(node, DataD2HOp):
                     cpu_array_set(self.node_to_arr_map[node], 0.0)
@@ -1046,7 +1094,6 @@ class SubExecutor(object):
                     # here we suppose not using DNNL_LIB
                     # self.node_to_arr_map[node][:] = np.zeros(self.node_to_shape_map[node]).astype(np.float32)
                     pass
-
             if isinstance(node, (PipelineSendOp, PipelineReceiveOp)):
                 for n in node.inputs:
                     if n.event:

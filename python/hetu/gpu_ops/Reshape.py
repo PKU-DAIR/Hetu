@@ -49,6 +49,7 @@ class Array_ReshapeOp(Op):
                 array_reshape(input_vals[0], output_val, stream_handle)
 
     def gradient(self, output_grad):
+        #return [array_reshape_gradient_op(self.inputs[0], output_grad, ctx=self.raw_ctx)]
         return [array_reshape_gradient_op(self, output_grad, ctx=self.raw_ctx)]
 
     def infer_shape(self, input_shapes):
@@ -58,6 +59,7 @@ class Array_ReshapeOp(Op):
         input_shape = input_shapes[0]
         for i in range(len(input_shape)):
             input_size *= input_shape[i]
+
         self.input_shape = input_shape
 
         # check if there exists -1 in output_shape
@@ -72,6 +74,8 @@ class Array_ReshapeOp(Op):
                 assert(cnt != 2)
             output_size *= output_shape[i]
         if(idx == -1):
+            if input_size != output_size:
+                print(input_size, output_size)
             assert input_size == output_size
         else:
             output_size = output_size * (-1)
@@ -109,7 +113,6 @@ class Array_ReshapeOp(Op):
         # if status.valid(deduce_order):
         #     status.check_state(1, deduce_order)
         input_statuses[0].copy_from(status, deduce_order)
-
 
 class Array_Reshape_GradientOp(Op):
     def __init__(self, node_in, node_out, ctx=None):

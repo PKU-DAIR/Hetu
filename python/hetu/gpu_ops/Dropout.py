@@ -68,7 +68,7 @@ class Dropout_Gradient_recomputeOp(Op):
                     input_vals[0].asnumpy(), self.keep_prob, self.forward_node.mask)
         else:
             dropout_gradient_recompute(input_vals[0], 1 - self.keep_prob,
-                             output_val, self.seed, stream_handle)
+                            output_val, self.seed, stream_handle)
 
     def gradient(self, output_grad):
         raise NotImplementedError

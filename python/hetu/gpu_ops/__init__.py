@@ -16,6 +16,7 @@ from .Conv2dReduceSum import conv2d_reducesum_op
 from .CuSparse import csrmv_op, csrmm_op
 from .Division import div_op, div_const_op
 from .Dropout import dropout_op, dropout_gradient_op
+from .DropoutResidual import dropoutresidual_op, dropoutresidual_gradient_op
 from .Dropout2d import dropout2d_op, dropout2d_gradient_op
 from .MatrixMult import matmul_op
 from .MaxPool import max_pool2d_op, max_pool2d_gradient_op
@@ -36,6 +37,7 @@ from .SoftmaxCrossEntropy import softmaxcrossentropy_op
 from .SoftmaxCrossEntropySparse import softmaxcrossentropy_sparse_op
 from .CrossEntropy import crossentropy_op
 from .CrossEntropySparse import crossentropy_sparse_op
+from .SoftmaxDropout import softmaxdropout_op, softmaxdropout_gradient_op
 from .Split import split_op, split_gradient_op
 from .Sqrt import sqrt_op, rsqrt_op
 from .Sum import sum_op
@@ -53,6 +55,7 @@ from .ReduceSum import reduce_sum_op
 from .ReduceMean import reduce_mean_op
 from .OneHot import one_hot_op
 from .Linear import linear_op
+from .LinearAct import linearAct_op
 from .Conv2dAddBias import conv2d_add_bias_op
 from .AllReduceCommunicate import allreduceCommunicate_op, groupallreduceCommunicate_op
 from .ParameterServerCommunicate import parameterServerCommunicate_op, parameterServerSparsePull_op
@@ -104,6 +107,8 @@ __all__ = [
     'dropout_gradient_op',
     'dropout2d_op',
     'dropout2d_gradient_op',
+    'dropoutresidual_op',
+    'dropoutresidual_gradient_op',
     'matmul_op',
     'max_pool2d_op',
     'max_pool2d_gradient_op',
@@ -171,4 +176,7 @@ __all__ = [
     'pipeline_send_op',
     'pipeline_receive_op',
     'dispatch',
+    'softmaxdropout_op',
+    'softmaxdropout_gradient_op',
+    'linearAct_op',
 ]

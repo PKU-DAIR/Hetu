@@ -1,0 +1,1 @@
+heturun -c config2.yml python train_hetu_bert_ccfbdci_2128.py

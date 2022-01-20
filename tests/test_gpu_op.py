@@ -440,6 +440,46 @@ def test_softmax_cross_entropy_gradient():
     # print(np_grad)
     np.testing.assert_allclose(tc_y.grad, out, rtol=1e-4, atol=1e-8)
 
+def test_softmax_gradient():
+    def softmax_func(y):
+        """Numerically stable softmax."""
+        b = y - np.max(y, axis=1, keepdims=True)
+        expb = np.exp(b)
+        softmax = expb / np.sum(expb, axis=1, keepdims=True)
+        return softmax
+    ctx = ht.gpu(0)
+    # shape = (400, 1000)
+    shape = (4,5)
+    y = np.random.uniform(-5, 5, shape).astype(np.float32)
+    grad = np.random.uniform(-5, 5, shape).astype(np.float32)
+    arr_y = ht.array(y, ctx=ctx)
+    arr_grad = ht.array(grad, ctx=ctx)
+    arr_out = ht.empty(shape, ctx=ctx)
+    arr_grad_out = ht.empty(shape, ctx=ctx)
+
+    np_softmax = softmax_func(y)
+
+    gpu_op.CuDNN_softmax(arr_y, arr_out)
+    print(np_softmax)
+    print(arr_out.asnumpy())
+
+    gpu_op.CuDNN_softmax_gradient_recompute(arr_y, arr_grad, arr_grad_out)
+    print(arr_grad_out.asnumpy())
+
+    gpu_op.CuDNN_softmax_gradient(arr_out, arr_grad, arr_grad_out)
+    print(arr_grad_out.asnumpy())
+
+
+    # out = arr_out.asnumpy()
+    # # numpy calculation
+    # np_grad = (softmax_func(y) + -1 * y_) * np.expand_dims(grad, -1)
+    # np.testing.assert_allclose(np_grad, out, rtol=1e-4, atol=1e-8)
+
+    # # test cudnn
+    # gpu_op.CuDNN_softmax_cross_entropy_gradient(
+    #     arr_grad, arr_y, arr_y_, arr_out)
+    # out = arr_out.asnumpy()
+    # np.testing.assert_allclose(np_grad, out, rtol=1e-4, atol=1e-8)
 
 def test_conv2d():
     ctx = ht.gpu(0)
@@ -1354,6 +1394,46 @@ def test_dropout():
     print(y2_out)
 
     np.testing.assert_allclose(y_out, y2_out, rtol=1e-6)
+def test_softmaxdropout():
+    def softmax_func(y):
+        """Numerically stable softmax."""
+        b = y - np.max(y, axis=-1, keepdims=True)
+        expb = np.exp(b)
+        softmax = expb / np.sum(expb, axis=-1, keepdims=True)
+        return softmax
+    def softmax_gradient_func(y, dy):
+        dx = y * (dy - (dy * y).sum(axis=-1, keepdims=True))
+        return dx
+    ctx = ht.gpu(0)
+    shapeX = (16, 512, 768)
+    #shapeX = (3,4,5)
+    x = np.random.uniform(0, 10, size=shapeX).astype(np.float32)
+    grad = np.random.uniform(0, 10, size=shapeX).astype(np.float32)
+    arr_x = ht.array(x, ctx=ctx)
+    arr_y = ht.empty(shapeX, ctx=ctx)
+    arr_grad = ht.array(grad, ctx=ctx)
+    dropout_rate = 0
+    import ctypes
+    seed = ctypes.c_ulonglong(1)
+    print(x)
+    gpu_op.softmaxdropout(arr_x, dropout_rate, arr_y, seed)
+    print(arr_y.asnumpy())
+    np_y = softmax_func(x)
+
+    np.testing.assert_allclose(arr_y.asnumpy(), np_y, atol = 1e-5)
+
+    print(seed)
+    gpu_op.softmaxdropout_gradient(arr_grad, arr_x, dropout_rate, arr_y, seed)
+    print(arr_y.asnumpy())
+    print(seed)
+
+    np_dx = softmax_gradient_func(np_y, grad)
+    print(np_dx)
+
+    np.testing.assert_allclose(arr_y.asnumpy(), np_dx, atol = 1e-5)
+
+
+
 
 def test_dropout2d():
     ctx = ht.gpu(0)
@@ -1450,6 +1530,8 @@ def test_onehot():
     print(x)
     print(arr_y.asnumpy())
 
+test_softmaxdropout()
+exit(0)
 
 test_array_set()
 test_broadcast_to()

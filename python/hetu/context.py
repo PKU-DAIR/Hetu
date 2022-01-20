@@ -596,7 +596,7 @@ def infer_states(node_list, node_cur_state_map, node_tar_state_map, invalid_stat
 
 def assign_context_by_traverse_nodes(node_list, ctx, mpi_comm, p2p_stream, node_cur_state_map, node_tar_state_map):
     from .dataloader import DataloaderOp
-    from .optimizer import OptimizerOp
+    from .optimizer import OptimizerOp, Optimizer_per_grad_Op
     from .gpu_ops.PipelineSend import pipeline_send_op
     from .gpu_ops.PipelineReceive import pipeline_receive_op
     from .gpu_ops.Variable import PlaceholderOp
@@ -903,6 +903,7 @@ def assign_context_by_traverse_nodes(node_list, ctx, mpi_comm, p2p_stream, node_
                 assign_ctx(n)
             grads = []
             original_params = node.optimizer.params
+            #print(original_params)
             for ind, param in enumerate(original_params):
                 ori_grad = node.inputs[ind]
                 assert ori_grad.raw_ctx.worker_num == param.raw_ctx.worker_num, \
@@ -936,7 +937,10 @@ def assign_context_by_traverse_nodes(node_list, ctx, mpi_comm, p2p_stream, node_
                     assert ori_grad.raw_ctx == param.raw_ctx
                     grads.append(ori_grad)
                 layer_id += 2
+            #print(trainable_params)
             if trainable_params:
+                #print(grads)
+                #print(node.inputs)
                 node.optimizer.params = trainable_params
                 node.inputs = grads
                 node.ctx = ctx
@@ -988,6 +992,66 @@ def assign_context_by_traverse_nodes(node_list, ctx, mpi_comm, p2p_stream, node_
                         comm_groups[allreduce_devices] = new_group_comm(
                             allreduce_devices)
                 param_allreduce_group['loss'] = comm_groups[allreduce_devices]
+        elif isinstance(node, Optimizer_per_grad_Op):
+            # nonlocal opt
+            # assert opt is None, 'Multiple optimizer is invalid.'
+            opt = node
+            for n in node.inputs:
+                assign_ctx(n)
+            grads = []
+            original_params = node.optimizer.params
+            # for ind, param in enumerate(original_params):
+            param = original_params[node.idx]
+            ori_grad = node.inputs[0]
+            assert ori_grad.raw_ctx.worker_num == param.raw_ctx.worker_num, \
+                'Worker number of gradient and parameter should be equal!'
+            assert mp_index_map[ori_grad] == mp_index_map[param], \
+                'Model parallel state of gradient and parameter should be the same!'
+            if mp_index_map[param] < 0:
+                # this branch is pipeline + data parallel
+                ori_dp_index = dp_index_map[ori_grad]
+                par_dp_index = dp_index_map[param]
+                assert (par_dp_index >= 0) == (
+                    param in trainable_params), 'Bug appears!'
+                # handle receiving
+                if par_dp_index >= 0 and ori_dp_index != par_dp_index:
+                    print(par_dp_index, ori_dp_index)
+                    my_pos = par_dp_index
+                    if -1 not in recv_src[ori_grad]:
+                        recv_src[ori_grad][-1] = receiving(
+                            ori_grad, ori_grad.raw_ctx.workers[my_pos])
+                    
+                    grads.append(recv_src[ori_grad][-1])
+                elif par_dp_index >= 0:
+                    grads.append(ori_grad)
+                # handle sending
+                if ori_dp_index >= 0 and ori_dp_index != par_dp_index:
+                    my_pos = ori_dp_index
+                    device = param.raw_ctx.workers[my_pos]
+                    if -1 not in send_dst[ori_grad]:
+                        send_dst[ori_grad][-1] = True
+                        sending(ori_grad, ori_grad, device)
+            else:
+                # here in the same model parallel
+                assert ori_grad.raw_ctx == param.raw_ctx
+                grads.append(ori_grad)
+            layer_id += 2
+
+            if trainable_params:
+                if node.idx == len(original_params) - 1:
+                    node.optimizer.params_ori = node.optimizer.params
+                    node.optimizer.params = trainable_params
+                # print(grads, node.inputs, node.name)
+                
+                # if len(grads)==0:
+                #     print(node.name, ctx)
+                if len(grads) > 0:
+                    node.inputs = grads
+                    node.ctx = ctx
+                    my_eval_nodes.append(node)
+                    layer_indices[node] = layer_id
+
+
         else:
             # now we only support SAME model parallel in data parallel
             # and 1 context can only appear once
@@ -1069,5 +1133,4 @@ def assign_context_by_traverse_nodes(node_list, ctx, mpi_comm, p2p_stream, node_
 
     for node in node_list:
         assign_ctx(node)
-
     return my_eval_nodes, param_allreduce_group, layer_indices
