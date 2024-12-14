@@ -59,7 +59,7 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank, hetero_
 
             },
             'layernorm_final': {
-                'split': {},
+                'split': {'0': tp_union_list[-1]},
                 'dup': [tp_union_list[-1][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[-1],
                 'type': 'variable'
@@ -85,7 +85,7 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank, hetero_
             'range': [block_id,],
             'recompute': [(True if block_id in recompute_layers[i] else False) for i in range(dp_cp)],
             'layernorm1': {
-                'split': {},
+                'split': {'0': tp_union_list[block_id]},
                 'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
@@ -105,7 +105,7 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank, hetero_
                 }
             },
             'layernorm2': {
-                'split': {},
+                'split': {'0': tp_union_list[block_id]},
                 'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'

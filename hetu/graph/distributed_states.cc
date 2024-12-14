@@ -291,6 +291,23 @@ bool DistributedStates::check_reduce_dim(const DistributedStates& dst_distribute
   return equal_states_and_order(states, order, dst_states, dst_order);                                 
 }
 
+bool DistributedStates::check_split(const DistributedStates& dst_distributed_states) const {
+  const auto& dst_states = dst_distributed_states.get_states();
+  const auto& dst_order = dst_distributed_states.get_order();
+  int32_t split_num = 1;
+  for (auto o : dst_order) {
+    if (o >= 0) {
+      if (dst_states.at(o) % states(o) != 0) {
+        return false;
+      } else {
+        split_num *= (dst_states.at(o) / states(o));
+      }
+    }
+  }
+  return dst_distributed_states.get_dim(-2) == states(-2) && split_num > 1 &&
+         states(-1) == split_num;
+}
+
 bool DistributedStates::check_allreduce(const DistributedStates& dst_distributed_states) const {
   std::pair<std::vector<int32_t>, int32_t> src2dst = {{-2}, -1};
   return states(-2) > 1 && check_combine(dst_distributed_states, src2dst);

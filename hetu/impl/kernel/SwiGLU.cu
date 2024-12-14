@@ -23,7 +23,7 @@ __global__ void swiglu_kernel(const spec_t* input, size_t size, size_t d,spec_t*
   auto out_offset = out_offset_calculator->get(idx);
   spec_t x = input[in_x_offset];
   spec_t y = input[in_y_offset];
-  output[out_offset] = y * (x / (1.0f + hetu::cuda::cuda_exp(-1 * x)));
+  output[out_offset] = float(y) * float(x / (1.0f + hetu::cuda::cuda_exp(-x)));
 }
 
 template <typename spec_t>
@@ -46,10 +46,10 @@ __global__ void swiglu_gradient_kernel(const spec_t* input, const spec_t* output
   spec_t x = input[in_x_offset];
   spec_t y = input[in_y_offset];
 
-  spec_t sigmoid_x = 1 / (1.0f + hetu::cuda::cuda_exp(-1 * x));
+  spec_t sigmoid_x = 1 / (1.0f + hetu::cuda::cuda_exp(-x));
   input_grad[ing_y_offset] = output_grad[outg_offset] * x * sigmoid_x;
   input_grad[ing_x_offset] = output_grad[outg_offset] * y * sigmoid_x *
-    (1.0f + sigmoid_x * x * hetu::cuda::cuda_exp(-1 * x));
+    (1.0f + x * (1 - sigmoid_x));
 }
 
 void SwigluCuda(const NDArray& input, NDArray& output, const Stream& stream) {

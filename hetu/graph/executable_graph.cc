@@ -285,7 +285,7 @@ NDArray& ExecutableGraph::AllocVariableDataInner(const Tensor& tensor,
       }
       _preserved_data[tensor->id()] = NDArray(tensor->meta(), 
                                               bucket->AsStorage(), 
-                                              bucket->GetElementOffest(tensor));
+                                              bucket->GetElementOffset(tensor));
     }
     // deprecated: 目前使用buckets
     else if (_use_origin_param_and_optimizer_buffer) {
@@ -299,7 +299,7 @@ NDArray& ExecutableGraph::AllocVariableDataInner(const Tensor& tensor,
       }
       _preserved_data[tensor->id()] = NDArray(tensor->meta(), 
                                               _origin_param_and_optimizer_buffer->AsStorage(), 
-                                              _origin_param_and_optimizer_buffer->GetElementOffest(tensor));
+                                              _origin_param_and_optimizer_buffer->GetElementOffset(tensor));
       */
     }
   } 
@@ -316,7 +316,7 @@ NDArray& ExecutableGraph::AllocVariableDataInner(const Tensor& tensor,
     }
     _preserved_data[tensor->id()] = NDArray(tensor->meta(), 
                                             _origin_param_buffer->AsStorage(), 
-                                            _origin_param_buffer->GetElementOffest(tensor));
+                                            _origin_param_buffer->GetElementOffset(tensor));
     */
   }
   // 其余不在buffer中
@@ -387,7 +387,7 @@ void ExecutableGraph::AllocRuntimeBuffer(std::vector<RuntimeContext>& runtime_ct
           << "The transfer param buffer of " << DataType2Str(transfer_param->dtype()) << " should not be empty";
         auto transfer_param_data = NDArray(transfer_param->meta(),
                                            _transfer_param_buffer_map[transfer_param->dtype()]->AsStorage(), 
-                                           _transfer_param_buffer_map[transfer_param->dtype()]->GetElementOffest(transfer_param));
+                                           _transfer_param_buffer_map[transfer_param->dtype()]->GetElementOffset(transfer_param));
         // 添加runtime allocation
         for (auto& runtime_ctx : runtime_ctx_list) {
           runtime_ctx.add_runtime_allocation(transfer_param->id(), transfer_param_data);
@@ -462,7 +462,7 @@ void ExecutableGraph::AllocRuntimeBuffer(std::vector<RuntimeContext>& runtime_ct
         for (const auto& current_grad : it_->second->tensor_list()) {
           auto current_grad_data = NDArray(current_grad->meta(),
                                            it_->second->AsStorage(), 
-                                           it_->second->GetElementOffest(current_grad));
+                                           it_->second->GetElementOffset(current_grad));
           // 添加runtime allocation
           for (auto& runtime_ctx : runtime_ctx_list) {
             auto it = _grad_grad_map.find(current_grad->id());
@@ -1058,6 +1058,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
             // but here we still do it to make the code looks more consistent
             RecordExecTensor(send_out_dep_linker);
             auto& send_op = send_out_dep_linker->producer();
+            send_op->set_fw_op_id(result->producer()->fw_op_id());
             send_op->MapToParallelDevices(info.src_group_union);
             send_op->Instantiate(local_device, kP2PStream);
             // add dummy link for topo sort
@@ -1084,6 +1085,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
               OpMeta().set_is_deduce_states(false));
             RecordExecTensor(recv_output);
             auto& recv_op = recv_output->producer();
+            recv_op->set_fw_op_id(result->producer()->fw_op_id());
             recv_op->MapToParallelDevices(info.dst_group_union);
             recv_op->Instantiate(local_device, kP2PStream);
             // add dummy link for topo sort
@@ -1098,6 +1100,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
           << "wrong src and dst group relationship for " << comm_op
           << ", src_group = " << info.src_group << " and dst group = " << info.dst_group;
         auto local_device_index = info.src_group.get_index(local_device);
+        const auto& src_ds = input->get_distributed_states();
         const auto& local_dst_ds = info.local_dst_ds;
         auto cur_state_index = local_dst_ds.map_device_to_state_index(local_device_index);
         const auto& order = local_dst_ds.get_order();
@@ -1105,7 +1108,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         HTAxes keys; 
         HTShape indices, splits;
         for (auto o : order) {
-          if (o >= 0) { 
+          if (o >= 0 && states.at(o) != src_ds.states(o)) { 
             keys.push_back(o);
             splits.push_back(states.at(o));
             indices.push_back(cur_state_index[o]);
@@ -1114,9 +1117,11 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         HT_LOG_DEBUG << local_device << ": keys = " << keys << "; indices = " << indices << "; splits = " << splits;
         Tensor split_output = MakeSplitOp(
           result, keys, indices, splits, 
-          OpMeta().set_is_deduce_states(false));
+          OpMeta().set_is_deduce_states(false)
+                  .set_name("Split_for_" + comm_op->output(0)->consumer(0)->name()));
         RecordExecTensor(split_output);
         auto& split_op = split_output->producer();
+        split_op->set_fw_op_id(result->producer()->fw_op_id());
         split_op->MapToParallelDevices(info.src_group_union);
         split_op->Instantiate(local_device, kComputingStream);
         result = split_output;
@@ -1134,9 +1139,13 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         HTAxes keys = {0};
         HTShape indices = {indice};
         HTShape splits = {split_num};
-        Tensor scatter_output = MakeSplitOp(result, keys, indices, splits, OpMeta().set_is_deduce_states(false));
+        Tensor scatter_output = MakeSplitOp(
+          result, keys, indices, splits,
+          OpMeta().set_is_deduce_states(false)
+                  .set_name(result->name() + "_Scatter"));
         RecordExecTensor(scatter_output);
         auto& scatter_op = scatter_output->producer();
+        scatter_op->set_fw_op_id(result->producer()->fw_op_id());
         scatter_op->MapToParallelDevices(info.src_group_union);
         scatter_op->Instantiate(local_device, kComputingStream);
         result = scatter_output;
@@ -1155,6 +1164,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
                   .set_name(result->name() + "_AllReduce"));
         RecordExecTensor(all_reduce_output);
         auto& all_reduce_op = all_reduce_output->producer();
+        all_reduce_op->set_fw_op_id(result->producer()->fw_op_id());
         all_reduce_op->MapToParallelDevices(info.src_group_union);
         all_reduce_op->Instantiate(local_device, kCollectiveStream);
         result = all_reduce_output;
@@ -1179,6 +1189,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
                   .set_name(result->name() + "_AllGather"));
         RecordExecTensor(all_gather_output);
         auto& all_gather_op = all_gather_output->producer();
+        all_gather_op->set_fw_op_id(result->producer()->fw_op_id());
         all_gather_op->MapToParallelDevices(info.src_group_union);
         all_gather_op->Instantiate(local_device, kCollectiveStream);
         result = all_gather_output;
@@ -1198,6 +1209,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
                   .set_name(result->name() + "_ReduceScatter"));
         RecordExecTensor(reduce_scatter_output);
         auto& reduce_scatter_op = reduce_scatter_output->producer();
+        reduce_scatter_op->set_fw_op_id(result->producer()->fw_op_id());
         reduce_scatter_op->MapToParallelDevices(info.src_group_union);
         reduce_scatter_op->Instantiate(local_device, kCollectiveStream);
         result = reduce_scatter_output;
@@ -1225,6 +1237,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
                   .set_name(result->name() + "_SplitAllReduce"));
         RecordExecTensor(split_all_reduce_output);
         auto& split_all_reduce_op = split_all_reduce_output->producer();
+        split_all_reduce_op->set_fw_op_id(result->producer()->fw_op_id());
         split_all_reduce_op->MapToParallelDevices(info.src_group_union);
         split_all_reduce_op->Instantiate(local_device, kCollectiveStream);
         result = split_all_reduce_output;
@@ -1251,6 +1264,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
                   .set_name(result->name() + "_SplitReduceScatter"));
         RecordExecTensor(split_reduce_scatter_output);
         auto& split_reduce_scatter_op = split_reduce_scatter_output->producer();
+        split_reduce_scatter_op->set_fw_op_id(result->producer()->fw_op_id());
         split_reduce_scatter_op->MapToParallelDevices(info.src_group_union);
         split_reduce_scatter_op->Instantiate(local_device, kCollectiveStream);
         result = split_reduce_scatter_output;
@@ -1509,7 +1523,7 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
           HT_ASSERT(_accumulate_grad_buffer_map.find(grad->dtype()) != _accumulate_grad_buffer_map.end());
           auto accumulate_grad_data = NDArray(grad->meta(), 
                                               _accumulate_grad_buffer_map[grad->dtype()]->AsStorage(), 
-                                              _accumulate_grad_buffer_map[grad->dtype()]->GetElementOffest(grad_in_buffer));
+                                              _accumulate_grad_buffer_map[grad->dtype()]->GetElementOffset(grad_in_buffer));
           auto grad_stream = grad_op->instantiation_ctx().stream(); 
           if (_grad_scale != 1) {
             NDArray::mul(current_grad_data,
@@ -1550,7 +1564,7 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
           auto current_grad_data = tensor2data[grad->id()];
           auto accumulate_grad_data = NDArray(grad->meta(), 
                                               _accumulate_grad_buffer_map[grad->dtype()]->AsStorage(), 
-                                              _accumulate_grad_buffer_map[grad->dtype()]->GetElementOffest(grad_in_buffer));
+                                              _accumulate_grad_buffer_map[grad->dtype()]->GetElementOffset(grad_in_buffer));
           auto grad_stream = Stream(grad_op->placement(),
                                     grad_op->instantiation_ctx().stream_index);
           if (_grad_scale != 1) {
@@ -1780,6 +1794,17 @@ void ExecutableGraph::GetExecEnvs() {
   } else {
     // 默认不对parallel attn打log
     _parallel_attn_log_file_path = "";
+  }
+
+  env = std::getenv("HETU_EVENT_TIMING");
+  if (env != nullptr) {
+    if (std::string(env) == "ON") {
+      EVENT_TIMING = true;
+    } else if (std::string(env) == "OFF") {
+      EVENT_TIMING = false;
+    } else {
+      HT_RUNTIME_ERROR << "Unknown hetu event timing level: " + std::string(env);
+    }
   }
 }
 
@@ -3014,9 +3039,10 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
     profiler->push("tp-collective", summarized_time["tp-collective"]);
     profiler->push("blocking", summarized_time["blocking"]);
     profiler->push("other", summarized_time["other"]);
-    profiler->push("total-forward-time-stream", summarized_time["forward-compute"] + summarized_time["tp-collective-forward"]);
-    profiler->push("total-backward-time-stream", summarized_time["backward-compute"] + summarized_time["tp-collective-backward"]);
-    profiler->push("total-time-stream", summarized_time["forward-backward-compute"] + summarized_time["tp-collective"] + summarized_time["tp-p2p"] + summarized_time["pp-p2p"]);
+    profiler->push("total-forward-stream-time", summarized_time["forward-compute"] + summarized_time["tp-collective-forward"]);
+    profiler->push("total-backward-stream-time", summarized_time["backward-compute"] + summarized_time["tp-collective-backward"]);
+    profiler->push("total-stream-time", summarized_time["forward-backward-compute"] + summarized_time["tp-collective"] + summarized_time["tp-p2p"] + summarized_time["pp-p2p"]);
+    profiler->push("block-stream-time", summarized_time["block-forward"] + summarized_time["block-backward"]);
     profiler->push("block-forward", summarized_time["block-forward"]);
     profiler->push("block-backward", summarized_time["block-backward"]);
     profiler->push("pp-p2p", summarized_time["pp-p2p"]);

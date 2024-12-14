@@ -177,15 +177,16 @@ bool OpInterface::DoInstantiate(Operator& op, const Device& placement,
   auto& inst_ctx = op->instantiation_ctx();
   inst_ctx.placement = placement;
   inst_ctx.stream_index = stream_index;
+  auto enable_timing = op->graph().EVENT_TIMING;
   if (placement.is_cuda()) {
     for (size_t i = 0; i < HT_MAX_NUM_MICRO_BATCHES; i++) { 
-      inst_ctx.start[i] = std::make_unique<hetu::impl::CUDAEvent>(placement);
-      inst_ctx.stop[i] = std::make_unique<hetu::impl::CUDAEvent>(placement);
+      inst_ctx.start[i] = std::make_unique<hetu::impl::CUDAEvent>(placement, enable_timing);
+      inst_ctx.stop[i] = std::make_unique<hetu::impl::CUDAEvent>(placement, enable_timing);
     }
   } else {
     for (size_t i = 0; i < HT_MAX_NUM_MICRO_BATCHES; i++) {     
-      inst_ctx.start[i] = std::make_unique<hetu::impl::CPUEvent>();
-      inst_ctx.stop[i] = std::make_unique<hetu::impl::CPUEvent>();
+      inst_ctx.start[i] = std::make_unique<hetu::impl::CPUEvent>(enable_timing);
+      inst_ctx.stop[i] = std::make_unique<hetu::impl::CPUEvent>(enable_timing);
     }
   }
   Operator::for_each_output_tensor(

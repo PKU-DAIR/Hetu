@@ -54,7 +54,9 @@ HTShape get_HTShape_from_SyShape(const SyShape& sy_shape) {
 }
 
 void set_HTShape_to_SyShape(const HTShape& ht_shape, SyShape& sy_shape) {
-  HT_ASSERT(ht_shape.size() == sy_shape.size()) << "the HTShape and SyShape should have equal dims";
+  HT_ASSERT(ht_shape.size() == sy_shape.size())
+    << "the HTShape and SyShape should have equal dims, but got "
+    << ht_shape.size() << " v.s. " << sy_shape.size();
   auto len = ht_shape.size();
   for (size_t i = 0; i < len; i++) {
     sy_shape[i] = ht_shape[i];

@@ -44,8 +44,6 @@ DistributedStates ElewiseDeduceStates(Tensor a, Tensor b) {
   HT_ASSERT(ds_a.is_valid() && ds_b.is_valid() && ds_a.get_device_num() == ds_b.get_device_num()) 
     << "AddElewiseOpDef: distributed states for input a and input b must be valid!";
   // allow sum/sub input tensor states to be partial
-  HT_ASSERT(ds_a.get_dim(-2) == 1 && ds_b.get_dim(-2) == 1) 
-    << "Tensor a & b shouldn't be partial";
   HTShape shape_a = a->global_shape();
   HTShape shape_b = b->global_shape();
   int size_a = shape_a.size();

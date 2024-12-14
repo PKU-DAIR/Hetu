@@ -28,6 +28,7 @@
 #include "hetu/graph/ops/Gather.h"
 #include "hetu/graph/ops/Gelu.h"
 #include "hetu/graph/ops/group.h"
+#include "hetu/graph/ops/IndexAdd.h"
 #include "hetu/graph/ops/InstanceNorm.h"
 #include "hetu/graph/ops/Interpolate.h"
 #include "hetu/graph/ops/KLDivLoss.h"

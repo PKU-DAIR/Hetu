@@ -56,13 +56,13 @@ def config2ds(config):
     return ds, device_group
 
 class HtParallelRMSNorm(Module):
-    def __init__(self, normalized_shape, ds_parallel_config, sp=False, dtype=hetu.float32, name='rmsnorm'):
+    def __init__(self, normalized_shape, ds_parallel_config, sequence_parallel=False, dtype=hetu.float32, name='rmsnorm'):
         super(HtParallelRMSNorm, self).__init__()
         if isinstance(normalized_shape, numbers.Integral):
             # mypy error: incompatible types in assignment
             normalized_shape = [normalized_shape]  # type: ignore[assignment]
         self.normalized_shape = list(normalized_shape)  # type: ignore[arg-type]
-        self.sp = sp
+        self.sequence_parallel = sequence_parallel
         self.name = name
         ds, self.device_group = config2ds(ds_parallel_config)
         device_index = get_device_index(self.device_group)
@@ -75,7 +75,7 @@ class HtParallelRMSNorm(Module):
 
     def forward(self, input_p):
         # [bsz*seq_len, hidden_size]
-        if self.sp:
+        if self.sequence_parallel:
             ds_input = input_p.distributed_states
             assert ds_input.check_equal(self.ds_split0), \
                 'for sequence parallel, layernorm need input fully sharded in dimension 0!'
@@ -92,20 +92,21 @@ class HtParallelRMSNorm(Module):
         return output_rms
 
 class HtParallelLayerNorm(Module):
-    def __init__(self, normalized_shape, ds_parallel_config, eps=1e-5, 
+    def __init__(self, normalized_shape, ds_parallel_config, sequence_parallel=False, eps=1e-5, 
                  dtype=hetu.float32, name='ln', ori_model = None):
         super(HtParallelLayerNorm, self).__init__()
         if isinstance(normalized_shape, numbers.Integral):
             # mypy error: incompatible types in assignment
             normalized_shape = [normalized_shape]  # type: ignore[assignment]
         self.normalized_shape = list(normalized_shape)  # type: ignore[arg-type]
-        self.sp = sp
+        self.sequence_parallel = sequence_parallel
         self.eps = eps
         self.name = name
         self.ds_parallel_config = ds_parallel_config
         self.dtype = dtype
         ds, self.device_group = config2ds(ds_parallel_config)
         device_index = get_device_index(self.device_group)
+        self.ds_split0 = hetu.DistributedStates(ds.device_num, {0: ds.device_num}, [0], False) # for activation, no zero
         if ori_model is None:
             self.weight = hetu.parallel_parameter(eval(f'hetu.ones_initializer()'), 
                                                 self.normalized_shape, ds, device_index, 
@@ -121,7 +122,7 @@ class HtParallelLayerNorm(Module):
 
     def forward(self, input_p):
         # [bsz*seq_len, hidden_size]
-        if self.sp:
+        if self.sequence_parallel:
             ds_input = input_p.distributed_states
             assert ds_input.check_equal(self.ds_split0), \
                 'for sequence parallel, layernorm need input fully sharded in dimension 0!'
@@ -291,7 +292,7 @@ class HtRowParallelLinear(Module):
                -   -
     """
     def __init__(self, in_features, out_features, 
-                 ds_parallel_config, sp=False, bias=True, 
+                 ds_parallel_config, sequence_parallel=False, bias=True, 
                  init_method='xavier_normal_', 
                  dtype=hetu.float32, name='rowp', ori_model = None):
         super(HtRowParallelLinear, self).__init__()
@@ -300,6 +301,7 @@ class HtRowParallelLinear(Module):
         self.name = name
         self.ds_parallel_config = ds_parallel_config
         self.dtype = dtype
+        self.sequence_parallel = sequence_parallel
 
         ds_dup_split0, self.device_group = config2ds(ds_parallel_config)
         dp, tp, num_devices, zero = ds_parallel_config['dup'], \
@@ -345,7 +347,7 @@ class HtRowParallelLinear(Module):
         if tensor_split0_partial.distributed_states.check_equal(self.ds_map['split0_dup']): # pure dp
             output = tensor_split0_partial
         else:
-            if self.sp:
+            if self.sequence_parallel:
                 output = hetu.comm(tensor_split0_partial, self.ds_map['split0']) # reduce-scatter
             else:
                 output = hetu.comm(tensor_split0_partial, self.ds_map['split0_dup']) # allreduce

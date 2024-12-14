@@ -1,0 +1,11 @@
+strategy_config:
+  -
+    dp: <dp>
+    tp: <tp>
+    pp: <pp>
+    max_tokens: <max-tokens>
+  -
+    dp: <dp>
+    tp: <tp>
+    pp: <pp>
+    max_tokens: <max-tokens>

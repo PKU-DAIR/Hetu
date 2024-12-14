@@ -286,9 +286,26 @@
   args: Tensor input, SyShape begin_pos, SyShape output_shape
   self: input
 
+# multi-task only
+- name: slice
+  op: SliceOp
+  args: Tensor input, Tensor task_batch_idx, HTShape begin_pos, HTShape output_shape
+  self: input
+
+- name: slice
+  op: SliceOp
+  args: Tensor input, Tensor task_batch_idx, SyShape begin_pos, SyShape output_shape
+  self: input
+
 - name: split
   op: SplitOp
   args: Tensor input, int64_t num_chunks, int64_t dim
+  self: input
+
+# multi-task only
+- name: split
+  op: SplitOp
+  args: Tensor input, TensorList task_batch_idxs, int64_t dim
   self: input
 
 # deprecated: only used in gpt inference, before symbolic shape is realized
@@ -417,6 +434,11 @@
 - name: fused_layernorm
   op: FusedLayerNormOp
   args: Tensor input, Tensor ln_scale, Tensor ln_bias, HTShape normalized_shape, double eps=0.01, bool inplace=False
+  self: input
+
+- name: fused_rmsnorm
+  op: FusedRMSNormOp
+  args: Tensor input, Tensor ln_scale, HTShape normalized_shape, double eps=0.01, bool inplace=False
   self: input
 
 #######################################################
@@ -723,7 +745,7 @@
 
 - name: attn_varlen
   op: AttentionVarlenOp
-  args: Tensor q, Tensor k, Tensor v, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
+  args: Tensor q, Tensor k, Tensor v, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
         double p_dropout=0, double softmax_scale=-1, bool zero_tensors=False, bool is_causal=False, bool return_softmax=False
   self: q
 
@@ -734,7 +756,7 @@
 
 - name: attn_varlen_qkvpacked
   op: AttentionVarlenPackedOp
-  args: Tensor qkv, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
+  args: Tensor qkv, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
         double p_dropout=0, double softmax_scale=-1, bool zero_tensors=False, bool is_causal=False, bool return_softmax=False
   self: qkv
 
@@ -778,4 +800,19 @@
 - name: checknumeric
   op: CheckNumericOp
   args: Tensor x
+  self: x
+
+- name: index_add_
+  op: IndexAddOp
+  args: Tensor x, Tensor y, int64_t dim, HTShape start_and_end_idx
+  self: x
+
+- name: index_add_
+  op: IndexAddOp
+  args: Tensor x, Tensor y, int64_t dim, SyShape start_and_end_idx
+  self: x
+
+- name: index_add_
+  op: IndexAddOp
+  args: Tensor x, Tensor y, Tensor task_batch_idx, int64_t dim
   self: x

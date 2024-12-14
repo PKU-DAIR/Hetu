@@ -127,10 +127,18 @@ TensorList FusedLayerNormOpImpl::DoGradient(Operator& op, const TensorList& grad
   auto g_op_meta = op->grad_op_meta().set_name(op->grad_name(0));
   TensorList empty = {Tensor(), Tensor(), Tensor()};
   TensorList grad_input;
-  grad_input = op->requires_grad(0) ? MakeFusedLayerNormGradientOp(grad_outputs.at(0), op->input(0),
-                                          op->input(1), op->input(2), op->output(1), op->output(2),
-                                          normalized_shape(), get_eps(), inplace(), g_op_meta)
-                                          : empty;
+  if (inplace()) {
+    grad_input = op->requires_grad(0) ? MakeFusedLayerNormGradientOp(grad_outputs.at(0), op->output(0),
+                                            op->input(1), op->input(2), op->output(1), op->output(2),
+                                            normalized_shape(), get_eps(), inplace(), g_op_meta)
+                                            : empty;
+  }
+  else {
+    grad_input = op->requires_grad(0) ? MakeFusedLayerNormGradientOp(grad_outputs.at(0), op->input(0),
+                                            op->input(1), op->input(2), op->output(1), op->output(2),
+                                            normalized_shape(), get_eps(), inplace(), g_op_meta)
+                                            : empty;
+  }
   if (!op->requires_grad(1))
     grad_input[1] = Tensor();
   if (!op->requires_grad(2))
@@ -225,28 +233,28 @@ void FusedLayerNormGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>&
   outputs.at(2)->cur_ds_union().set_hetero_dim(-2);
 }
 
-TensorList MakeLayerNormOp(Tensor input, Tensor bn_scale, Tensor bn_bias, HTShape normalized_shape, 
+TensorList MakeLayerNormOp(Tensor input, Tensor ln_scale, Tensor ln_bias, HTShape normalized_shape, 
                            double eps, OpMeta op_meta) {
-  TensorList inputs = {std::move(input), std::move(bn_scale), std::move(bn_bias)};
+  TensorList inputs = {std::move(input), std::move(ln_scale), std::move(ln_bias)};
   return Graph::MakeOp(
           std::make_shared<LayerNormOpImpl>(normalized_shape, eps),
           std::move(inputs),
           std::move(op_meta))->outputs();   
 }
 
-TensorList MakeLayerNormGradientOp(Tensor output_grad, Tensor input, Tensor bn_scale,
+TensorList MakeLayerNormGradientOp(Tensor output_grad, Tensor input, Tensor ln_scale,
                                    Tensor save_mean, Tensor save_var, HTShape normalized_shape, 
                                    double eps, OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<LayerNormGradientOpImpl>(normalized_shape, eps),
-          {std::move(output_grad), std::move(input), std::move(bn_scale), 
+          {std::move(output_grad), std::move(input), std::move(ln_scale), 
           std::move(save_mean), std::move(save_var)},
           std::move(op_meta))->outputs();  
 }
 
-TensorList MakeFusedLayerNormOp(Tensor input, Tensor bn_scale, Tensor bn_bias, HTShape normalized_shape, 
+TensorList MakeFusedLayerNormOp(Tensor input, Tensor ln_scale, Tensor ln_bias, HTShape normalized_shape, 
                                 double eps, bool inplace, OpMeta op_meta) {
-  TensorList inputs = {std::move(input), std::move(bn_scale), std::move(bn_bias)};
+  TensorList inputs = {std::move(input), std::move(ln_scale), std::move(ln_bias)};
   return Graph::MakeOp(
           std::make_shared<FusedLayerNormOpImpl>(normalized_shape, eps, inplace),
           std::move(inputs),

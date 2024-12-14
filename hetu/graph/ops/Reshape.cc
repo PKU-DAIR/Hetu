@@ -120,8 +120,6 @@ void ArrayReshapeOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& ou
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ArrayReshapeOpDef: distributed states for input must be valid!";
-  HT_ASSERT(ds_input.get_dim(-2) == 1)
-    << "Input tensor shouldn't be partial!";
   HTShape global_output_shape = get_output_shape(inputs[0]->global_shape());
   DistributedStates ds_output = get_output_ds(inputs[0]->global_shape(), ds_input, global_output_shape);
   outputs.at(0)->set_distributed_states(ds_output);

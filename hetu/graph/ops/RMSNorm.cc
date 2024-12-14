@@ -227,6 +227,115 @@ HTShapeList RMSNormGradientOpImpl::DoInferShape(Operator& op,
   return out_shapes;
 }
 
+void FusedRMSNormOpImpl::DoCompute(Operator& op,
+                                   const NDArrayList& inputs, NDArrayList& outputs,
+                                   RuntimeContext& ctx) const {
+  NDArray::fused_rmsnorm(inputs.at(0), inputs.at(1), normalized_shape(),
+                         get_eps(), op->instantiation_ctx().stream_index, 
+                         outputs.at(0), outputs.at(1));
+}
+
+TensorList FusedRMSNormOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
+  auto g_op_meta = op->grad_op_meta().set_name(op->grad_name(0));
+  TensorList empty = {Tensor(), Tensor(), Tensor()};
+  TensorList grad_input;
+  if (inplace()) {
+    grad_input = op->requires_grad(0) ? MakeFusedRMSNormGradientOp(grad_outputs.at(0), 
+                                        op->output(0), op->input(1), op->output(1),
+                                        normalized_shape(), get_eps(), inplace(), g_op_meta)
+                                      : empty;
+  }
+  else {
+    grad_input = op->requires_grad(0) ? MakeFusedRMSNormGradientOp(grad_outputs.at(0), 
+                                        op->input(0), op->input(1), op->output(1),
+                                        normalized_shape(), get_eps(), inplace(), g_op_meta)
+                                      : empty;
+  }
+  if (!op->requires_grad(1))
+    grad_input[1] = Tensor();
+  return grad_input;
+}
+
+HTShapeList FusedRMSNormOpImpl::DoInferShape(Operator& op,const HTShapeList& input_shapes,
+                                             RuntimeContext& ctx) const {
+  size_t dim = normalized_shape().size();
+  HTShape output_shape = input_shapes.at(0);
+  for (size_t i = 0; i < dim; ++i) {
+    HT_ASSERT(normalized_shape()[dim - 1 - i] == input_shapes.at(0)[input_shapes.at(0).size() - 1 - i])
+    << "Normalized shape's last dims should equal to input shape's.But we have normalized shape:"
+    << normalized_shape() << " and input shape:" << input_shapes.at(0);
+    output_shape[input_shapes.at(0).size() - 1 - i] = 1;
+  }
+  return {input_shapes.at(0), output_shape};
+}
+
+void FusedRMSNormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                        const OpMeta& op_meta) const {
+  size_t dim = normalized_shape().size();
+  HTShape local_shape = inputs.at(0)->shape();
+  int max_dim = local_shape.size() - dim;
+  const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
+  const DistributedStates& ds_scale = inputs.at(1)->get_distributed_states();
+  HT_ASSERT(ds_input.is_valid() && ds_scale.is_valid() 
+            && ds_input.get_device_num() == ds_scale.get_device_num()) 
+    << "RMSNormOpDef: input states must be valid!";
+  HT_ASSERT(ds_input.get_dim(-2) == 1 && ds_scale.get_dim(-2) == 1)
+    << "Input tensor shouldn't be partial!";
+  HT_ASSERT(ds_input.check_max_dim(max_dim))
+    << "RMSNormOp only support input split in dimension < " << max_dim;
+  // scale and bias shape should be normalized_shape, so keep duplicate
+  HT_ASSERT(ds_scale.check_pure_duplicate())
+    << "Scale should be duplicate!";
+  outputs.at(0)->set_distributed_states(ds_input); // output
+  outputs.at(1)->set_distributed_states(ds_input); // save_var for backward
+}
+
+void FusedRMSNormOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                                           TensorList& outputs, const OpMeta& op_meta) const {
+  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
+  outputs.at(1)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
+}
+
+void FusedRMSNormGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
+                                           NDArrayList& outputs,
+                                           RuntimeContext& ctx) const {
+  HT_DISPATCH_KERNEL_CUDA_ONLY(
+    op->instantiation_ctx().placement.type(), type(), hetu::impl::FusedRMSNormGradient, inputs.at(0),
+    inputs.at(1), inputs.at(2), outputs.at(0), outputs.at(1),
+    inputs.at(3),normalized_shape().size(),
+    get_eps(), inplace(), op->instantiation_ctx().stream());
+}
+
+HTShapeList
+FusedRMSNormGradientOpImpl::DoInferShape(Operator& op,const HTShapeList& input_shapes,
+                                         RuntimeContext& ctx) const {
+  return {input_shapes.at(1), input_shapes.at(2)};
+}
+
+void FusedRMSNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                                const OpMeta& op_meta) const {
+  const DistributedStates& ds_output_grad = inputs.at(0)->get_distributed_states();
+  int reduce_dim = inputs.at(0)->ndim() - normalized_shape().size();
+  HTAxes axes(reduce_dim);
+  HTKeepDims keepdims(reduce_dim);
+  for (int d = 0; d < reduce_dim; d++) {
+    axes[d] = d;
+    keepdims[d] = false;
+  }
+  DistributedStates ds_bias_scale = ReduceOpImpl::StatesForDistributedReduce(inputs.at(0), axes, keepdims);
+  outputs.at(0)->set_distributed_states(ds_output_grad);
+  outputs.at(1)->set_distributed_states(ds_bias_scale);
+}
+
+void FusedRMSNormGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                                                   TensorList& outputs, const OpMeta& op_meta) const {
+  HT_ASSERT(inputs_hetero_dim.at(0) >= 0 && inputs_hetero_dim.at(0) < outputs.at(0)->ndim() - normalized_shape().size())
+    << "Currently not support complex hetero dim deducing"
+    << ", the hetero dim should be spilt and reduced to partial";
+  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
+  outputs.at(1)->cur_ds_union().set_hetero_dim(-2);
+}
+
 TensorList MakeRMSNormOp(Tensor x0, Tensor residual_, Tensor gamma,
                          Tensor beta_, Tensor rowscale_, Tensor colscale_,
                          Tensor x0_subset_, Tensor z_subset_, 
@@ -308,6 +417,25 @@ TensorList MakeRMSNormGradientOp(Tensor dz, Tensor dx_, Tensor x, Tensor x0_,
                                                  output_indexs),
          std::move(inputs_),
          std::move(op_meta))->outputs();
+}
+
+TensorList MakeFusedRMSNormOp(Tensor input, Tensor ln_scale, HTShape normalized_shape, 
+                              double eps, bool inplace, OpMeta op_meta) {
+  TensorList inputs = {std::move(input), std::move(ln_scale)};
+  return Graph::MakeOp(
+          std::make_shared<FusedRMSNormOpImpl>(normalized_shape, eps, inplace),
+          std::move(inputs),
+          std::move(op_meta))->outputs();   
+}
+
+TensorList MakeFusedRMSNormGradientOp(Tensor output_grad, Tensor input, Tensor ln_scale,
+                                      Tensor save_var, HTShape normalized_shape, 
+                                      double eps, bool inplace, OpMeta op_meta) {
+  return Graph::MakeOp(
+          std::make_shared<FusedRMSNormGradientOpImpl>(normalized_shape, eps, inplace),
+          {std::move(output_grad), std::move(input), 
+          std::move(ln_scale), std::move(save_var)},
+          std::move(op_meta))->outputs();  
 }
 
 } // namespace graph

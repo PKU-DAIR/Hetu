@@ -178,22 +178,26 @@ class AttentionVarlenOpImpl final : public OpInterface {
   struct constructor_access_key {};
 
  public:
-  AttentionVarlenOpImpl(int max_seqlen_q, int max_seqlen_k, 
+  AttentionVarlenOpImpl(int64_t head_dim, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k, 
                         double p_dropout, double softmax_scale, 
                         bool zero_tensors, bool is_causal, 
                         bool return_softmax)
-  : OpInterface(quote(AttentionVarlenOp)), _max_seqlen_q(max_seqlen_q), _max_seqlen_k(max_seqlen_k), 
+  : OpInterface(quote(AttentionVarlenOp)), _head_dim(head_dim), _max_seqlen_q(std::move(max_seqlen_q)), _max_seqlen_k(std::move(max_seqlen_k)), 
                                            _p_dropout(p_dropout), _softmax_scale(softmax_scale),
                                            _zero_tensors(zero_tensors), _is_causal(is_causal), 
                                            _return_softmax(return_softmax) {
   }
 
-  inline int max_seqlen_q() const {
-    return _max_seqlen_q;
+  inline int64_t head_dim() const {
+    return _head_dim;
   }
 
-  inline int max_seqlen_k() const {
-    return _max_seqlen_k;
+  inline int64_t max_seqlen_q() const {
+    return _max_seqlen_q->get_val();
+  }
+
+  inline int64_t max_seqlen_k() const {
+    return _max_seqlen_k->get_val();
   }
 
   inline double p_dropout() const {
@@ -224,10 +228,10 @@ class AttentionVarlenOpImpl final : public OpInterface {
     out_metas.emplace_back(base);
     const int total_q = inputs.at(0)->shape(0);
     const int batch_size = inputs.at(3)->numel() - 1;
-    const int num_heads = inputs.at(0)->shape(1);
-    const int head_size_og = inputs.at(0)->shape(2);
+    const int num_heads = inputs.at(0)->shape(1) / head_dim();
+    const int head_size_og = head_dim();
     const int total_k = inputs.at(1)->shape(0);
-    const int num_heads_k = inputs.at(1)->shape(1);
+    const int num_heads_k = inputs.at(1)->shape(1) / head_dim();
     HT_ASSERT(batch_size > 0)
     << "batch size must be postive";
     HT_ASSERT(head_size_og <= 256)
@@ -244,8 +248,8 @@ class AttentionVarlenOpImpl final : public OpInterface {
     padded_shape = inputs.at(0)->shape();
     padded_shape[2] += pad_len;
     out_metas.emplace_back(base.set_shape(padded_shape)); //out_padded
-    out_metas.emplace_back(base.set_shape({batch_size, num_heads, _max_seqlen_q}).set_dtype(kFloat)); //softmax_lse
-    out_metas.emplace_back(base.set_shape({batch_size, num_heads, _max_seqlen_q + pad_len, _max_seqlen_k + pad_len})
+    out_metas.emplace_back(base.set_shape({batch_size, num_heads, max_seqlen_q()}).set_dtype(kFloat)); //softmax_lse
+    out_metas.emplace_back(base.set_shape({batch_size, num_heads, max_seqlen_q() + pad_len, max_seqlen_k() + pad_len})
                                .set_dtype(inputs.at(0)->dtype())); //p
     out_metas.emplace_back(base.set_shape({2}).set_device(kCPU).set_dtype(kInt64)); //rng_state
     return out_metas;
@@ -258,8 +262,9 @@ class AttentionVarlenOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  int _max_seqlen_q;
-  int _max_seqlen_k;
+  int64_t _head_dim;
+  IntSymbol _max_seqlen_q;
+  IntSymbol _max_seqlen_k;
   double _p_dropout;
   double _softmax_scale;
   bool _zero_tensors;
@@ -270,7 +275,8 @@ class AttentionVarlenOpImpl final : public OpInterface {
   bool operator==(const OpInterface& rhs) const override {
     if (OpInterface::operator==(rhs)) {
       const auto& rhs_ = reinterpret_cast<const AttentionVarlenOpImpl&>(rhs);
-      return max_seqlen_q() == rhs_.max_seqlen_q() &&
+      return head_dim() == rhs_.head_dim() &&
+             max_seqlen_q() == rhs_.max_seqlen_q() &&
              max_seqlen_k() == rhs_.max_seqlen_k() &&
              p_dropout() == rhs_.p_dropout() &&
              softmax_scale() == rhs_.softmax_scale() &&
@@ -283,27 +289,32 @@ class AttentionVarlenOpImpl final : public OpInterface {
   }
 };
 
-TensorList MakeAttentionVarlenOp(Tensor q, Tensor k, Tensor v, Tensor cu_seqlens_q, Tensor cu_seqlens_k,
-                                 int max_seqlen_q, int max_seqlen_k, double p_dropout = 0.0, 
+TensorList MakeAttentionVarlenOp(Tensor q, Tensor k, Tensor v, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k,
+                                 IntSymbol max_seqlen_q, IntSymbol max_seqlen_k, double p_dropout = 0.0, 
                                  double softmax_scale = -1.0, bool zero_tensors = false, bool is_causal = false, 
                                  bool return_softmax = false, OpMeta op_meta = OpMeta());
 
 class AttentionVarlenGradientOpImpl final : public OpInterface {
 
  public:
-  AttentionVarlenGradientOpImpl(int max_seqlen_q, int max_seqlen_k, 
+  AttentionVarlenGradientOpImpl(int64_t head_dim, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
                                 double p_dropout, double softmax_scale, 
                                 bool zero_tensors, bool is_causal)
-  : OpInterface(quote(AttentionVarlenGradientOp)), 
+  : OpInterface(quote(AttentionVarlenGradientOp)), _head_dim(head_dim),
+  _max_seqlen_q(std::move(max_seqlen_q)), _max_seqlen_k(std::move(max_seqlen_k)),
   _p_dropout(p_dropout), _softmax_scale(softmax_scale), _is_causal(is_causal) {
   }
 
-  inline int max_seqlen_q() const {
-    return _max_seqlen_q;
+  inline int64_t head_dim() const {
+    return _head_dim;
   }
 
-  inline int max_seqlen_k() const {
-    return _max_seqlen_k;
+  inline int64_t max_seqlen_q() const {
+    return _max_seqlen_q->get_val();
+  }
+
+  inline int64_t max_seqlen_k() const {
+    return _max_seqlen_k->get_val();
   }
 
   inline double p_dropout() const {
@@ -333,8 +344,9 @@ class AttentionVarlenGradientOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  int _max_seqlen_q;
-  int _max_seqlen_k;
+  int64_t _head_dim;
+  IntSymbol _max_seqlen_q;
+  IntSymbol _max_seqlen_k;
   double _p_dropout;
   double _softmax_scale;
   bool _zero_tensors;
@@ -344,7 +356,8 @@ class AttentionVarlenGradientOpImpl final : public OpInterface {
   bool operator==(const OpInterface& rhs) const override {
     if (OpInterface::operator==(rhs)) {
       const auto& rhs_ = reinterpret_cast<const AttentionVarlenGradientOpImpl&>(rhs);
-      return max_seqlen_q() == rhs_.max_seqlen_q() &&
+      return head_dim() == rhs_.head_dim() &&
+             max_seqlen_q() == rhs_.max_seqlen_q() &&
              max_seqlen_k() == rhs_.max_seqlen_k() &&
              p_dropout() == rhs_.p_dropout() &&
              softmax_scale() == rhs_.softmax_scale() &&
@@ -356,10 +369,10 @@ class AttentionVarlenGradientOpImpl final : public OpInterface {
   }
 };
 
-TensorList MakeAttentionVarlenGradientOp(Tensor grad_out, Tensor q, Tensor k, Tensor v, 
+TensorList MakeAttentionVarlenGradientOp(Tensor grad_out, Tensor q, Tensor k, Tensor v, int64_t head_dim,
                                          Tensor cu_seqlens_q, Tensor cu_seqlens_k,
                                          Tensor out, Tensor softmax_lse, Tensor rng_state,
-                                         int max_seqlen_q, int max_seqlen_k,
+                                         IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
                                          double p_dropout = 0.0, double softmax_scale = -1.0,
                                          bool zero_tensors = false, bool is_causal = false, 
                                          OpMeta op_meta = OpMeta());
@@ -368,7 +381,7 @@ TensorList MakeAttentionPackedOp(Tensor qkv, double p_dropout = 0.0, double soft
                                  bool is_causal = false, bool return_softmax = false, OpMeta op_meta = OpMeta());
 
 
-TensorList MakeAttentionVarlenPackedOp(Tensor qkv, Tensor cu_seqlens_q, Tensor cu_seqlens_k,
+TensorList MakeAttentionVarlenPackedOp(Tensor qkv, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k,
                                        int max_seqlen_q, int max_seqlen_k, double p_dropout = 0.0, 
                                        double softmax_scale = -1.0, bool zero_tensors = false, bool is_causal = false, 
                                        bool return_softmax = false, OpMeta op_meta = OpMeta());

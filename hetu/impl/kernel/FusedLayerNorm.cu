@@ -7,7 +7,6 @@
 #include "hetu/impl/kernel/Binary.cuh"
 #include "hetu/impl/utils/cuda_math.h"
 #include "hetu/impl/utils/offset_calculator.cuh"
-#include <chrono>
 
 namespace hetu {
 namespace impl {
@@ -990,7 +989,7 @@ void FusedLayerNormCuda(const NDArray& in_arr, const NDArray& ln_scale,
   size_t n1 = in_arr->numel() / last_dim, n2 = last_dim;
   const dim3 blocks(1, std::min((uint64_t)n1, maxGridY), 1);
   HT_DISPATCH_FLOATING_TYPES(
-    in_arr->dtype(), spec_t, "CalculateGradCuda", [&]() {
+    in_arr->dtype(), spec_t, "FusedLayerNormCuda", [&]() {
       int nshared = threads.y > 1 ?
           threads.y * sizeof(float) + (threads.y / 2) * sizeof(float) : 0;
       cuApplyLayerNorm<<<blocks, threads, nshared, cuda_stream>>>(
@@ -999,8 +998,41 @@ void FusedLayerNormCuda(const NDArray& in_arr, const NDArray& ln_scale,
         n1, n2, float(eps), ln_scale->data_ptr<spec_t>(), 
         ln_bias->data_ptr<spec_t>()); 
   });
-  CudaStreamSynchronize(cuda_stream);
   NDArray::MarkUsedBy({in_arr, ln_scale, ln_bias, mean_arr, var_arr, out_arr}, stream);
+}
+
+void FusedRMSNormCuda(const NDArray& in_arr, const NDArray& ln_scale,
+                      NDArray& var_arr, NDArray& out_arr, int64_t reduce_dims, 
+                      float eps, const Stream& stream) {
+  HT_ASSERT_CUDA_DEVICE(in_arr);
+  HT_ASSERT_SAME_DEVICE(in_arr, ln_scale);
+  HT_ASSERT_SAME_DEVICE(in_arr, var_arr); 
+  HT_ASSERT_SAME_DEVICE(in_arr, out_arr);
+
+  CUDAStream cuda_stream(stream);
+  hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+
+  int ndim = in_arr->ndim();
+  int base_dim = 1, last_dim = 1;
+  for (int i = 0; i < ndim - reduce_dims; ++i)
+    base_dim *= in_arr->shape(i);
+  for (int i = ndim - reduce_dims; i < ndim; ++i)
+    last_dim *= in_arr->shape(i);
+  const dim3 threads(32,4,1);
+  auto dprops = Device::dprop(in_arr->device().index());
+  const uint64_t maxGridY = dprops.maxGridSize[1];
+  size_t n1 = in_arr->numel() / last_dim, n2 = last_dim;
+  const dim3 blocks(1, std::min((uint64_t)n1, maxGridY), 1);
+  HT_DISPATCH_FLOATING_TYPES(
+    in_arr->dtype(), spec_t, "FusedRMSNormCuda", [&]() {
+      int nshared = threads.y > 1 ?
+          threads.y * sizeof(float) + (threads.y / 2) * sizeof(float) : 0;
+      cuApplyRMSNorm<<<blocks, threads, nshared, cuda_stream>>>(
+        out_arr->data_ptr<spec_t>(), var_arr->data_ptr<float>(), 
+        in_arr->data_ptr<spec_t>(), n1, n2, float(eps), 
+        ln_scale->data_ptr<spec_t>()); 
+  });
+  NDArray::MarkUsedBy({in_arr, ln_scale, var_arr, out_arr}, stream);
 }
 
 void FusedLayerNormGradientCuda(const NDArray& out_grads, const NDArray& in_arr,
@@ -1046,7 +1078,7 @@ void FusedLayerNormGradientCuda(const NDArray& out_grads, const NDArray& in_arr,
     return;
   size_t n1 = in_arr->numel() / lastdim, n2 = lastdim;
   HT_DISPATCH_FLOATING_TYPES(
-      in_arr->dtype(), spec_t, "CalculateGradCuda", [&]() {
+      in_arr->dtype(), spec_t, "FusedLayerNormGradientCuda", [&]() {
       const int part_size = 16;
       const dim3 threads2(32,4,1);
       const dim3 blocks2((n2+threads2.x-1)/threads2.x,part_size,1);
@@ -1141,6 +1173,143 @@ void FusedLayerNormGradientCuda(const NDArray& out_grads, const NDArray& in_arr,
       });
   NDArray::MarkUsedBy({out_grads, in_arr, ln_scale, ln_bias, grad_arr,
                        grad_scale, grad_bias, mean_arr, var_arr}, stream);
+}
+
+void FusedRMSNormGradientCuda(const NDArray& out_grads, const NDArray& in_arr,
+                              const NDArray& ln_scale, NDArray& grad_arr,
+                              NDArray& grad_scale, const NDArray& var_arr,
+                              int64_t reduce_dims, float eps, bool inplace, const Stream& stream) {
+  HT_ASSERT_CUDA_DEVICE(out_grads);
+  HT_ASSERT_SAME_DEVICE(out_grads, ln_scale);
+  HT_ASSERT_SAME_DEVICE(out_grads, in_arr);
+  HT_ASSERT_SAME_DEVICE(out_grads, var_arr); 
+  HT_ASSERT_SAME_DEVICE(out_grads, grad_scale);
+  HT_ASSERT_SAME_DEVICE(out_grads, grad_arr);
+
+  CUDAStream cuda_stream(stream);
+  hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+  cudnnHandle_t handle = hetu::impl::GetCudnnHandle(cuda_stream.device_id());
+
+  int ndim = out_grads->ndim();
+  size_t total_elements = 1;
+
+  int last_2dim = in_arr->shape(ndim - 1) * in_arr->shape(ndim - 2);
+
+  HTAxes reduce_axes_before = {}, reduce_axes_after = {};
+  for (int i = 0; i < ndim; ++i) {
+    if (i < ndim - reduce_dims)
+      reduce_axes_before.emplace_back(i);
+    else
+      reduce_axes_after.emplace_back(i);
+  }
+
+  for (int i = 0; i < ndim; ++i)
+    total_elements *= out_grads->shape(i);
+  int lastdim = 1;
+  for (size_t i = 0; i < reduce_dims; ++i) {
+    lastdim *= out_grads->shape(ndim - 1 - i);
+  }
+
+  size_t size = total_elements;
+  if (size == 0)
+    return;
+  size_t n1 = in_arr->numel() / lastdim, n2 = lastdim;
+  HT_DISPATCH_FLOATING_TYPES(
+      in_arr->dtype(), spec_t, "FusedRMSNormGradientCuda", [&]() {
+      const int part_size = 16;
+      const dim3 threads2(32,4,1);
+      const dim3 blocks2((n2+threads2.x-1)/threads2.x,part_size,1);
+      const int nshared2_a = 2 * sizeof(float) * threads2.y * threads2.y * (threads2.x + 1);
+      const int nshared2_b = threads2.x * threads2.y * sizeof(float);
+      const int nshared2 = nshared2_a > nshared2_b ? nshared2_a : nshared2_b;
+      const auto part_grad_dtype =
+        (in_arr->dtype() == DataType::FLOAT16 || in_arr->dtype() == DataType::BFLOAT16) ?
+        DataType::FLOAT32 : in_arr->dtype();
+      HTShape part_shape = {int64_t(part_size), int64_t(n2)};
+      auto part_grad_gamma = NDArray::empty(part_shape, in_arr->device(), part_grad_dtype, stream.stream_index());
+      if (inplace) { 
+        cuComputePartGradGammaBeta<spec_t, float, spec_t, true>
+        <<<blocks2, threads2, nshared2, cuda_stream>>>(
+                        out_grads->data_ptr<spec_t>(),
+                        in_arr->data_ptr<spec_t>(),
+                        n1,n2,
+                        var_arr->data_ptr<float>(),
+                        var_arr->data_ptr<float>(),
+                        float(eps),
+                        ln_scale->data_ptr<spec_t>(),
+                        ln_scale->data_ptr<spec_t>(),
+                        part_grad_gamma->data_ptr<float>(),
+                        part_grad_gamma->data_ptr<float>(),
+                        double(eps),
+                        true);
+      }
+      else {
+        cuComputePartGradGammaBeta<spec_t, float, spec_t, false><<<blocks2, threads2, nshared2, cuda_stream>>>(
+                        out_grads->data_ptr<spec_t>(),
+                        in_arr->data_ptr<spec_t>(),
+                        n1,n2,
+                        var_arr->data_ptr<float>(),
+                        var_arr->data_ptr<float>(),
+                        float(eps),
+                        ln_scale->data_ptr<spec_t>(),
+                        ln_scale->data_ptr<spec_t>(),
+                        part_grad_gamma->data_ptr<float>(),
+                        part_grad_gamma->data_ptr<float>(),
+                        double(eps),
+                        true);
+      }
+
+        const dim3 threads3(32,8,1);
+        const dim3 blocks3((n2+threads2.x-1)/threads2.x,1,1);
+        const int nshared3 = threads3.x * threads3.y * sizeof(float);
+          cuComputeGradGammaBeta<<<blocks3, threads3, nshared3, cuda_stream>>>(
+                          part_grad_gamma->data_ptr<float>(),
+                          part_grad_gamma->data_ptr<float>(),
+                          part_size,
+                          n1,n2,
+                          grad_scale->data_ptr<spec_t>(),
+                          grad_scale->data_ptr<spec_t>(),
+                          true);
+
+        auto dprops = Device::dprop(in_arr->device().index());
+        const uint64_t maxGridY = dprops.maxGridSize[1];
+        const dim3 blocks1(1, std::min((uint64_t)n1, maxGridY), 1);
+        // const dim3 blocks1(1, (uint64_t)n1, 1);
+        const dim3 threads1(32,4,1);
+        int nshared =
+                threads1.y > 1 ?
+                threads1.y * threads1.x * sizeof(float) : 0;
+        if (inplace) {
+          cuComputeGradInput<spec_t, float, spec_t, true><<<blocks1, threads1, nshared, cuda_stream>>>(
+                  out_grads->data_ptr<spec_t>(),
+                  in_arr->data_ptr<spec_t>(),
+                  n1,n2,
+                  var_arr->data_ptr<float>(),
+                  var_arr->data_ptr<float>(),
+                  float(eps),
+                  ln_scale->data_ptr<spec_t>(),
+                  ln_scale->data_ptr<spec_t>(),
+                  grad_arr->data_ptr<spec_t>(),
+                  eps,
+                  true);
+        }
+        else {
+          cuComputeGradInput<spec_t, float, spec_t, false><<<blocks1, threads1, nshared, cuda_stream>>>(
+                  out_grads->data_ptr<spec_t>(),
+                  in_arr->data_ptr<spec_t>(),
+                  n1,n2,
+                  var_arr->data_ptr<float>(),
+                  var_arr->data_ptr<float>(),
+                  float(eps),
+                  ln_scale->data_ptr<spec_t>(),
+                  ln_scale->data_ptr<spec_t>(),
+                  grad_arr->data_ptr<spec_t>(),
+                  eps,
+                  true);
+        }
+      });
+  NDArray::MarkUsedBy({out_grads, in_arr, ln_scale, grad_arr,
+                       grad_scale, var_arr}, stream);
 }
 
 } // namespace impl

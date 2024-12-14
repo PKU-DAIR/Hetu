@@ -212,7 +212,7 @@ class ParamBuffer {
       return it->second;
     }
 
-    const size_t GetElementOffest(const Tensor& tensor) const {
+    const size_t GetElementOffset(const Tensor& tensor) const {
       auto it = _tensor_offset_mapping.find(tensor->id());
       HT_ASSERT(it != _tensor_offset_mapping.end())
         << "Can't find tensor " << tensor << " in the ParamBuffer " << _name;

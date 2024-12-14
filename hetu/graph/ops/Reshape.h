@@ -142,6 +142,7 @@ class ArrayReshapeOpImpl final : public OpInterface {
       dim_o--;
     }
     dim_map[-1] = -1;
+    dim_map[-2] = -2;
     std::unordered_map<int32_t, int32_t> states;
     std::vector<int32_t> order;
     for (int d : ds_input.get_order()) {

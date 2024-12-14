@@ -72,9 +72,14 @@ class SumOpImpl final : public OpInterface {
                  RuntimeContext& runtime_ctx) const override {
     auto stream_id = op->instantiation_ctx().stream_index;
     auto& output = outputs.front();
-    NDArray::zeros_(output, stream_id);
-    for (auto& input : inputs) {
-      NDArray::add(input, output, stream_id, output);
+    auto input_num = inputs.size();
+    if (input_num == 1) {
+      NDArray::copy(inputs[0], stream_id, output);
+    } else {
+      NDArray::add(inputs[0], inputs[1], stream_id, output);
+      for (int i = 2; i < input_num; i++) {
+        NDArray::add(inputs[i], output, stream_id, output);
+      }
     }
   }
 

@@ -186,8 +186,8 @@ class CUDACachingMemoryPool final : public CUDAMemoryPool {
     }
 
     inline void insert_used_stream(PackedStreamId used_stream) {
-      if (used_stream != alloc_stream) {
-        used_streams.insert(used_stream);
+      used_streams.insert(used_stream);
+      if (used_streams.size() > 1) {
         status = OccupationStatus::OCCUPIED_BY_MULTI_STREAMS;
       }
     }

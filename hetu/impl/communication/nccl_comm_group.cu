@@ -304,6 +304,9 @@ void NCCLCommunicationGroupDef::AlltoAll(const NDArray& input,
   HT_ASSERT_CUDA_DEVICE(input);
   HT_ASSERT_CUDA_DEVICE(output);
   HT_ASSERT_EXCHANGABLE(input, output);
+  if (output->numel() == 0) {
+    return;
+  }
   void* send_buf = input->raw_data_ptr();
   void* recv_buf = output->raw_data_ptr();
   int numel = input->numel() / _size;

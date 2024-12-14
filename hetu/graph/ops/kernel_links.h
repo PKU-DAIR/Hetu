@@ -186,6 +186,12 @@ DECLARE_KERNEL_CUDA(FusedLayerNormGradient, const NDArray&, const NDArray&,
                     const NDArray&, const NDArray&, NDArray&, NDArray&, NDArray&,
                     const NDArray&, const NDArray&, int64_t, float, bool,
                     const Stream&);
+DECLARE_KERNEL_CUDA(FusedRMSNorm, const NDArray&, const NDArray&,
+                    NDArray&, NDArray&, int64_t, float,
+                    const Stream&);
+DECLARE_KERNEL_CUDA(FusedRMSNormGradient, const NDArray&, const NDArray&,
+                    const NDArray&, NDArray&, NDArray&, const NDArray&, 
+                    int64_t, float, bool, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Gather, const NDArray&, const NDArray&, NDArray&,
                             size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(GatherGradient, const NDArray&, const NDArray&, 

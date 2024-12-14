@@ -1373,12 +1373,12 @@ void SwitchExecGraph::BufferBatchedIsendIrecv(const Operator& op,
                                                                 static_cast<uint64_t>(-1)}); // set id to maximum
     */
     HT_LOG_TRACE << local_device << ": obtain buffer data for " << _info_mapping[input->id()]
-      << ", whose shape is " << input->shape() << " and dtype is " << input->dtype() << " and tensor offset in buffer is " << buffer->GetElementOffest(input)
+      << ", whose shape is " << input->shape() << " and dtype is " << input->dtype() << " and tensor offset in buffer is " << buffer->GetElementOffset(input)
       << ", the whole size is " << buffer->AsStorage()->size();
     // 将原data移动到buffer中并转化成连续存储
     NDArrayMeta input_meta = input->meta();
     NDArrayMeta buffer_data_meta = input_meta.set_shape(input->shape()); // contiguous meta!!!
-    auto buffer_data = NDArray(buffer_data_meta, buffer->AsStorage(), buffer->GetElementOffest(input));
+    auto buffer_data = NDArray(buffer_data_meta, buffer->AsStorage(), buffer->GetElementOffset(input));
     auto event = std::make_unique<hetu::impl::CUDAEvent>(local_device);
     auto stream = Stream(local_device, comp_stream_idx);
     event->Record(stream);
@@ -1432,7 +1432,7 @@ void SwitchExecGraph::BufferBatchedIsendIrecv(const Operator& op,
     HT_ASSERT(_recv_buffers.find(op_interface.src_devices()[i]) != _recv_buffers.end())
       << "BufferBatchedIsendIrecv has no recv buffer prepared for " << op_interface.src_devices()[i];
     auto& buffer = _recv_buffers[op_interface.src_devices()[i]];
-    auto buffer_data = NDArray(output->meta(), buffer->AsStorage(), buffer->GetElementOffest(output));
+    auto buffer_data = NDArray(output->meta(), buffer->AsStorage(), buffer->GetElementOffset(output));
     tensor2data[output->id()] = buffer_data;
   }
 }
@@ -1511,7 +1511,7 @@ void SwitchExecGraph::SwitchParams(SWITCH_MODE switch_mode,
       for (const auto& before_param : before_param_buffer->tensor_list()) {
         auto before_param_data = NDArray(before_param->meta(),
                                          before_param_buffer->AsStorage(), 
-                                         before_param_buffer->GetElementOffest(before_param));
+                                         before_param_buffer->GetElementOffset(before_param));
         _switch_graph_pair.first->_preserved_data[before_param->id()] = before_param_data;
       }
     }
@@ -1737,7 +1737,7 @@ void SwitchExecGraph::SwitchParams(SWITCH_MODE switch_mode,
         _concat_buffer->Alloc(Stream(local_device, comp_stream_idx));
       }
       auto& output = op->output(0);
-      auto output_data = NDArray(output->meta(), _concat_buffer->AsStorage(), _concat_buffer->GetElementOffest(output));
+      auto output_data = NDArray(output->meta(), _concat_buffer->AsStorage(), _concat_buffer->GetElementOffset(output));
       runtime_ctx.add_runtime_allocation(output->id(), output_data);
     }
     // 其余情况都是一些inplace的op
@@ -2158,7 +2158,7 @@ Tensor ComplexExecComm::Instantiate() {
                                                             recv_tensor_shapes, recv_from_devices, 
                                                             comm_devices, dtype, 
                                                             OpMeta().set_is_deduce_states(false)
-                                                                    .set_name("BatchedISendIRecvOp_for_" + _comm_op->name()));
+                                                                    .set_name("BatchedISendIRecvOp_for_" + _comm_op->output(0)->consumer(0)->name()));
   auto& batched_isend_irecv_op = batched_isend_irecv_output->producer();
   TensorList recv_tensors = batched_isend_irecv_op->outputs();
   for (const auto& recv_tensor : recv_tensors) {

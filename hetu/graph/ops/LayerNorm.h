@@ -89,7 +89,7 @@ protected:
   }
 };
 
-TensorList MakeLayerNormOp(Tensor input, Tensor bn_scale, Tensor bn_bias, HTShape normalized_shape, 
+TensorList MakeLayerNormOp(Tensor input, Tensor ln_scale, Tensor ln_bias, HTShape normalized_shape, 
                            double eps = 0.01, OpMeta op_meta = OpMeta());
 
 class LayerNormGradientOpImpl final : public OpInterface {
@@ -144,7 +144,7 @@ protected:
   }
 };
 
-TensorList MakeLayerNormGradientOp(Tensor output_grad, Tensor input, Tensor bn_scale,
+TensorList MakeLayerNormGradientOp(Tensor output_grad, Tensor input, Tensor ln_scale,
                                    Tensor save_mean, Tensor save_var, HTShape normalized_shape,
                                    double eps, OpMeta op_meta = OpMeta());
 
@@ -229,7 +229,7 @@ protected:
   }
 };
 
-TensorList MakeFusedLayerNormOp(Tensor input, Tensor bn_scale, Tensor bn_bias, HTShape normalized_shape, 
+TensorList MakeFusedLayerNormOp(Tensor input, Tensor ln_scale, Tensor ln_bias, HTShape normalized_shape, 
                                 double eps = 0.01, bool inplace = false, OpMeta op_meta = OpMeta());
 
 class FusedLayerNormGradientOpImpl final : public OpInterface {

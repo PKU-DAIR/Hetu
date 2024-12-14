@@ -110,12 +110,12 @@ uint64_t CommOpImpl::get_comm_type(Operator& op, const Device& inferred, const C
       // 1-2-1、src group和dst group一样
       // intra op (tp)
       if (info.src_group == info.dst_group) {
-        if (info.src_ds.check_pure_duplicate()) {
-          _comm_type = COMM_SPLIT_OP;
-          HT_LOG_TRACE << "COMM_SPLIT_OP";
-        } else if (info.src_ds.check_scatter(info.dst_ds)) {
+        if (info.src_ds.check_scatter(info.dst_ds)) {
           _comm_type = SCATTER_OP;
           HT_LOG_TRACE << "SCATTER_OP";
+        } else if (info.src_ds.check_split(dst_ds)) {
+          _comm_type = COMM_SPLIT_OP;
+          HT_LOG_TRACE << "COMM_SPLIT_OP";
         } else if (info.src_ds.check_allreduce(info.dst_ds)) {
           _comm_type = ALL_REDUCE_OP;
           HT_LOG_TRACE << "ALL_REDUCE_OP";
@@ -485,15 +485,16 @@ bool CommOpImpl::DoInstantiate(Operator& op, const Device& placement,
   auto& inst_ctx = op->instantiation_ctx();
   inst_ctx.placement = placement;
   inst_ctx.stream_index = stream_index;
+  auto enable_timing = op->graph().EVENT_TIMING;
   if (placement.is_cuda()) {
     for (size_t i = 0; i < HT_MAX_NUM_MICRO_BATCHES; i++) { 
-      inst_ctx.start[i] = std::make_unique<hetu::impl::CUDAEvent>(placement);
-      inst_ctx.stop[i] = std::make_unique<hetu::impl::CUDAEvent>(placement);
+      inst_ctx.start[i] = std::make_unique<hetu::impl::CUDAEvent>(placement, enable_timing);
+      inst_ctx.stop[i] = std::make_unique<hetu::impl::CUDAEvent>(placement, enable_timing);
     }
   } else {
     for (size_t i = 0; i < HT_MAX_NUM_MICRO_BATCHES; i++) {     
-      inst_ctx.start[i] = std::make_unique<hetu::impl::CPUEvent>();
-      inst_ctx.stop[i] = std::make_unique<hetu::impl::CPUEvent>();
+      inst_ctx.start[i] = std::make_unique<hetu::impl::CPUEvent>(enable_timing);
+      inst_ctx.stop[i] = std::make_unique<hetu::impl::CPUEvent>(enable_timing);
     }
   }
   Operator::for_each_output_tensor(op, [&](Tensor& tensor) {
@@ -876,8 +877,15 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
                                        RuntimeContext& runtime_ctx) const {
   NDArrayList outputs;
   auto cur_buffer_shape = runtime_ctx.get_runtime_shape(op->output(0)->id());
-  if (_buffer_for_allgather.is_defined() && _buffer_for_allgather->shape() == cur_buffer_shape) {
-     outputs = {_buffer_for_allgather};
+  int64_t output_numel = std::accumulate(cur_buffer_shape.begin(), cur_buffer_shape.end(), 1, std::multiplies<int64_t>());
+  // workaround: no buffer for allgather inside lora
+  if (op->name().find("lora") != op->name().npos) {
+    outputs = DoAllocOutputs(op, inputs, runtime_ctx);
+  } else if (_buffer_for_allgather.is_defined() && _buffer_for_allgather->numel() >= output_numel) {
+    auto begin_pos = HTShape(cur_buffer_shape.size(), 0);
+    NDArray _slice_buffer_for_all_gather = NDArray::slice(_buffer_for_allgather, begin_pos, cur_buffer_shape,
+                                                          op->stream_index());
+    outputs = {std::move(_slice_buffer_for_all_gather)};
   } else {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
     _buffer_for_allgather = outputs[0];
@@ -923,9 +931,10 @@ ReduceScatterOpImpl::DoInferMeta(const TensorList& inputs) const {
   DataType dtype = input->dtype();
   HTShape scatter_shape = input->shape();
   int32_t scatter_dim = get_scatter_dim();
-  scatter_shape[scatter_dim] /= _comm_group.num_devices();
-  HT_ASSERT(scatter_shape[scatter_dim] >= 1) << "ReduceScatter: input shape[" << scatter_dim << "]: " 
+  HT_ASSERT(scatter_shape[scatter_dim] >= _comm_group.num_devices() || scatter_shape[scatter_dim] == 0)
+    << "ReduceScatter: input shape[" << scatter_dim << "]: " 
     << input->shape()[scatter_dim] << " must >= comm devices num: " << _comm_group.num_devices();  
+  scatter_shape[scatter_dim] /= _comm_group.num_devices();
   return {NDArrayMeta().set_dtype(dtype).set_shape(scatter_shape)};
 }
 
@@ -934,9 +943,9 @@ HTShapeList ReduceScatterOpImpl::DoInferShape(Operator& op,
                                               RuntimeContext& runtime_ctx) const {
   HTShape scatter_shape = input_shapes.at(0);
   int32_t scatter_dim = get_scatter_dim();
-  scatter_shape[scatter_dim] /= _comm_group.num_devices();
-  HT_ASSERT(scatter_shape[scatter_dim] >= 1) << "ReduceScatter: input shape[" << scatter_dim << "]: " 
+  HT_ASSERT(scatter_shape[scatter_dim] >= _comm_group.num_devices() || scatter_shape[scatter_dim] == 0) << "ReduceScatter: input shape[" << scatter_dim << "]: " 
     << input_shapes.at(0)[scatter_dim] << " must >= comm devices num: " << _comm_group.num_devices();  
+  scatter_shape[scatter_dim] /= _comm_group.num_devices();
   return {scatter_shape};
 }
 

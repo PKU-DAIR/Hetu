@@ -107,6 +107,7 @@ class DistributedStates {
   std::vector<int32_t> reduce_order(int dim) const;
   bool check_reduce_dim(const DistributedStates& dst_distributed_states, int dim) const;
 
+  bool check_split(const DistributedStates& dst_distributed_states) const;
   bool check_allreduce(const DistributedStates& dst_distributed_states) const;
   bool check_scatter(const DistributedStates& dst_distributed_states) const;
   bool check_allgather(const DistributedStates& dst_distributed_states) const;

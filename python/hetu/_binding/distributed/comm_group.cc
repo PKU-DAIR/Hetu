@@ -3,6 +3,7 @@
 #include "hetu/_binding/utils/arg_parser.h"
 #include "hetu/_binding/utils/decl_utils.h"
 #include "hetu/_binding/utils/function_registry.h"
+#include "hetu/impl/communication/mpi_comm_group.h"
 
 namespace hetu {
 
@@ -72,12 +73,10 @@ PyObject* CommGroup_GetGlobalDeviceGroup(PyObject*, PyObject* args, PyObject* kw
   HT_PY_FUNC_END
 }
 
-// workaround
 PyObject* CommGroup_GlobalCommBarrier(PyObject*, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
-  std::vector<int> all_ranks(hetu::impl::comm::GetWorldSize());
-  std::iota(all_ranks.begin(), all_ranks.end(), 0);
-  hetu::impl::comm::GetLocalClient()->Barrier(0, all_ranks);
+  auto& comm_group = hetu::impl::comm::MPICommunicationGroup::GetOrCreateWorldwide();
+  comm_group->Barrier(true);
   Py_RETURN_NONE;
   HT_PY_FUNC_END
 }
@@ -88,7 +87,7 @@ std::vector<PyMethodDef> InitCommGroupPyClassMethodDefs() {
     {"init_comm_group", (PyCFunction) CommGroup_Init, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"local_device", (PyCFunction) CommGroup_GetLocalDevice, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"global_device_group", (PyCFunction) CommGroup_GetGlobalDeviceGroup, METH_VARARGS | METH_KEYWORDS, nullptr },    
-    {"global_comm_barrier", (PyCFunction) CommGroup_GlobalCommBarrier, METH_VARARGS | METH_KEYWORDS, nullptr },     
+    {"global_comm_barrier", (PyCFunction) CommGroup_GlobalCommBarrier, METH_VARARGS | METH_KEYWORDS, nullptr },
     {nullptr}
   });
   

@@ -219,31 +219,46 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
       Tensor grad_sum;
       if (is_need_sum_before_reduce) {
         TensorList partial_grad_list;
-        OpName name_of_sum_op_for = "";
+        std::vector<OpName> partial_grad_name_list;
         for (const auto& grad : filtered) {
+          // TODO: ???
           if (is_slice_op(grad->producer()) && is_comm_op(grad->producer()->input(0)->producer())) {
             ReplaceInput(grad->producer(), 0, grad->producer()->input(0)->producer()->input(0));
             Tensor partial_grad = grad;
             partial_grad_list.push_back(partial_grad);
-            name_of_sum_op_for += (partial_grad->name() + ", ");
+            partial_grad_name_list.push_back(partial_grad->name());
           } else {
             Tensor partial_grad = grad->producer()->input(0);
             partial_grad_list.push_back(partial_grad);
-            name_of_sum_op_for += (partial_grad->name() + ", ");
+            partial_grad_name_list.push_back(partial_grad->name());
           }
         }
+        // concatenate names of partial grads
+        OpName concat_name_of_partial_grad = std::accumulate(
+          partial_grad_name_list.begin() + 1, partial_grad_name_list.end(), partial_grad_name_list[0],
+          [](const std::string& a, const std::string& b) {
+            return a + ", " + b;
+        });
         // if allreduce/reduce-scatter group is different between input grads,
         // then assert error in placement group deduce process.
-        Tensor partial_grad_sum = MakeSumOp(partial_grad_list, OpMeta().set_name("sum_op_for_partial_[" + name_of_sum_op_for + "]"));
+        Tensor partial_grad_sum = MakeSumOp(
+          partial_grad_list,
+          OpMeta().set_name("sum_op_for_partial_[" + concat_name_of_partial_grad + "]")
+        );
         partial_grad_sum->set_is_grad(true);
         // 原地的comm
         grad_sum = MakeCommOp(partial_grad_sum, dst_ds_hierarchy, OpMeta().set_name("comm_op_after_partial_grad_sum"));
       } else {
-        OpName name_of_sum_op_for = "";
+        std::vector<OpName> grad_name_list;
         for (const auto& grad : filtered) {
-          name_of_sum_op_for += (grad->name() + ", ");
+          grad_name_list.push_back(grad->name());
         }
-        grad_sum = MakeSumOp(filtered, OpMeta().set_name("sum_op_for_[" + name_of_sum_op_for + "]"));
+        OpName concat_name_of_grad = std::accumulate(
+          grad_name_list.begin() + 1, grad_name_list.end(), grad_name_list[0],
+          [](const std::string& a, const std::string& b) {
+            return a + ", " + b;
+        });
+        grad_sum = MakeSumOp(filtered, OpMeta().set_name("sum_op_for_[" + concat_name_of_grad + "]"));
       }
       grad_sum->set_is_grad(true);
       return grad_sum;

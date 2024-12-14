@@ -721,7 +721,7 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
                   // 只需要第一次碰到时候make即可
                   else {
                     auto& exec_op = Graph::MakeOp(std::make_shared<DataTransferOpImpl>(datatype, exec_inputs[i]->device()),
-                                    {exec_inputs[i]}, OpMeta().set(exec_inputs[i]->producer()->op_meta()).set_name(exec_inputs[i]->producer()->name() + "_transfer").set_is_deduce_states(false), *exec_graph);
+                                    {exec_inputs[i]}, OpMeta().set(exec_inputs[i]->producer()->op_meta()).set_name(exec_inputs[i]->producer()->name() + "_autocast").set_is_deduce_states(false), *exec_graph);
                     exec_op->MapToParallelDevices(exec_inputs[i]->placement_group_union());
                     // we have to set the exec shape plan manually before the initialization of the plan
                     exec_shape_plan[exec_op->output(0)->id()] = exec_op->output(0)->shape();
