@@ -136,7 +136,7 @@ void SplitOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_di
                                     TensorList& outputs, const OpMeta& op_meta) const {
   auto split_num = get_split_num();
   if (split_num == 0) {
-    split_num = inputs.size() - 1;
+    split_num = outputs.size();
     for (int i = 0; i < split_num; i++) {
       outputs.at(i)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
     }

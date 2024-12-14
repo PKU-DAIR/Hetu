@@ -286,17 +286,6 @@
   args: Tensor input, SyShape begin_pos, SyShape output_shape
   self: input
 
-# multi-task only
-- name: slice
-  op: SliceOp
-  args: Tensor input, Tensor task_batch_idx, HTShape begin_pos, HTShape output_shape
-  self: input
-
-- name: slice
-  op: SliceOp
-  args: Tensor input, Tensor task_batch_idx, SyShape begin_pos, SyShape output_shape
-  self: input
-
 - name: split
   op: SplitOp
   args: Tensor input, int64_t num_chunks, int64_t dim

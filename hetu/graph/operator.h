@@ -1130,6 +1130,7 @@ static const uint64_t UNKNOWN_OP = 1ul << 24;
 static const uint64_t UNUSED_OP = 1ul << 25;
 static const uint64_t PARALLEL_ATTN_OP = 1ul << 26;
 static const uint64_t PARALLEL_ATTN_GRAD_OP = 1ul << 27;
+static const uint64_t INDEX_ADD_OP = 1ul << 28;
 static const uint64_t FUSED_GROUP_OP = 1ul << 53;
 static const uint64_t CONCAT_OP = 1ul << 54;
 static const uint64_t CONTIGUOUS_OP = 1ul << 55;
@@ -1184,6 +1185,7 @@ DECLARE_OP_INDICATOR_CHECKER(comm, COMM_OP)
 DECLARE_OP_INDICATOR_CHECKER(parallel_attn, PARALLEL_ATTN_OP)
 DECLARE_OP_INDICATOR_CHECKER(parallel_attn_grad, PARALLEL_ATTN_GRAD_OP)
 DECLARE_OP_INDICATOR_CHECKER(unknown, UNKNOWN_OP)
+DECLARE_OP_INDICATOR_CHECKER(index_add, INDEX_ADD_OP)
 DECLARE_OP_INDICATOR_CHECKER(communication,
                              PEER_TO_PEER_SEND_OP | PEER_TO_PEER_RECV_OP |
                              ALL_TO_ALL_OP | ALL_REDUCE_OP |

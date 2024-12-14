@@ -113,7 +113,7 @@ uint64_t CommOpImpl::get_comm_type(Operator& op, const Device& inferred, const C
         if (info.src_ds.check_scatter(info.dst_ds)) {
           _comm_type = SCATTER_OP;
           HT_LOG_TRACE << "SCATTER_OP";
-        } else if (info.src_ds.check_split(dst_ds)) {
+        } else if (info.src_ds.check_split(info.dst_ds)) {
           _comm_type = COMM_SPLIT_OP;
           HT_LOG_TRACE << "COMM_SPLIT_OP";
         } else if (info.src_ds.check_allreduce(info.dst_ds)) {

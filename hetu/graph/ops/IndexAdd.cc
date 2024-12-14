@@ -26,29 +26,29 @@ TensorList IndexAddOpImpl::DoGradient(Operator& op,
                                       const TensorList& grad_outputs) const {
   HTShape input_start_and_end_idx = {};
   auto grad_input = op->requires_grad(0) ? MakeIndexAddGradientOp(grad_outputs.at(0), op->input(0), dim(), false, std::move(input_start_and_end_idx),
-                                          op->grad_op_meta().set_name(op->grad_name()).set_require_event(false))
+                                          op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
   if (op->inputs().size() == 3) {
     if (symbolic()) {
       auto grad_y = op->requires_grad(1) ? MakeIndexAddGradientOp(grad_outputs.at(0), op->input(1), op->input(2), dim(), true,
-                                                                  op->grad_op_meta().set_name(op->grad_name()).set_require_event(false))
+                                                                  op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
       return {grad_input, grad_y, Tensor()};
     } else {
       auto grad_y = op->requires_grad(1) ? MakeIndexAddGradientOp(grad_outputs.at(0), op->input(1), op->input(2), dim(), true,
-                                                                  op->grad_op_meta().set_name(op->grad_name()).set_require_event(false))
+                                                                  op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
       return {grad_input, grad_y, Tensor()};
     }
   } else {
     if (symbolic()) {
       auto grad_y = op->requires_grad(1) ? MakeIndexAddGradientOp(grad_outputs.at(0), op->input(1), dim(), true, symbolic_start_and_end_idx(),
-                                                                  op->grad_op_meta().set_name(op->grad_name()).set_require_event(false))
+                                                                  op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
       return {grad_input, grad_y};
     } else {
       auto grad_y = op->requires_grad(1) ? MakeIndexAddGradientOp(grad_outputs.at(0), op->input(1), dim(), true, start_and_end_idx(),
-                                                                  op->grad_op_meta().set_name(op->grad_name()).set_require_event(false))
+                                                                  op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
       return {grad_input, grad_y};
     }
@@ -128,8 +128,8 @@ void IndexAddGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList
   outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
 }
 
-void IndexAddOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                       TensorList& outputs, const OpMeta& op_meta) const {
+void IndexAddGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                                               TensorList& outputs, const OpMeta& op_meta) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 

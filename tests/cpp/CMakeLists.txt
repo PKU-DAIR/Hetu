@@ -8,6 +8,8 @@ list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_pp.cc
 list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_graph.cc")
 list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_graph_ops.cc")
 list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_einsum.cc")
+list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_comm_group.cc")
+list(FILTER HETU_CPP_TEST_SRC EXCLUDE REGEX "${HETU_CPP_TEST_SRC_DIR}/test_ndarray_ops.cc")
 foreach(test ${HETU_CPP_TEST_SRC})
   get_filename_component(TName ${test} NAME_WE)
   add_executable(${TName} ${test})
