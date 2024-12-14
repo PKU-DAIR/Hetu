@@ -94,7 +94,7 @@ HTShapeList SliceGradientOpImpl::DoInferShape(Operator& op,
 
 void SliceGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                          const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());  
+  outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());  
 }
 
 void SliceGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
