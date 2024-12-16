@@ -1115,8 +1115,8 @@ class BaseDynamicDispatcher(ABC):
         
         if os.environ.get('EXPR_CASE_STUDY') == 'ON':
             data_dispatch_pattern = os.environ.get('EXPR_DATA_DISPATCH')
-            if not os.path.exists(f"case_study/{data_dispatch_pattern}"):
-                os.makedirs(f"case_study/{data_dispatch_pattern}")
+            if not os.path.exists(f"case_study/{data_dispatch_pattern}-{os.environ.get('DP_BUCKET')}"):
+                os.makedirs(f"case_study/{data_dispatch_pattern}-{os.environ.get('DP_BUCKET')}")
             seq_to_num = {}
             seq_to_time = {}
             seq_num = 0
@@ -1154,7 +1154,7 @@ class BaseDynamicDispatcher(ABC):
             local_host_name = os.environ['HETU_LOCAL_HOSTNAME']
             data_dispatch_pattern = os.environ.get('EXPR_DATA_DISPATCH')
             if scheme_id == self.scheme_id:
-                with open(f"case_study/{data_dispatch_pattern}/{local_host_name}-{self.local_device_idx}.txt", 'a') as f:
+                with open(f"case_study/{data_dispatch_pattern}-{os.environ.get('DP_BUCKET')}/{local_host_name}-{self.local_device_idx}.txt", 'a') as f:
                     f.write(f"{seq_to_percent}\n")
                     f.write(f"{seq_to_time}\n")
         return estimate_time

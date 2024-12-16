@@ -1,0 +1,6 @@
+strategy_config:
+  -
+    dp: 16
+    tp: 1
+    pp: 4
+    max_tokens: 2048

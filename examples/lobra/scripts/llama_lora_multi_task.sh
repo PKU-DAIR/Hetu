@@ -3,9 +3,9 @@ NUM_GPUS=${2:-16}
 BUCKET_NUM=${3:-16}
 TRAIN_TASK_NUM=${4:-6}
 MAX_SEQ_LENGTH=${5:-16384}
-HOST_FILE=${6:-'scripts/hostfile'}
-TRAINER_CONFIG=${7:-'trainer_example'}
-STRATEGY_CONFIG=${8:-''}
+TRAINER_CONFIG=${6:-'trainer_example'}
+STRATEGY_CONFIG=${7:-''}
+HOST_FILE=${8:-'scripts/hostfile'}
 
 # env
 PATH="/home/pkuhetu/envs/miniconda3/envs/hetu-py/bin:${PATH}"
@@ -19,9 +19,6 @@ export HETU_SWITCH_ALGORITHM=NEW_GREEDY
 export HETU_SWITCH_PROFILE=INFO
 export HETU_INTERNAL_LOG_LEVEL=INFO
 export HETU_EVENT_TIMING=OFF
-
-export BUCKET_GRAD_BUFFER=LAYER
-export GRAD_CONCAT_BUFFER=ON
 
 export NCCL_DEBUG=VERSION
 export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7
@@ -87,9 +84,10 @@ fi
 mpirun --allow-run-as-root -mca orte_abort_on_non_zero_status 1 -np ${NUM_GPUS} \
     --hostfile ${HOST_FILE} \
     -x NCCL_IB_HCA -x NCCL_IB_GID_INDEX -x NCCL_DEBUG \
-    -x HETU_EVENT_TIMING -x BUCKET_GRAD_BUFFER -x GRAD_CONCAT_BUFFER -x SPLIT_COLLECTIVE_STREAM -x GET_TOKENS -x DP_BUCKET \
+    -x HETU_EVENT_TIMING -x DP_BUCKET \
     -x PATH -x LD_LIBRARY_PATH -x PYTHONPATH -x HETU_SWITCH_ALGORITHM -x HETU_SWITCH_PROFILE -x HETU_INTERNAL_LOG_LEVEL \
-    -x CUSTOM_DISTRIBUTION -x EXPR_DATA_DISPATCH -x PROFILE_DYNAMIC_PLANNER -x HETU_MEMORY_PROFILE -x PROFILE_E2E_COST \
+    -x EXPR_CUSTOM_DISTRIBUTION -x EXPR_DATA_DISPATCH -x EXPR_SENSITIVITY -x EXPR_EFFECTIVENESS -x EXPR_SIMULATE \
+    -x HETU_MEMORY_PROFILE \
     -x HETU_MAX_SPLIT_SIZE_MB -x HETU_MAX_INTERNAL_FRAGMENT_SIZE_MB \
     --output-filename ${LOG_FILE_PATH} --merge-stderr-to-stdout \
     python3 scripts/llama_lora_multi_task.py \

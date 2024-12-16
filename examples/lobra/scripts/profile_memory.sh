@@ -2,8 +2,8 @@
 MODEL_SIZE=${1:-'7B'}
 NUM_GPUS_LIMIT=${2:-1}
 TRAIN_TASK_NUM=${3:-1}
-MAX_SEQ_LENGTH=${4:-16384}
-TRAINER_CONFIG=${5:-"example"}
+TRAINER_CONFIG=${4:-"example"}
+MAX_SEQ_LENGTH=${5:-16384}
 
 if [ "${MODEL_SIZE}" = "7B" ]; then
     NUM_LAYERS=32

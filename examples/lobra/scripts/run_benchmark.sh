@@ -29,9 +29,6 @@ export NCCL_DEBUG=VERSION
 export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7
 export NCCL_IB_GID_INDEX=3
 
-export BUCKET_GRAD_BUFFER=LAYER
-export GRAD_CONCAT_BUFFER=ON
-
 FFN_HIDDEN_SIZE=$(($HIDDEN_SIZE * 4))
 if [ $NUM_LAYERS -eq 32 ] && [ $HIDDEN_SIZE -eq 4096 ] && [ $NUM_HEADS -eq 32 ]; then
     FFN_HIDDEN_SIZE=11008
@@ -63,9 +60,10 @@ fi
 mpirun --allow-run-as-root -mca orte_abort_on_non_zero_status 1 -np ${NUM_GPUS} \
     --hostfile ${HOST_FILE} \
     -x NCCL_IB_HCA -x NCCL_IB_GID_INDEX \
-    -x CUDA_HOME -x PATH -x LD_LIBRARY_PATH -x PYTHONPATH -x NCCL_DEBUG -x HETU_SWITCH_ALGORITHM -x HETU_SWITCH_PROFILE -x HETU_INTERNAL_LOG_LEVEL -x NCCL_IB_GID_INDEX=3 \
-    -x LORA_SPLIT_METHOD -x HETU_MEMORY_PROFILE -x HETU_MEMORY_LOG_FILE -x HETU_GRAD_BUFFER \
-    --output-filename logs/${EXP_NAME}_llama_${MODEL_SIZE}_${LORA_SPLIT_METHOD}_${EVENT_TIMING}/ds_parallel_task${TRAIN_TASK_NUM}_gpu${NUM_GPUS}_dp${DP}_tp${TP}_pp${PP}_sp${SP} --merge-stderr-to-stdout \
+    -x CUDA_HOME -x PATH -x LD_LIBRARY_PATH -x PYTHONPATH -x NCCL_DEBUG \
+    -x HETU_SWITCH_ALGORITHM -x HETU_SWITCH_PROFILE -x HETU_INTERNAL_LOG_LEVEL -x NCCL_IB_GID_INDEX=3 \
+    -x HETU_MEMORY_PROFILE -x HETU_MEMORY_LOG_FILE \
+    --output-filename logs/${EXP_NAME}_llama_${MODEL_SIZE}/ds_parallel_task${TRAIN_TASK_NUM}_gpu${NUM_GPUS}_dp${DP}_tp${TP}_pp${PP} --merge-stderr-to-stdout \
     python3 scripts/benchmark.py \
     --trainer_config_path $TRAINER_CONFIG_PATH \
     --save_path $SAVE_PATH \

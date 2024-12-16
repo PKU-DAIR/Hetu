@@ -710,7 +710,7 @@ class Trainer:
                                 f.write(f"{iter_time}\n")
                         
                         if os.environ.get('EXPR_CASE_STUDY') == 'ON':
-                            with open(f"case_study/{data_dispatch_pattern}/{local_host_name}-{local_device.index}.txt", 'a') as f:
+                            with open(f"case_study/{data_dispatch_pattern}-{os.environ.get('DP_BUCKET')}/{local_host_name}-{local_device.index}.txt", 'a') as f:
                                 f.write(f"{iter_time}\n")
                                 f.write("\n")
                         ht.global_comm_barrier()
