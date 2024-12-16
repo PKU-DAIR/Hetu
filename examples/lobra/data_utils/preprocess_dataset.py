@@ -1,10 +1,9 @@
 import json
 import argparse
 import os
-from data_utils.utils import jload, jdump
-from data_utils.gpt_load_dataset import _load_dataset_to_json
-from data_utils.prompt_template import AlpacaInstructTemplate, StackExchangedPairedTemplate, \
-                                    SummarizeTemplate, StackExchangedPairedwithContextTemplate
+from utils import jload, jdump, _load_dataset_to_json
+from prompt_template import AlpacaInstructTemplate, StackExchangedPairedTemplate, \
+                            SummarizeTemplate, StackExchangedPairedwithContextTemplate
 
 root_folder = "data"
 

@@ -2,6 +2,32 @@ import io
 import os
 import json
 
+def _load_dataset_to_json(dataset_name, root_folder='data', override=False):
+    """Load dataset from parquet file and save as json file."""
+    json_file = f'{root_folder}/{dataset_name}/{dataset_name}.json'
+    if os.path.exists(json_file) and not override:
+        return json_file
+    parquet_files = []
+    # 遍历f'{root_folder}/{dataset_name}'目录下的所有文件
+    for _, _, files in os.walk(f'{root_folder}/{dataset_name}'):
+        for file in files:
+            if file.endswith('.parquet'):
+                parquet_files.append(file)
+    
+    json_data = ''
+    for parquet_file in parquet_files:
+        tabel = pq.read_table(f'{root_folder}/{dataset_name}/{parquet_file}')
+        df = tabel.to_pandas()
+        json_data += df.to_json(orient='records', lines=True)
+    
+    f_dirname = os.path.dirname(json_file)
+    if f_dirname != "":
+        os.makedirs(f_dirname, exist_ok=True)
+    f = open(json_file, 'w')
+    f.write(json_data)
+    f.close()
+    return json_file
+
 def _make_w_io_base(f, mode: str):
     if not isinstance(f, io.IOBase):
         f_dirname = os.path.dirname(f)

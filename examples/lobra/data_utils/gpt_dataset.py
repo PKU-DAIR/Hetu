@@ -3,7 +3,7 @@ import bisect
 import math
 from types import SimpleNamespace
 from torch.utils.data import Dataset, DataLoader
-from .gpt_load_dataset import build_encoder, load_truncated_dataset
+from gpt_load_dataset import build_encoder, load_truncated_dataset
 
 class GPTJsonDataset(Dataset):
     def __init__(
