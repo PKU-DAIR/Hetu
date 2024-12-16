@@ -47,7 +47,7 @@ class GPTAttention(ht.nn.Module):
             self.embed_dim,
             self.embed_dim,
             ds_parallel_config['dense'],
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
         )
@@ -156,7 +156,7 @@ class ParallelMLP(ht.nn.Module):
             config.ffn_hidden_size,
             config.hidden_size,
             ds_parallel_config['dense_4h_to_h'],
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
             # init_method=output_layer_init_method
@@ -192,9 +192,9 @@ class GPTBlock(ht.nn.Module):
         hidden_size = config.hidden_size
 
         # sequence parallel: layernorm前做scatter(这一部分由row prallel的reduce-scatter完成); layernorm后做allgather
-        self.ln_1 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm1'], sp=True, eps=config.layer_norm_epsilon, name=f'ln1_block{layer_idx}')
+        self.ln_1 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm1'], sequence_parallel=True, eps=config.layer_norm_epsilon, name=f'ln1_block{layer_idx}')
         self.attn = GPTAttention(config, ds_parallel_config['attn'], layer_idx=layer_idx, name=f'attn_block{layer_idx}')
-        self.ln_2 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm2'], sp=True, eps=config.layer_norm_epsilon, name=f'ln2_block{layer_idx}')
+        self.ln_2 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm2'], sequence_parallel=True, eps=config.layer_norm_epsilon, name=f'ln2_block{layer_idx}')
         self.mlp = GPTMLP(config, ds_parallel_config['mlp'], name=f'mlp_block{layer_idx}')
 
     def forward(
@@ -242,7 +242,7 @@ class GPTModel(ht.nn.Module):
                     blocks.append(GPTBlock(config, block_config, layer_idx=i))
                     break
         self.h = ht.nn.ModuleList(blocks)
-        self.ln_f = ht.nn.HtParallelLayerNorm(self.embed_dim, ds_parallel_config['layernorm_final'], sp=True, eps=config.layer_norm_epsilon, name='ln_final')
+        self.ln_f = ht.nn.HtParallelLayerNorm(self.embed_dim, ds_parallel_config['layernorm_final'], sequence_parallel=True, eps=config.layer_norm_epsilon, name='ln_final')
 
     def forward(
         self,

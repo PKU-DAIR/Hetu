@@ -56,7 +56,7 @@ class LLamaAttention(ht.nn.Module):
             self.embed_dim,
             self.embed_dim,
             ds_parallel_config['dense'],
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
         )
@@ -185,7 +185,7 @@ class ParallelMLP(ht.nn.Module):
             config.ffn_hidden_size,
             config.hidden_size,
             ds_parallel_config['dense_4h_to_h'],
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
             # init_method=output_layer_init_method
@@ -219,9 +219,9 @@ class LLamaBlock(ht.nn.Module):
         hidden_size = config.hidden_size
 
         # sequence parallel: norm前做scatter(这一部分由row prallel的reduce-scatter完成); norm后做allgather
-        self.rmsnorm_1 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm1'], sp=True, name=f'rmsnorm1_block{layer_idx}')
+        self.rmsnorm_1 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm1'], sequence_parallel=True, name=f'rmsnorm1_block{layer_idx}')
         self.attn = LLamaAttention(config, ds_parallel_config['attn'], layer_idx=layer_idx, name=f'attn_block{layer_idx}')
-        self.rmsnorm_2 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm2'], sp=True, name=f'rmsnorm2_block{layer_idx}')
+        self.rmsnorm_2 = ht.nn.HtParallelLayerNorm(hidden_size, ds_parallel_config['layernorm2'], sequence_parallel=True, name=f'rmsnorm2_block{layer_idx}')
         self.mlp = LLamaMLP(config, ds_parallel_config['mlp'], name=f'mlp_block{layer_idx}')
 
     def forward(
@@ -266,7 +266,7 @@ class LLamaModel(ht.nn.Module):
                     blocks.append(LLamaBlock(config, block_config, layer_idx=i))
                     break
         self.h = ht.nn.ModuleList(blocks)
-        self.rmsnorm_f = ht.nn.HtParallelLayerNorm(config.hidden_size, ds_parallel_config['layernorm_final'], sp=True, name='rmsnorm_final')
+        self.rmsnorm_f = ht.nn.HtParallelLayerNorm(config.hidden_size, ds_parallel_config['layernorm_final'], sequence_parallel=True, name='rmsnorm_final')
 
     def forward(
         self,

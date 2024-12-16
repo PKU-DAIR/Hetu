@@ -68,7 +68,7 @@ class GPTAttention(ht.nn.Module):
             self.embed_dim,
             self.embed_dim,
             get_multi_ds_parallel_config(ds_parallel_configs, 'dense', layer_idx),
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
         )
@@ -190,7 +190,7 @@ class ParallelMLP(ht.nn.Module):
             config.ffn_hidden_size,
             config.hidden_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'dense_4h_to_h', layer_idx),
-            sp=True,
+            sequence_parallel=True,
             bias=self.add_bias,
             name=f'rowp_{name}'
             # init_method=output_layer_init_method
@@ -238,9 +238,9 @@ class GPTBlock(ht.nn.Module):
         hidden_size = config.hidden_size
 
         # sequence parallel: layernorm前做reduce-scatter(这一部分由row prallel的reduce-scatter完成); layernorm后做allgather
-        self.ln_1 = ht.nn.HtMultiParallelLayerNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm1', layer_idx), sp=True, eps=config.layer_norm_epsilon, name=f'ln1_block{layer_idx}')
+        self.ln_1 = ht.nn.HtMultiParallelLayerNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm1', layer_idx), sequence_parallel=True, eps=config.layer_norm_epsilon, name=f'ln1_block{layer_idx}')
         self.attn = GPTAttention(config, ds_parallel_configs, layer_idx=layer_idx, name=f'attn_block{layer_idx}')
-        self.ln_2 = ht.nn.HtMultiParallelLayerNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm2', layer_idx), sp=True, eps=config.layer_norm_epsilon, name=f'ln2_block{layer_idx}')
+        self.ln_2 = ht.nn.HtMultiParallelLayerNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm2', layer_idx), sequence_parallel=True, eps=config.layer_norm_epsilon, name=f'ln2_block{layer_idx}')
         self.mlp = GPTMLP(config, ds_parallel_configs, layer_idx=layer_idx, name=f'mlp_block{layer_idx}')
 
     def forward(
@@ -290,7 +290,7 @@ class GPTModel(ht.nn.Module):
             #         blocks.append(GPTBlock(config, block_config, layer_idx=i))
             #         break
         self.h = ht.nn.ModuleList(blocks)
-        self.ln_f = ht.nn.HtMultiParallelLayerNorm(self.embed_dim, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm_final'), sp=True, eps=config.layer_norm_epsilon, name='ln_final')
+        self.ln_f = ht.nn.HtMultiParallelLayerNorm(self.embed_dim, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm_final'), sequence_parallel=True, eps=config.layer_norm_epsilon, name='ln_final')
 
     def forward(
         self,
