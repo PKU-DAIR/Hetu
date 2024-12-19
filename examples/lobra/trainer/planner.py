@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from joblib import Parallel, delayed
 from pyscipopt import Model, quicksum
-from trainer.utils.planner import combine_scheme_to_strategy_candidates
+from trainer.utils import combine_scheme_to_strategy_candidates
 
 class BaseStaticPlanner(ABC):
     def __init__(
@@ -28,9 +28,9 @@ class BaseStaticPlanner(ABC):
         self.popt = cost_model.popt
         self.cache_estimate_times = {}
         
+        self.use_optimized_scheme_pool = use_optimized_scheme_pool
         self.scheme_pool = self.get_optimized_scheme_pool(scheme_candidates)
         self.scheme_pool_size = len(self.scheme_pool)
-        self.use_optimized_scheme_pool = use_optimized_scheme_pool
         
         self.task_seq_lens = None
         self.mbs_map = None

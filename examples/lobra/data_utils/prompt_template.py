@@ -49,6 +49,7 @@ class StackExchangedPairedwithContextTemplate(InstructTemplate):
     def format(
         cls, sample: Mapping[str, Any], column_map: Optional[Dict[str, str]] = None
     ) -> str:
+        column_map = column_map or {}
         def get_context(query):
             context = ""
             for i, label in enumerate(query['context']['labels']):

@@ -1,7 +1,7 @@
 import os
 import bisect
 import numpy as np
-from trainer.dp_bucket import get_buckets_dp
+from trainer.utils import get_buckets_dp
 from data_utils.bucket import Bucket
 
 class MicroBatch:

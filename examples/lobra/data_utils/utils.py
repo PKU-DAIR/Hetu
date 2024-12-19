@@ -1,6 +1,7 @@
 import io
 import os
 import json
+import pyarrow.parquet as pq
 
 def _load_dataset_to_json(dataset_name, root_folder='data', override=False):
     """Load dataset from parquet file and save as json file."""

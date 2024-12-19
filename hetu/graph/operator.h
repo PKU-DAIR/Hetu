@@ -520,6 +520,10 @@ class OpDef : public shared_ptr_target {
     return _body->DeduceStates(inputs(), outputs(), op_meta());
   }
 
+  inline void DeduceStatesHierarchy() {
+    return _body->DeduceStatesHierarchy(inputs(), outputs(), op_meta(), graph());
+  }
+
   inline bool Instantiate(const Device& placement, StreamIndex stream_id) {
     return _body->Instantiate(get_self(), placement, stream_id);
   }

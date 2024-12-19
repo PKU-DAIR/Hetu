@@ -20,6 +20,8 @@ DATASETS = {
 
 # Base directory for dataset folders
 ROOT_FOLDER = "data"
+GIT_REPO_URL = "https://huggingface.co/Somoku/tesatad-tcafitra"
+TAR_FILE_NAME = "ft_dataset.tar.gz"
 
 def install_git_lfs():
     try:
@@ -29,19 +31,26 @@ def install_git_lfs():
         print(f"Error during git lfs install: {e}")
 
 def clone_repository():
-    try:
-        subprocess.run(["git", "clone", GIT_REPO_URL], cwd=ROOT_FOLDER, check=True)
-        print("Repository cloned successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error during git clone: {e}")
+    subprocess.run(["git", "clone", GIT_REPO_URL], cwd=ROOT_FOLDER, check=True)
+    print("Repository cloned successfully.")
 
 def extract_tar_file():
+    tar_file_path = os.path.join(ROOT_FOLDER, "tesatad-tcafitra", "ft_dataset.tar.gz")
+    if os.path.exists(tar_file_path):
+        try:
+            subprocess.run(["mv", tar_file_path, ROOT_FOLDER], check=True)
+            print("Tar file moved successfully.")
+        except Exception as e:
+            print(f"Error during tar file move: {e}")
     tar_file_path = os.path.join(ROOT_FOLDER, TAR_FILE_NAME)
     if os.path.exists(tar_file_path):
         try:
             with tarfile.open(tar_file_path, "r:gz") as tar:
                 tar.extractall(path=ROOT_FOLDER)
             print("Dataset extracted successfully.")
+            # subprocess.run(["mv", os.path.join(ROOT_FOLDER, "finetune-datasets", r"*"), ROOT_FOLDER], check=True)
+            # subprocess.run(["rm", "-rf", os.path.join(ROOT_FOLDER, "finetune-datasets")], check=True)
+            # print("Dataset moved successfully.")
         except Exception as e:
             print(f"Error during tar extraction: {e}")
     else:
@@ -50,26 +59,25 @@ def extract_tar_file():
 # Create base directory if it doesn't exist
 os.makedirs(ROOT_FOLDER, exist_ok=True)
 
-# Install Git LFS
-install_git_lfs()
+if not os.path.exists(os.path.join(ROOT_FOLDER, TAR_FILE_NAME)):
+    # Install Git LFS
+    install_git_lfs()
 
-# Clone repository
-GIT_REPO_URL = "https://huggingface.co/Somoku/tesatad-tcafitra"
-retries = 10
-for i in range(retries):
-    try:
-        clone_repository()
-        break
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to clone repository: {e}")
-        if i < retries - 1:
-            print(f"Retrying... Attempt {i + 1}")
-        else:
-            print("Maximum retries reached. Exiting...")
-            exit(-1)
+    # Clone repository
+    retries = 10
+    for i in range(retries):
+        try:
+            clone_repository()
+            break
+        except Exception as e:
+            print(f"Failed to clone repository: {e}")
+            if i < retries - 1:
+                print(f"Retrying... Attempt {i + 1}")
+            else:
+                print("Maximum retries reached. Exiting...")
+                exit(-1)
 
 # Extract tar file
-TAR_FILE_NAME = "ft_dataset.tar.gz"
 extract_tar_file()
 
 for dataset_name, _ in DATASETS.items():

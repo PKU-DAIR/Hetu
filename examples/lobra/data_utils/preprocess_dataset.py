@@ -37,6 +37,21 @@ dataset_to_output_key = {
     "meetingbank": "summary",
 }
 
+column_map = {
+    "MathInstruct": {"instruction": "instruction"},
+    "python_code_instructions": {"instruction": "instruction", "input": "input"},
+    "dolly": {"instruction": "instruction", "input": "context"},
+    "billsum": {"dialogue": "text"},
+    "commitpackft": {"instruction": "instruction", "input": "input"},
+    "NuminaMath-CoT": {"question": "problem"},
+    "PubMedQA": {"question": "question"},
+    "MetaMathQA": {"question": "query"},
+    "evol_instruct": {"instruction": "instruction"},
+    "cnn_dailymail": {"dialogue": "article"},
+    "xsum": {"dialogue": "document"},
+    "meetingbank": {"dialogue": "transcript"},
+}
+
 def format_prompt(dataset_name, root_folder="data"):
     if dataset_name not in dataset_to_template:
         raise ValueError(f"Dataset {dataset_name} not supported.")
@@ -52,17 +67,17 @@ def format_prompt(dataset_name, root_folder="data"):
         with open(json_file, 'r') as f:
             lines = f.readlines()
         jdict = [json.loads(line.strip()) for line in lines]    
-    print(jdict[0])
+    print(jdict[0].keys())
 
     for example in jdict:
-        text = dataset_to_template[dataset_name].format(example)
+        text = dataset_to_template[dataset_name].format(example, column_map.get(dataset_name, {}))
         example['text'] = text + example[dataset_to_output_key[dataset_name]]
         datas.append(example)
 
     jdump(datas, f"{root_folder}/{dataset_name}/{dataset_name}.json")
 
     new_jdict = jload(f"{root_folder}/{dataset_name}/{dataset_name}.json")
-    print(new_jdict[0])
+    # print(new_jdict[0])
 
 
 if __name__ == '__main__':
