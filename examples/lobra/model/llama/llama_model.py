@@ -18,6 +18,7 @@ class LLamaAttention(ht.nn.Module):
         super().__init__()
 
         self.config = config
+        self.ds_parallel_configs = ds_parallel_configs
         self.name = name
         self.use_flash_attn = config.use_flash_attn
         self.add_bias = False
@@ -134,6 +135,7 @@ class LLamaAttention(ht.nn.Module):
 class ParallelMLP(ht.nn.Module):
     def __init__(self, config, ds_parallel_configs, layer_idx, name='mlp'):
         super(ParallelMLP, self).__init__()
+        self.ds_parallel_configs = ds_parallel_configs
         self.config = config
         self.name = name
         self.add_bias = False
@@ -179,6 +181,7 @@ class ParallelMLP(ht.nn.Module):
 class LLamaMLP(ht.nn.Module):
     def __init__(self, config, ds_parallel_configs, layer_idx, name='mlp'):
         super(LLamaMLP, self).__init__()
+        self.ds_parallel_configs = ds_parallel_configs
         self.config = config
         self.name = name
         self.parallel_mlp = ParallelMLP(config, ds_parallel_configs, layer_idx, name)
@@ -193,6 +196,7 @@ class LLamaBlock(ht.nn.Module):
     def __init__(self, config, ds_parallel_configs, layer_idx):
         super().__init__()
         self.config = config
+        self.ds_parallel_configs = ds_parallel_configs
         self.name = f'LLamaBlock{layer_idx}'
         hidden_size = config.hidden_size
 
@@ -239,7 +243,6 @@ class LLamaBlock(ht.nn.Module):
             hidden_states, # [bsz*seq_len, hidden_size]
             mbs_times_dp_symbol,
             seq_len_symbol,
-            attention_mask=attention_mask, # [b, 1, 1, seq_len]
         )
         # residual connection
         # hidden_states = attn_output + residual

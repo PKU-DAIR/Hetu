@@ -8,6 +8,10 @@ from utils import parse_strategy_config
 from trainer import Trainer, TrainerConfig, StrategyConfig, DatasetWrapper, ModelWrapper, OptimizerWrapper
 
 def finetune(args, max_tokens_list=None):
+    local_device = ht.local_device()
+    all_devices = ht.global_device_group()
+
+    gpu_id = all_devices.get_index(local_device)
     trainer_config = TrainerConfig(args.trainer_config_path)
     assert args.train_task_num == trainer_config.train_task_num, \
         f"args.train_task_num should be equal to that in trainer_config, but got {args.train_task_num} v.s. {trainer_config.train_task_num}"
@@ -26,9 +30,11 @@ def finetune(args, max_tokens_list=None):
     cost_model = CostModel(
         model_config,
         args.profile_path,
+        args.profile_memory_path,
         sequence_parallel=args.sequence_parallel
     )
-    strategy_config = StrategyConfig(args.scheme_list, args.ngpus, args.num_layers)
+    strategy_config = StrategyConfig(args.scheme_list, args.ngpus, args.num_layers, gpu_id)
+    model_config.dp_symbol = ht.IntSymbol(1)
 
     # wrapper
     use_packing = False
@@ -152,8 +158,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--profile_path", type=str, default='', help="profile path of profiler."
     )
+    parser.add_argument(
+        "--profile_memory_path", type=str, default='', help="memory profile path of profiler."
+    )
+    parser.add_argument(
+        "--server_addr", type=str, default='127.0.0.1', help="server's address"
+    )
+    parser.add_argument(
+        "--server_port", type=str, default='23457', help="server's port"
+    ) 
     args = parser.parse_args()
     args.scheme_list, args.max_tokens = parse_strategy_config(args.strategy_config_path, args.split_scheme)
-    distributed_init()
+    distributed_init(args.ngpus, args.server_addr, args.server_port)
     finetune(args)
     print(f'train hetu ds parallel end...')

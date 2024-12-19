@@ -240,6 +240,12 @@ if __name__ == '__main__':
     parser.add_argument(
         "--warmup_steps", type=int, default=10, help="warmup steps"
     )
+    parser.add_argument(
+        "--server_addr", type=str, default='127.0.0.1', help="server's address"
+    )
+    parser.add_argument(
+        "--server_port", type=str, default='23457', help="server's port"
+    )
     args = parser.parse_args()
-    distributed_init()
+    distributed_init(args.ngpus, args.server_addr, args.server_port)
     llama_benchmark(args)

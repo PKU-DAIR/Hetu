@@ -18,6 +18,27 @@
 namespace hetu {
 namespace graph {
 
+static size_t GetLayerId(const Tensor& tensor) {
+  std::string sub_str = "Block";
+  size_t pos = tensor->name().find(sub_str);
+  HT_ASSERT (pos != std::string::npos) 
+    << "Can't find block num in the tensor name " << tensor->name();
+  size_t next_char_pos = pos + sub_str.length();
+  HT_ASSERT (next_char_pos < tensor->name().length())
+    << "Can't find block num in the tensor name " << tensor->name();
+  std::string layer_num_str = "";
+  while (tensor->name()[next_char_pos] != std::string::npos
+         && tensor->name()[next_char_pos] >= '0' 
+         && tensor->name()[next_char_pos] <= '9') {
+    layer_num_str += tensor->name()[next_char_pos];
+    next_char_pos += 1;
+  }
+  HT_ASSERT(layer_num_str != "")
+    << "Cannot fetch the number after 'Block' for " << tensor->name();
+  size_t layer_num = std::stoi(layer_num_str);
+  return layer_num;
+}
+
 // mempool debug use
 // see whether it can reuse
 static std::unordered_map<uint64_t, std::pair<size_t, Tensor>> malloc_outputs_map;
@@ -271,7 +292,7 @@ NDArray& ExecutableGraph::AllocVariableDataInner(const Tensor& tensor,
   }
   HT_LOG_DEBUG << hetu::impl::comm::GetLocalDevice() << ": alloc exec variable " << tensor;
   // TODO: check meta is valid & maybe we can use non-blocking stream?
-  bool is_param = (_parameter_ops.find(tensor->producer()->id()) != _parameter_ops.end());
+  bool is_param = (_parameter_ops.find(tensor->producer()->id()) != _parameter_ops.end() && tensor->requires_grad());
   bool is_optvar = (_optimizer_variable_ops.find(tensor->producer()->id()) != _optimizer_variable_ops.end());
   // TODO: better compatibility with hot switch and quantization
   if ((_use_origin_param_and_optimizer_buffer || _use_origin_param_and_optimizer_buckets) && (is_param || is_optvar)) {
@@ -1100,18 +1121,16 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
           << "wrong src and dst group relationship for " << comm_op
           << ", src_group = " << info.src_group << " and dst group = " << info.dst_group;
         auto local_device_index = info.src_group.get_index(local_device);
-        const auto& src_ds = input->get_distributed_states();
-        const auto& local_dst_ds = info.local_dst_ds;
-        auto cur_state_index = local_dst_ds.map_device_to_state_index(local_device_index);
-        const auto& order = local_dst_ds.get_order();
-        const auto& states = local_dst_ds.get_states();
+        auto cur_state_index = info.local_dst_ds.map_device_to_state_index(local_device_index);
+        const auto& order = info.local_dst_ds.get_order();
         HTAxes keys; 
         HTShape indices, splits;
         for (auto o : order) {
-          if (o >= 0 && states.at(o) != src_ds.states(o)) { 
+          if (o >= 0 && info.local_dst_ds.get_dim(o) != info.local_src_ds.get_dim(o)) { 
             keys.push_back(o);
-            splits.push_back(states.at(o));
-            indices.push_back(cur_state_index[o]);
+            auto split_num = info.local_dst_ds.get_dim(o) / info.local_src_ds.get_dim(o);
+            splits.push_back(split_num);
+            indices.push_back(cur_state_index[o] % split_num);
           }
         }
         HT_LOG_DEBUG << local_device << ": keys = " << keys << "; indices = " << indices << "; splits = " << splits;
@@ -1134,11 +1153,17 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
           << "wrong src and dst group relationship!";
         auto local_device_index = info.src_group.get_index(local_device);
         auto cur_state_index = info.local_dst_ds.map_device_to_state_index(local_device_index);
-        auto split_num = info.local_dst_ds.get_dim(0) / info.local_src_ds.get_dim(0);
-        auto indice = cur_state_index[0] % split_num;
-        HTAxes keys = {0};
-        HTShape indices = {indice};
-        HTShape splits = {split_num};
+        const auto& order = info.local_dst_ds.get_order();
+        HTAxes keys; 
+        HTShape indices, splits;
+        for (auto o : order) {
+          if (o >= 0 && info.local_dst_ds.get_dim(o) != info.local_src_ds.get_dim(o)) { 
+            keys.push_back(o);
+            auto split_num = info.local_dst_ds.get_dim(o) / info.local_src_ds.get_dim(o);
+            splits.push_back(split_num);
+            indices.push_back(cur_state_index[o] % split_num);
+          }
+        }
         Tensor scatter_output = MakeSplitOp(
           result, keys, indices, splits,
           OpMeta().set_is_deduce_states(false)
@@ -1149,7 +1174,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         scatter_op->MapToParallelDevices(info.src_group_union);
         scatter_op->Instantiate(local_device, kComputingStream);
         result = scatter_output;
-        HT_LOG_DEBUG << local_device << ": substitute comm_op to scatter_op";      
+        HT_LOG_DEBUG << local_device << ": scatter: comm op = " << comm_op << ", input = " << comm_op->input(0) << ", output consumers = " << comm_op->output(0)->consumers();
         determine_flag = true;
         local_comm_flag = true;
       }
@@ -1680,7 +1705,7 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
 
     // **** 调用op计算 ****
     NDArrayList output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
-    checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
+    // checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
 
     // auto output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
     if (is_shared_weight_or_grad_p2p(op)) {
@@ -2262,20 +2287,20 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       */
      
       // instantiate ops
-      HT_LOG_INFO << local_device << ": [Execution Plan] Instantiate begin...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate begin...";
       Instantiate(fetches, local_device);
-      HT_LOG_INFO << local_device << ": [Execution Plan] Instantiate end...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate end...";
 
       // init instantiated topo
       OpRefList topo_before_recompute = Graph::TopoSort(fetches, num_ops(), is_op_computed);
       HT_LOG_DEBUG << local_device << ": global topo before recompute pass: " << topo_before_recompute;
 
       // add recompute pass
-      HT_LOG_INFO << local_device << ": [Execution Plan] recompute pass begin...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] recompute pass begin...";
       Graph::push_graph_ctx(id());
       Recompute::InsertRecomputedOps(topo_before_recompute);
       Graph::pop_graph_ctx();
-      HT_LOG_INFO << local_device << ": [Execution Plan] recompute pass end...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] recompute pass end...";
 
       // init topo with recomputed ops
       OpRefList topo_before_activation_offload = Graph::TopoSort(fetches, num_ops(), is_op_computed);
@@ -2283,33 +2308,33 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
 
       // insert activation offload ops
       // TODO: need code review, offload may have bugs
-      HT_LOG_INFO << local_device << ": [Execution Plan] activation offload pass begin...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] activation offload pass begin...";
       Graph::push_graph_ctx(id());
       ActivationCPUOffload::OffloadToCPU(topo_before_activation_offload);
       Graph::pop_graph_ctx();
-      HT_LOG_INFO << local_device << ": [Execution Plan] activation offload pass end...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] activation offload pass end...";
 
       // init topo contains comm_op
       OpRefList topo_before_substitute_comm = Graph::TopoSort(fetches, num_ops(), is_op_computed);
       HT_LOG_DEBUG << local_device << ": global topo before substitute comm_op: " << topo_before_substitute_comm;
 
       // substitute comm_op
-      HT_LOG_INFO << local_device << ": [Execution Plan] substitute comm_op begin...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] substitute comm_op begin...";
       Graph::push_graph_ctx(id()); // ensure the new ops created in execute_graph
       SubstituteCommOp(topo_before_substitute_comm);
       Graph::pop_graph_ctx();
-      HT_LOG_INFO << local_device << ": [Execution Plan] substitute comm_op end...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] substitute comm_op end...";
 
       // update topo with substituted comm_ops
       OpRefList topo_before_contiguous = Graph::TopoSort(fetches, num_ops(), is_op_computed);
       HT_LOG_DEBUG << local_device << ": global topo before add contiguous op: " << topo_before_contiguous;
 
       // insert contiguous ops
-      HT_LOG_INFO << local_device << ": [Execution Plan] insert contiguous op begin...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] insert contiguous op begin...";
       Graph::push_graph_ctx(id()); // ensure the new ops created in execute_graph
       InsertContiguousOp(topo_before_contiguous);
       Graph::pop_graph_ctx();
-      HT_LOG_INFO << local_device << ": [Execution Plan] insert contiguous op end...";
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] insert contiguous op end...";
       is_execute_plan_changed = true;
       break;
     }
@@ -2425,6 +2450,7 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       OpRefList compute_op_list;
       OpRefList update_op_list;
       OpRefList optimizer_op_list;
+      OpRefList group_op_list;
       OpRefList share_weight_recv_op_list;
       OpRefList share_weight_grad_recv_op_list;
       // todo: assume pp stages = [0,1,2,3]->[4,5,6,7], then 0 send pre-half of wte to 4, 1 send last-half of wte to 5; 
@@ -2468,13 +2494,34 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
             } else if (is_optimizer_update_op(op_ref)) {
               optimizer_op_list.push_back(op_ref);
             } else if (is_group_op(op_ref)) {
-              optimizer_op_list.push_back(op_ref);
+              group_op_list.push_back(op_ref);
             } else {
               compute_op_list.push_back(op_ref);
             }
           }
         }
       }
+      // workaround: sort grad reduce op & update op for consistent order across heterogeneous strategies
+      std::sort(update_op_list.begin(), update_op_list.end(), 
+                [](const OpRef& op1, const OpRef& op2) {
+                    auto layer_idx1 = GetLayerId(op1.get()->output(0));
+                    auto layer_idx2 = GetLayerId(op2.get()->output(0));
+                    if (layer_idx1 != layer_idx2) {
+                      return layer_idx1 > layer_idx2;
+                    } else {
+                      return op1.get()->name() < op2.get()->name();
+                    }
+                  });
+      std::sort(optimizer_op_list.begin(), optimizer_op_list.end(), 
+                [](const OpRef& op1, const OpRef& op2) {
+                    auto layer_idx1 = GetLayerId(op1.get()->input(1));
+                    auto layer_idx2 = GetLayerId(op2.get()->input(1));
+                    if (layer_idx1 != layer_idx2) {
+                      return layer_idx1 > layer_idx2;
+                    } else {
+                      return op1.get()->input(1)->name() < op2.get()->input(1)->name();
+                    }
+                  });
       _local_topo.insert(_local_topo.end(), share_weight_grad_recv_op_list.begin(), share_weight_grad_recv_op_list.end()); // first stage
       _local_topo.insert(_local_topo.end(), share_weight_recv_op_list.begin(), share_weight_recv_op_list.end()); // last stage
       _local_topo.insert(_local_topo.end(), recv_op_list.begin(), recv_op_list.end());
@@ -2483,6 +2530,7 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       // move allreduce/reduce-scatter & udpate & group op after pipeline p2p, to make p2p & allreduce/reduce-scatter overlap
       _local_topo.insert(_local_topo.end(), update_op_list.begin(), update_op_list.end());
       _local_topo.insert(_local_topo.end(), optimizer_op_list.begin(), optimizer_op_list.end());
+      _local_topo.insert(_local_topo.end(), group_op_list.begin(), group_op_list.end());
     };
     get_local_topo(fw_topo, local_fw_topo, local_placeholder_variable_ops);
     get_local_topo(bw_topo, local_bw_topo, local_placeholder_variable_ops); 

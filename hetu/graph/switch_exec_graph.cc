@@ -324,7 +324,7 @@ size_t ParamBuckets::GetSuggestedBucketId(const Tensor& tensor) {
       || tensor->name().find("final") != std::string::npos) {
     return 0;
   }
-  std::string sub_str = "block";
+  std::string sub_str = "Block";
   size_t pos = tensor->name().find(sub_str);
   HT_ASSERT (pos != std::string::npos) 
     << "Can't find block num in the tensor name " << tensor->name();

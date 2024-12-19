@@ -4,6 +4,10 @@ NUM_GPUS_LIMIT=${2:-1}
 TRAIN_TASK_NUM=${3:-1}
 TRAINER_CONFIG=${4:-"example"}
 MAX_SEQ_LENGTH=${5:-16384}
+SERVER_ADDR=${6:-"${IP_1}"}
+SERVER_PORT=${7:-"23333"}
+HOST_FILE=${8:-'scripts/hostfile.yaml'}
+ENV_FILE=${9:-'scripts/env.sh'}
 
 if [ "${MODEL_SIZE}" = "7B" ]; then
     NUM_LAYERS=32
@@ -26,7 +30,7 @@ else
 fi
 
 TRAINER_CONFIG=trainer_config/${TRAINER_CONFIG}.json
-PROFILE_MEMORY_PATH=exp_result/profile/memory/max_tokens_llama_${MODEL_SIZE}_${TRAIN_TASK_NUM}tasks.csv
+PROFILE_MEMORY_PATH=exp_result/memory/max_tokens_llama_${MODEL_SIZE}_${TRAIN_TASK_NUM}tasks.csv
 
 python3 scripts/profile_memory.py \
     --trainer_config_path $TRAINER_CONFIG_PATH \
@@ -37,4 +41,8 @@ python3 scripts/profile_memory.py \
     --num_layers $NUM_LAYERS \
     --num_gpus_limit $NUM_GPUS_LIMIT \
     --seq_len_limit $MAX_SEQ_LENGTH \
-    --train_task_num $TRAIN_TASK_NUM
+    --train_task_num $TRAIN_TASK_NUM \
+    --server_addr $SERVER_ADDR \
+    --server_port $SERVER_PORT \
+    --host_file $HOST_FILE \
+    --env_file $ENV_FILE

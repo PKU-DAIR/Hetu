@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import argparse
-from trainer.dp_bucket import get_buckets_dp
+from trainer.utils.dp_bucket import get_buckets_dp
 from trainer.utils.wrapper import DatasetWrapper
 from data_utils import GPTJsonDataset, Encoder
 from model import LLamaConfig
@@ -170,7 +170,7 @@ def deploy_strategy_plan(args):
                     ff.write(f'step: {i // 4}\n')
                 static_batch_planner.schedule(seq_len_distribution_list)
     else:
-        ds_parallel_config = static_batch_planner.schedule(seq_len_distribution_list)
+        ds_parallel_config, _ = static_batch_planner.schedule(seq_len_distribution_list)
         export_strategy_config(ds_parallel_config['scheme_list'],
                                ds_parallel_config['max_tokens_list'],
                                args.strategy_config_path)

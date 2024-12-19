@@ -15,7 +15,8 @@ def run_profile(
     cmd = f"bash scripts/run_benchmark.sh \
             {args.num_layers} {args.hidden_size} {args.num_attention_heads} {args.train_task_num} \
             {seq_len} 1 {num_micro_batches} \
-            {dp} {tp} {pp} \
+            {dp} {tp} {pp} {args.server_addr} {args.server_port} \
+            {args.host_file} {args.env_file} \
             null {args.trainer_config_path} profile_memory"
     try:
         subprocess.run(cmd, shell=True, check=True)
@@ -105,6 +106,18 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num_gpus_limit", type=int, default=-1, help="num gpus limit"
+    )
+    parser.add_argument(
+        "--server_addr", type=str, default='127.0.0.1', help="server's address"
+    )
+    parser.add_argument(
+        "--server_port", type=str, default='23457', help="server's port"
+    )
+    parser.add_argument(
+        "--host_file", type=str, default='scripts/hostfile.yaml', help="hostfile path"
+    )
+    parser.add_argument(
+        "--env_file", type=str, default='scripts/env.sh', help="env path"
     )
     args = parser.parse_args()
     candidate_seq_len_range = [1024, 2048, 4096, 8192, 16384]

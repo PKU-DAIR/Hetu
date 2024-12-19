@@ -28,9 +28,9 @@ def export_strategy_config(
     strategy_config = []
     for (tp, pp, dp), max_tokens in zip(scheme_list, max_tokens_list):
         strategy_config.append({
+            'dp': dp,
             'tp': tp,
             'pp': pp,
-            'dp': dp,
             'max_tokens': max_tokens
         })
 
@@ -63,19 +63,22 @@ def parse_strategy_config(strategy_config_path, split_scheme=False):
     return scheme_list, max_tokens_list
 
 def write_with_lock(file_path, data):
+    file_dir = os.path.dirname(file_path)
+    if not os.path.exists(file_dir):
+        os.makedirs(file_dir)
     with open(file_path, 'w') as f:
         # 获取文件锁
-        fcntl.flock(f, fcntl.LOCK_EX)
         try:
+            fcntl.flock(f, fcntl.LOCK_EX)
             json.dump(data, f, indent=4)
         finally:
             # 释放文件锁
             fcntl.flock(f, fcntl.LOCK_UN)
 
-def distributed_init(args):
+def distributed_init(ngpus, server_addr, server_port):
     hostname = socket.gethostname()
     os.environ['HETU_LOCAL_HOSTNAME'] = hostname
-    ht.init_comm_group(args.ngpus, server_address=args.server_addr + ":" + args.server_port)
+    ht.init_comm_group(ngpus, server_address=server_addr + ":" + server_port)
 
 def assign_global_prop_to_all_variables(ds_parallel_config):
     zero = ds_parallel_config['zero']
@@ -104,7 +107,12 @@ def read_ds_parallel_config(ds_parallel_config, num_strategy=1):
         f"ds_parallel_config num should equal to num_strategy {num_strategy}"
     ds_parallel_configs = []
     for config_path in config_paths:
-        ds_parallel_config = json.load(open(config_path, 'r'))
+        with open(config_path, 'r') as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                ds_parallel_config = json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
         ds_parallel_config = assign_global_prop_to_all_variables(ds_parallel_config)
         ds_parallel_configs.append(ds_parallel_config)
     return ds_parallel_configs
@@ -127,9 +135,11 @@ def convert_strategy(scheme_list, ngpus, layers):
     dp_list = [scheme[2] for scheme in scheme_list]
     replica_num = sum(dp_list)
     nnodes = ngpus // GPUS_PER_NODE
-    used_gpus = [0] * nnodes # 记录每个node有多少GPU被用到了
-    layers_tp_groups = [[] for _ in range(layer)] # 记录每个layer所在的所有的tp组
+    used_gpus = {} # 记录每个node有多少GPU被用到了
+    layers_tp_groups = [[] for _ in range(layers)] # 记录每个layer所在的所有的tp组
     gpu_pos = {} # 记录每个GPU的位置
+    for i in range(nnodes):
+        used_gpus[i] = 0
     # 先去判断每个GPU应该分给哪个策略
     # 这里的策略是保证tp在一个node中
     # 当有多个node可以存放该tp时则优先考虑占满某一个机器
@@ -154,8 +164,7 @@ def convert_strategy(scheme_list, ngpus, layers):
                         stage_id += 1
                         if stage_id == pp:
                             break
-                    else:
-                        assert tp == 16, "we only support tp=16 case for cross-node tp communication"
+                    elif tp == 16:
                         if node_used_gpus == 0:
                             cur_node_id = node_id
                             next_node_id = -1
@@ -207,9 +216,10 @@ def generate_lora_ds_parallel_config(
     strategy_groups = [set() for _ in range(dp)]
     for layer_tp_groups in layers_tp_groups:
         for i, layer_tp_group in enumerate(layer_tp_groups):
-            strategy_groups[i].add(set(layer_tp_group))
+            strategy_groups[i] = strategy_groups[i].union(set(layer_tp_group))
     strategy_groups = [list(strategy_group) for strategy_group in strategy_groups]
-    tp_pp_union_list = [len(strategy_group) for strategy_group in strategy_groups]
+    tp_pp_union_list = [len(strategy_group) * len(strategy_groups) for strategy_group in strategy_groups]
+    # tp_pp_union_list = [sum([len(strategy_group) for strategy_group in strategy_groups])] * len(strategy_groups)
 
     ds_parallel_config = {
         'zero': zero,
@@ -217,7 +227,7 @@ def generate_lora_ds_parallel_config(
         'task_batch_idxs': {
             'split': {},
             'dup': tp_pp_union_list,
-            'device_group': strategy_groups,
+            'device_group_union': strategy_groups,
             'type': 'placeholder'
         },
         'input': {
@@ -243,8 +253,8 @@ def generate_lora_ds_parallel_config(
 
             },
             'layernorm_final': {
-                'split': {},
-                'dup': [tp_union_list[-1][i] * dp for i in range(dp)],
+                'split': {'0': [tp_union_list[-1][i] for i in range(dp)]},
+                'dup': dp_union,
                 'device_group_union': dg_union_list[-1],
                 'type': 'variable'
             }
@@ -269,8 +279,8 @@ def generate_lora_ds_parallel_config(
             'range': [block_id,],
             'recompute': [False for _ in range(dp)],
             'layernorm1': {
-                'split': {},
-                'dup': [tp_union_list[block_id][i] * dp for i in range(dp)],
+                'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},
+                'dup': dp_union,
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },
@@ -317,8 +327,8 @@ def generate_lora_ds_parallel_config(
                 }
             },
             'layernorm2': {
-                'split': {},
-                'dup': [tp_union_list[block_id][i] * dp for i in range(dp)],
+                'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},
+                'dup': dp_union,
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },

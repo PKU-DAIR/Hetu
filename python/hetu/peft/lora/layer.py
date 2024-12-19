@@ -157,7 +157,7 @@ class HtMultiLoRAMultiColumnParallelLinear(Module, MultiLoraLayers):
         else:
             tensor_split0_dup = hetu.comm(input_p, self.base_layer.ds_union_map['split0_dup'])
             print(f"warning: column parallel linear need extra communication for \
-                    adapt input tensor distributed_states into {self.base_layer.ds_union_map['split0_dup']}!")
+                    adapt input tensor distributed_states {input_p.ds_hierarchy} into {self.base_layer.ds_union_map['split0_dup']}!")
 
         base_result = self.base_layer(tensor_split0_dup)
         if self.config.train_task_num == 1:
@@ -205,8 +205,8 @@ class HtMultiLoRAMultiRowParallelLinear(Module, MultiLoraLayers):
             tensor_split0_dup = input_p
         else:
             tensor_split0_dup = hetu.comm(input_p, self.base_layer.ds_union_map['split01'])
-            print(f"warning: column parallel linear need extra communication for \
-                    adapt input tensor distributed_states into {self.base_layer.ds_union_map['split01']}!")
+            print(f"warning: row parallel linear need extra communication for \
+                    adapt input tensor distributed_states {input_p.ds_hierarchy} into {self.base_layer.ds_union_map['split01']}!")
         base_result = self.base_layer(tensor_split0_dup)
         if self.config.train_task_num == 1:
             lora_result = self.lora_layers[0].lora_B(self.lora_layers[0].lora_A(tensor_split0_dup))

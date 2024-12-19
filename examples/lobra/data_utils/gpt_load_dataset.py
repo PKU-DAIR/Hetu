@@ -5,9 +5,9 @@ import argparse
 import time
 import bisect
 from types import SimpleNamespace
-from tokenizer.tokenizer import build_tokenizer
-from utils import jload, _load_dataset_to_json
-from preprocess_dataset import format_prompt
+from data_utils.tokenizer import build_tokenizer
+from data_utils.utils import jload, _load_dataset_to_json
+from data_utils.preprocess_dataset import format_prompt
 
 class Encoder(object):
     def __init__(self, args):

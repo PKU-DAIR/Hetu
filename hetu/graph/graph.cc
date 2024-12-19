@@ -183,7 +183,16 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
         graph.CUR_STRATEGY_ID = cur_strategy_id;
         size_t all_allreduce_num = 0;
         size_t reduce_scatter_num = 0;
-        for (const auto& grad : filtered) {
+        auto cur_dst_ds_union = DistributedStatesUnion();
+        std::unordered_map<int, Tensor> patch_comm_grad_list;
+        // 24.12.20 [Workaround] for LoRA corner case:
+        // For grads in different branches, they may be dup or partial state.
+        // The goal of both `sum -> reduce` and `reduce -> sum` is to merge branches into dup state.
+        // Thus, if there exists dup branches, dup branches should have the same dup state,
+        // and partial branches should turn into dup states by inserting CommOps.
+        // If there is no dup branch, we will apply `sum -> reduce`.
+        for (int i = 0; i < filtered.size(); i++) {
+          auto& grad = filtered.at(i);
           if (is_comm_op(grad->producer())) {
             auto& comm_op_impl = dynamic_cast<CommOpImpl&>(grad->producer()->body());
             auto src_ds_union = grad->producer()->input(0)->cur_ds_union();
@@ -196,11 +205,50 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
             if ((is_homo && src_ds_union.get(0).check_allreduce(dst_ds_union.get(0)))
                 || (!is_homo && src_ds_union.hetero_dim() == -2 && dst_ds_union.hetero_dim() == -1)) {
               all_allreduce_num += 1;
+              if (cur_dst_ds_union.is_empty()) {
+                cur_dst_ds_union = dst_ds_union;
+              } else {
+                HT_ASSERT(cur_dst_ds_union.check_equal(dst_ds_union));
+              }
             }
             if ((is_homo && src_ds_union.get(0).check_reducescatter(dst_ds_union.get(0)))
                 || (!is_homo && src_ds_union.hetero_dim() == -2 && dst_ds_union.hetero_dim() == 0)) {
               reduce_scatter_num += 1;
+              if (cur_dst_ds_union.is_empty()) {
+                cur_dst_ds_union = dst_ds_union;
+              } else {
+                HT_ASSERT(cur_dst_ds_union.check_equal(dst_ds_union));
+              }
             }
+          } else {
+            auto src_ds_union = grad->cur_ds_union();
+            bool is_homo = (src_ds_union.hetero_dim() == NULL_HETERO_DIM);
+            if ((is_homo && src_ds_union.get(0).states(-2) > 1)
+                || (!is_homo && src_ds_union.hetero_dim() == -2)) {
+              if ((is_homo && src_ds_union.get(0).check_allreduce(cur_dst_ds_union.get(0)))
+                  || (!is_homo && src_ds_union.hetero_dim() == -2 && cur_dst_ds_union.hetero_dim() == -1)) {
+                all_allreduce_num += 1;
+              }
+              if ((is_homo && src_ds_union.get(0).check_reducescatter(cur_dst_ds_union.get(0)))
+                  || (!is_homo && src_ds_union.hetero_dim() == -2 && cur_dst_ds_union.hetero_dim() == 0)) {
+                reduce_scatter_num += 1;
+              }
+              patch_comm_grad_list[i] = grad;
+            } else {
+              if (cur_dst_ds_union.is_empty()) {
+                cur_dst_ds_union = src_ds_union;
+              } else {
+                HT_ASSERT(cur_dst_ds_union.check_equal(src_ds_union));
+              }
+            }
+          }
+        }
+        if (!cur_dst_ds_union.is_empty()) {
+          DistributedStatesHierarchy ds_hierarchy;
+          ds_hierarchy.add(cur_dst_ds_union);
+          for (auto& [i, grad] : patch_comm_grad_list) {
+            Tensor comm_grad = MakeCommOp(grad, ds_hierarchy, OpMeta().set_name("workaround_patch_comm_of_" + grad->name()));
+            filtered[i] = std::move(comm_grad);
           }
         }
         HT_ASSERT ((all_allreduce_num == filtered.size() || all_allreduce_num == 0)
@@ -221,17 +269,9 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
         TensorList partial_grad_list;
         std::vector<OpName> partial_grad_name_list;
         for (const auto& grad : filtered) {
-          // TODO: ???
-          if (is_slice_op(grad->producer()) && is_comm_op(grad->producer()->input(0)->producer())) {
-            ReplaceInput(grad->producer(), 0, grad->producer()->input(0)->producer()->input(0));
-            Tensor partial_grad = grad;
-            partial_grad_list.push_back(partial_grad);
-            partial_grad_name_list.push_back(partial_grad->name());
-          } else {
-            Tensor partial_grad = grad->producer()->input(0);
-            partial_grad_list.push_back(partial_grad);
-            partial_grad_name_list.push_back(partial_grad->name());
-          }
+          Tensor partial_grad = grad->producer()->input(0);
+          partial_grad_list.push_back(partial_grad);
+          partial_grad_name_list.push_back(partial_grad->name());
         }
         // concatenate names of partial grads
         OpName concat_name_of_partial_grad = std::accumulate(
@@ -288,7 +328,7 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
       // 例如要先BatchedIsendIrecv再SplitAllReduce/SplitReduceScatter
       // 更多情形目前还未遇到
       bool skip_actual_gradient_op = false;
-      if (is_comm_op(op)) {
+      if (is_comm_op(op) && grad_outputs.size() > 0 && grad_outputs.at(0).is_defined()) {
         auto& comm_op_impl = dynamic_cast<CommOpImpl&>(op->body());
         HT_ASSERT(grad_outputs.size() == 1)
           << "Comm op outputs size should be 1";

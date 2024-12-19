@@ -16,14 +16,14 @@ NDArrayList SliceOpImpl::DoCompute(Operator& op,
 TensorList SliceOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
   if (symbolic())
     return {op->requires_grad(0) ? MakeSliceGradientOp(grad_outputs.at(0), op->input(0), get_symbolic_begin_pos(),
-                                  get_symbolic_output_shape(),
-                                  op->grad_op_meta().set_name(op->grad_name()))
-                                : Tensor()};
+                                    get_symbolic_output_shape(),
+                                    op->grad_op_meta().set_name(op->grad_name()))
+                                 : Tensor()};
   else
     return {op->requires_grad(0) ? MakeSliceGradientOp(grad_outputs.at(0), op->input(0), get_begin_pos(),
-                                  get_output_shape(),
-                                  op->grad_op_meta().set_name(op->grad_name()))
-                                : Tensor()};
+                                    get_output_shape(),
+                                    op->grad_op_meta().set_name(op->grad_name()))
+                                 : Tensor()};
 }
 
 HTShapeList SliceOpImpl::DoInferShape(Operator& op, 
@@ -80,6 +80,9 @@ void SliceOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_di
 void SliceGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
                                     NDArrayList& outputs, RuntimeContext& ctx) const {
   auto stream_idx = op->instantiation_ctx().stream_index;
+  if (outputs.at(0)->numel() == 0) {
+    return;
+  }
   NDArray::zeros_(outputs.at(0), stream_idx);
   auto slice_grad_input = NDArray::slice(outputs.at(0), get_begin_pos(),
                                          get_output_shape(), stream_idx);

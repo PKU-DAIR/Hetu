@@ -87,7 +87,6 @@ class MultiLoraModel(Module):
         attention_mask=None,
         token_type_ids=None,
         labels=None,
-        **kwargs,
     ):
         return self.model(
             input_ids=input_ids,

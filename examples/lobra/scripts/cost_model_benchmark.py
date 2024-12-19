@@ -155,6 +155,12 @@ if __name__ == '__main__':
     parser.add_argument(
         "--profile_mbs", type=str, default='', help="profile micro batch size"
     )
+    parser.add_argument(
+        "--server_addr", type=str, default='127.0.0.1', help="server's address"
+    )
+    parser.add_argument(
+        "--server_port", type=str, default='23457', help="server's port"
+    ) 
     args = parser.parse_args()
     if args.profile_mbs == '':
         profile_mbs = [1, 2, 4, 8, 16, 32]
@@ -175,6 +181,6 @@ if __name__ == '__main__':
                 max_tokens = max(max_tokens, tokens)
         seq_len_range = [seq_len for seq_len in seq_len_range if seq_len <= max_tokens]
 
-    distributed_init()
+    distributed_init(args.ngpus, args.server_addr, args.server_port)
     run_benchmark_llama(args, seq_len_range, profile_mbs, max_tokens)
         

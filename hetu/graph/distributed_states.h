@@ -292,6 +292,10 @@ class DistributedStatesUnion {
     return _union.size();
   }
 
+  bool is_empty() const {
+    return (_union.size() == 0);
+  }
+
   bool check_equal(const DistributedStatesUnion& another) {
     if (is_hetero() != another.is_hetero() 
         || _hetero_dim != another.hetero_dim()

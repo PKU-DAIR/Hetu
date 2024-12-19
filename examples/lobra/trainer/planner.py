@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from joblib import Parallel, delayed
 from pyscipopt import Model, quicksum
-from trainer.utils import combine_scheme_to_strategy_candidates
+from trainer.utils.combine_scheme_to_strategy_candidates import combine_scheme_to_strategy_candidates
 
 class BaseStaticPlanner(ABC):
     def __init__(
@@ -260,7 +260,7 @@ class GroupStaticPlanner(BaseStaticPlanner):
         max_batch_time = [model.addVar(lb=0, ub=self.max_batch_time_list[i], vtype="C", name="max_batch_time_scheme%s" % i) if self.scheme_pool[i][1][1] > 1 else 0 \
                           for i in range(self.scheme_pool_size)]
         aux_max = [[model.addVar(lb=0, ub=1, vtype="B", name="aux_max(scheme%s, %s)" % (i, j)) \
-                   for j in range(2 * len(self.task_seq_lens))] if self.scheme_pool_size[i][1][1] > 1 else [] for i in range(self.scheme_pool_size)]
+                   for j in range(2 * len(self.task_seq_lens))] if self.scheme_pool[i][1][1] > 1 else [] for i in range(self.scheme_pool_size)]
         # gpu num
         model.addCons(quicksum(dp[i] * self.scheme_pool[i][0] for i in range(self.scheme_pool_size)) == self.ngpus, name="eq_gpus")
         for i, seq_len in enumerate(self.task_seq_lens):
@@ -470,7 +470,7 @@ class BalanceStaticPlanner(BaseStaticPlanner):
         max_batch_time = [model.addVar(lb=0, ub=self.max_batch_time_list[i], vtype="C", name="max_batch_time_scheme%s" % i) if self.scheme_pool[i][1][1] > 1 else 0 \
                           for i in range(self.scheme_pool_size)]
         aux_max = [[model.addVar(lb=0, ub=1, vtype="B", name="aux_max(scheme%s, %s)" % (i, j)) \
-                   for j in range(2 * len(self.task_seq_lens))] if self.scheme_pool_size[i][1][1] > 1 else [] for i in range(self.scheme_pool_size)]
+                   for j in range(2 * len(self.task_seq_lens))] if self.scheme_pool[i][1][1] > 1 else [] for i in range(self.scheme_pool_size)]
         # gpu num
         model.addCons(quicksum(dp[i] * self.scheme_pool[i][0] for i in range(self.scheme_pool_size)) == self.ngpus, name="eq_gpus")
         for i, seq_len in enumerate(self.task_seq_lens):
@@ -621,7 +621,7 @@ class BalanceStaticPlanner(BaseStaticPlanner):
 
         print(f"Static batch planner takes {end_time - start_time:.4f}s to get strategy config, with {strategy_config['num_scheme']} schemes as follows:")
         for i in range(strategy_config['num_scheme']):
-            print(f"scheme {i}: dp = {strategy_config[i][2]}, tp = {strategy_config[i][0]}, pp = {strategy_config[i][1]}, max_tokens = {strategy_config['max_tokens_list'][i]}")
+            print(f"scheme {i}: dp = {strategy_config['scheme_list'][i][2]}, tp = {strategy_config['scheme_list'][i][0]}, pp = {strategy_config['scheme_list'][i][1]}, max_tokens = {strategy_config['max_tokens_list'][i]}")
         print(f"Max scheme time cost: {cost_time:.4f}s")
 
         return strategy_config, end_time - start_time

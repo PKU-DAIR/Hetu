@@ -1,4 +1,8 @@
 MODEL_SIZE=${1:-'7B'}
+SERVER_ADDR=${2:-"${IP_1}"}
+SERVER_PORT=${3:-"23333"}
+HOST_FILE=${4:-'scripts/hostfile.yaml'}
+ENV_FILE=${5:-'scripts/env.sh'}
 
 if [ "${MODEL_SIZE}" = "7B" ]; then
     NUM_LAYERS=32
@@ -21,7 +25,7 @@ else
 fi
 
 TRAINER_CONFIG_PATH=trainer_config/exp_task1.json
-MEMORY_PROFILE_PATH=exp_result/profile/memory/max_tokens_llama_${MODEL_SIZE}_1tasks.csv
+MEMORY_PROFILE_PATH=exp_result/memory/max_tokens_llama_${MODEL_SIZE}_1tasks.csv
 SAVE_PATH=exp_result/throughput/throughput_per_gpu_llama_${MODEL_SIZE}_1tasks.csv
 RAW_PATH=$SAVE_PATH.raw
 SEQ_LEN_RANGE=(256 512 1024 2048 4096 8192 16384)
@@ -45,7 +49,7 @@ do
         bash scripts/run_benchmark.sh \
             $NUM_LAYERS $HIDDEN_SIZE $NUM_HEADS 1 \
             $SEQ_LEN $MICRO_BATCH_SIZE $NUM_MICRO_BATCHES \
-            $DP $TP $PP \
+            $DP $TP $PP $SERVER_ADDR $SERVER_PORT $HOST_FILE $ENV_FILE \
             $RAW_PATH $TRAINER_CONFIG_PATH throughput_experiment
     done
 done

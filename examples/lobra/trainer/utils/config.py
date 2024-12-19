@@ -1,4 +1,4 @@
-from peft.lora.config import LoraConfig
+from hetu.peft.lora.config import LoraConfig
 from typing import List, Dict
 from queue import Queue
 from utils.ds_parallel_config import GPUPos
@@ -25,6 +25,7 @@ class StrategyConfig():
         self.num_scheme = len(scheme_list)
         self.ngpus = ngpus
         layers_tp_groups, self.gpu_pos = convert_strategy(scheme_list, ngpus, num_hidden_layers)
+        self.num_pipeline = len(layers_tp_groups[0])
         config_file_path = f"./ds_parallel_config/strategy_{strategy_id}.json"
         generate_lora_ds_parallel_config(ngpus, layers_tp_groups, config_file_path)
         self.ds_parallel_configs = read_ds_parallel_config(config_file_path)

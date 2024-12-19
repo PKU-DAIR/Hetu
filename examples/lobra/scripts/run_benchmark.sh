@@ -8,26 +8,13 @@ NUM_MICRO_BATCHES=${7:-1}
 DP=${8:-2}
 TP=${9:-2}
 PP=${10:-2}
-SAVE_PATH=${11:-"null"}
-TRAINER_CONFIG_PATH=${12:-}
-EXP_NAME=${13:-}
-
-# env
-PATH="/home/pkuhetu/envs/miniconda3/envs/hetu-py/bin:${PATH}"
-HETU_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../" && pwd )"
-LD_LIBRARY_PATH="${HETU_HOME}/build/lib:${LD_LIBRARY_PATH}"
-PYTHONPATH="${HETU_HOME}/python_refactor:${HETU_HOME}/build/lib:${PYTHONPATH}"
-
-export HETU_SWITCH_ALGORITHM=NEW_GREEDY
-export HETU_SWITCH_PROFILE=INFO
-export HETU_MEMORY_PROFILE=WARN
-export HETU_MEMORY_LOG_FILE=""
-export HETU_INTERNAL_LOG_LEVEL=INFO
-export HETU_EVENT_TIMING=FALSE
-
-export NCCL_DEBUG=VERSION
-export NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7
-export NCCL_IB_GID_INDEX=3
+SERVER_ADDR=${11:-"${IP_1}"}
+SERVER_PORT=${12:-"23333"}
+HOST_FILE=${13:-'scripts/hostfile.yaml'}
+ENV_FILE=${14:-'scripts/env.sh'}
+SAVE_PATH=${15:-"null"}
+TRAINER_CONFIG_PATH=${16:-}
+EXP_NAME=${17:-}
 
 FFN_HIDDEN_SIZE=$(($HIDDEN_SIZE * 4))
 if [ $NUM_LAYERS -eq 32 ] && [ $HIDDEN_SIZE -eq 4096 ] && [ $NUM_HEADS -eq 32 ]; then
@@ -57,14 +44,11 @@ if [ $SAVE_PATH == "null" ]; then
     PROFILE_STEPS=10
 fi
 
-mpirun --allow-run-as-root -mca orte_abort_on_non_zero_status 1 -np ${NUM_GPUS} \
-    --hostfile ${HOST_FILE} \
-    -x NCCL_IB_HCA -x NCCL_IB_GID_INDEX \
-    -x CUDA_HOME -x PATH -x LD_LIBRARY_PATH -x PYTHONPATH -x NCCL_DEBUG \
-    -x HETU_SWITCH_ALGORITHM -x HETU_SWITCH_PROFILE -x HETU_INTERNAL_LOG_LEVEL -x NCCL_IB_GID_INDEX=3 \
-    -x HETU_MEMORY_PROFILE -x HETU_MEMORY_LOG_FILE \
-    --output-filename logs/${EXP_NAME}_llama_${MODEL_SIZE}/ds_parallel_task${TRAIN_TASK_NUM}_gpu${NUM_GPUS}_dp${DP}_tp${TP}_pp${PP} --merge-stderr-to-stdout \
-    python3 scripts/benchmark.py \
+LOG_FILE_PATH=logs/${EXP_NAME}_llama_${MODEL_SIZE}/ds_parallel_task${TRAIN_TASK_NUM}_gpu${NUM_GPUS}_dp${DP}_tp${TP}_pp${PP}
+mkdir -p ${LOG_FILE_PATH}
+echo logs will save to ${LOG_FILE_PATH}...
+
+CMD="python3 -u scripts/benchmark.py \
     --trainer_config_path $TRAINER_CONFIG_PATH \
     --save_path $SAVE_PATH \
     --vocab_size 30592 \
@@ -81,8 +65,28 @@ mpirun --allow-run-as-root -mca orte_abort_on_non_zero_status 1 -np ${NUM_GPUS} 
     --train_task_num $TRAIN_TASK_NUM \
     --profile_steps $PROFILE_STEPS \
     --warmup_steps $WARMUP_STEPS \
+    --server_addr $SERVER_ADDR \
+    --server_port $SERVER_PORT \
     --lr 1e-4 \
     --dropout_prob 0 \
     --bf16 \
     --use_flash_attn \
-    --sequence_parallel
+    --sequence_parallel"
+
+source ${ENV_FILE}
+if [ ${NUM_GPUS} -gt 8 ]; then
+python3 ../../python/hetu/rpc/pssh_start.py \
+    --hosts ${HOST_FILE} \
+    --command "$CMD" \
+    --server_port ${SERVER_PORT} \
+    --ngpus ${NUM_GPUS} \
+    --envs ${ENV_FILE} \
+    --log_path ${LOG_FILE_PATH}
+else
+python3 ../../python/hetu/rpc/pssh_start.py \
+    --command "$CMD" \
+    --server_port ${SERVER_PORT} \
+    --ngpus ${NUM_GPUS} \
+    --envs ${ENV_FILE} \
+    --log_path ${LOG_FILE_PATH}
+fi

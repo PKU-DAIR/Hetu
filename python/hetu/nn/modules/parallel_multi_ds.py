@@ -25,7 +25,7 @@ class HtMultiParallelRMSNorm(Module):
         self.sequence_parallel = sequence_parallel
         self.recompute_allgather = recompute_allgather
         self.name = name
-        self.ds_union_map = {'dup': [], 'split0': []}
+        self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
         for ds_parallel_config in multi_ds_parallel_config:
@@ -40,7 +40,7 @@ class HtMultiParallelRMSNorm(Module):
                 , f'ParallelRMSNorm get wrong ds_parallel_config: {ds_parallel_config}!')
             device_group_index, device_index = get_local_index(device_group_union)
             self.device_index.append(device_index)
-            ds_list_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: device_group_union[i].num_devices * hetero_size}, [0])
+            ds_list_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: device_group_union[i].num_devices * hetero_size}, [-1])
                 for i in range(hetero_size)] # for sp data
             ds_union_dup = hetu.DistributedStatesUnion(ds_list_dup, -1 if hetero_dim != -3 else -3)
             ds_list_split0 = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {0: device_group_union[i].num_devices * hetero_size}, [0])
@@ -71,7 +71,7 @@ class HtMultiParallelRMSNorm(Module):
                 output_rms = output_rms_split0
             else:
                 if self.recompute_allgather:
-                    with hetu.recompute():
+                    with hetu.recompute(multi_recompute=[[True] * len(self.ds_parallel_configs)]):
                         output_rms = hetu.comm(output_rms_split0, self.ds_union_map['split0_dup'])
                 else:
                     output_rms = hetu.comm(output_rms_split0, self.ds_union_map['split0_dup'])
@@ -96,7 +96,7 @@ class HtMultiParallelLayerNorm(Module):
         self.recompute_allgather = recompute_allgather
         self.eps = eps
         self.name = name
-        self.ds_union_map = {'dup': [], 'split0': []}
+        self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
         for ds_parallel_config in multi_ds_parallel_config:
@@ -111,7 +111,7 @@ class HtMultiParallelLayerNorm(Module):
                 , f'ParallelLayerNorm get wrong ds_parallel_config: {ds_parallel_config}!')
             device_group_index, device_index = get_local_index(device_group_union)
             self.device_index.append(device_index)
-            ds_list_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: device_group_union[i].num_devices * hetero_size}, [0])
+            ds_list_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: device_group_union[i].num_devices * hetero_size}, [-1])
                 for i in range(hetero_size)] # for sp data
             ds_union_dup = hetu.DistributedStatesUnion(ds_list_dup, -1 if hetero_dim != -3 else -3)
             ds_list_split0 = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {0: device_group_union[i].num_devices * hetero_size}, [0])

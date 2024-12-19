@@ -70,7 +70,6 @@ class SliceOpImpl final : public ViewsOpImpl {
               inputs[0]->ndim() == _output_shape.size());
     int len = _begin_pos.size();
     for (int i = 0; i < len; ++i) {
-      HT_ASSERT(_begin_pos[i]->get_val() >= 0 && (_output_shape[i]->get_val() > 0 || _output_shape[i]->get_val() == -1));
       HT_ASSERT(_begin_pos[i]->get_val() + _output_shape[i]->get_val() <= inputs[0]->shape(i))
         << "dim " << i << " begin pos is " << _begin_pos[i]->get_val() << " and output len is " << _output_shape[i]->get_val()
         << ", but input len is " << inputs[0]->shape(i);

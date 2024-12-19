@@ -1,5 +1,9 @@
 MODEL_SIZE=${1:-'7B'}
 NUM_GPUS_LIST=${2:-'1,2,4,8,16'}
+SERVER_ADDR=${3:-"${IP_1}"}
+SERVER_PORT=${4:-"23333"}
+HOST_FILE=${5:-'scripts/hostfile.yaml'}
+ENV_FILE=${6:-'scripts/env.sh'}
 
 if [ "${MODEL_SIZE}" = "7B" ]; then
     NUM_LAYERS=32
@@ -22,7 +26,7 @@ else
 fi
 
 TRAINER_CONFIG_PATH=trainer_config/example_fused.json
-MEMORY_PROFILE_PATH=exp_result/profile/memory/max_tokens_llama_${MODEL_SIZE}_1tasks.csv
+MEMORY_PROFILE_PATH=exp_result/memory/max_tokens_llama_${MODEL_SIZE}_1tasks.csv
 SAVE_PATH=exp_result/performance_align/performance_align_llama_${MODEL_SIZE}_1tasks.csv
 RAW_PATH=$SAVE_PATH.raw
 GLOBAL_BATCH_SIZE=64
@@ -44,7 +48,7 @@ for TP in 1 2 4 8; do
                 bash scripts/run_benchmark.sh \
                 $NUM_LAYERS $HIDDEN_SIZE $NUM_HEADS 1 \
                 $SEQ_LEN $MICRO_BATCH_SIZE $NUM_MICRO_BATCHES \
-                $DP $TP $PP \
+                $DP $TP $PP $SERVER_ADDR $SERVER_PORT $HOST_FILE $ENV_FILE \
                 $RAW_PATH $TRAINER_CONFIG_PATH performance_align
             done
         done

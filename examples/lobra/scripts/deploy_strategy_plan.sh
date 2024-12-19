@@ -1,7 +1,7 @@
 MODEL_SIZE=${1:-'7B'}
 NUM_GPUS=${2:-16}
-BUCKET_NUM=${4:-16}
-TRAIN_TASK_NUM=${3:-6}
+BUCKET_NUM=${3:-16}
+TRAIN_TASK_NUM=${4:-6}
 MAX_SEQ_LENGTH=${5:-16384}
 TRAINER_CONFIG=${6:-'exp_task6'}
 STRATEGY_CONFIG=${7:-'default_strategy'}
@@ -46,8 +46,8 @@ VOCAB_FILE=${ROOT_FOLDER}/vocab.json
 MERGE_FILE=${ROOT_FOLDER}/merges.txt
 TRAINER_CONFIG_PATH=trainer_config/${TRAINER_CONFIG}.json
 STRATEGY_CONFIG_PATH=strategy_config/${STRATEGY_CONFIG}.yaml
-PROFILE_PATH=exp_result/profile/cost_model/profile_time_llama_${MODEL_SIZE}.csv
-MEMORY_PROFILE_PATH=exp_result/profile/memory/max_tokens_llama_${MODEL_SIZE}_${TRAIN_TASK_NUM}tasks.csv
+PROFILE_PATH=exp_result/cost_model/profile_time_llama_${MODEL_SIZE}.csv
+MEMORY_PROFILE_PATH=exp_result/memory/max_tokens_llama_${MODEL_SIZE}_${TRAIN_TASK_NUM}tasks.csv
 
 python3 scripts/deploy_strategy_plan.py \
 --trainer_config_path $TRAINER_CONFIG_PATH \

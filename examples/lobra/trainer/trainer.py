@@ -184,7 +184,7 @@ class Trainer:
             )
 
         # 设置symbolic shape
-        self.config.dp_symbol = ht.IntSymbol(default_dp)
+        self.config.dp_symbol.set_data(default_dp)
         self.config.train_task_num = self.train_task_num
         # 创建预训练模型
         pretrained_model = self.pretrained_model_wrapper.create_model(ds_parallel_configs=ds_parallel_configs)
@@ -214,14 +214,12 @@ class Trainer:
             loss = model(
                 input_ids=input_ids,
                 labels=masked_lm_labels,
-                # task_batch_idxs=task_batch_idxs,
                 # cu_seqlens_list=cu_seqlens_list
             )
         else:
             loss = model(
                 input_ids=input_ids,
                 labels=masked_lm_labels,
-                # task_batch_idxs=task_batch_idxs,
             )
         print(f"build model end...")
         # build optimizer
@@ -517,7 +515,7 @@ class Trainer:
         dup_group_idx = strategy_config.get_local_dp_id(gpu_id)
         stage_id = strategy_config.get_stage_id(gpu_id)
         print(f"scheme_id = {scheme_id}")
-        self.config.dp_symbol.set_data(strategy_config.get_dp_degree(scheme_id))
+        self.config.dp_symbol.set_data(strategy_config.num_pipeline)
         
         # train_iter
         train_iter_list = []
