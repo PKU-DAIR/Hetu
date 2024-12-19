@@ -14,7 +14,7 @@ read_tag = 0
 def distributed_call(distributed_status: Tuple[int, int, Dict[int, int]], func: Callable, *args: Any, **kwargs: Any):
     # synchronize all processes
     # but seems doesn't work
-    ht.global_comm_barrier() 
+    ht.global_comm_barrier_rpc() 
     global write_tag, read_tag
     start_time = time.time()
     gpu_id, dp_id, dp_representive_gpu = distributed_status
@@ -31,7 +31,7 @@ def distributed_call(distributed_status: Tuple[int, int, Dict[int, int]], func: 
             finally:
                 fcntl.flock(file, fcntl.LOCK_UN)
         write_tag += 1
-    ht.global_comm_barrier() 
+    ht.global_comm_barrier_rpc() 
     if gpu_id != dp_representive_gpu[dp_id]:
         while True:
             try:
@@ -51,7 +51,7 @@ def distributed_call(distributed_status: Tuple[int, int, Dict[int, int]], func: 
                 # print(f"read tag = {read_tag} but file tag = {tag}")
                 time.sleep(1)  # 等待文件写入完成
         read_tag += 1
-    ht.global_comm_barrier() 
+    ht.global_comm_barrier_rpc() 
     end_time = time.time()
     print(f"Distributed func call {func.__name__} time cost: {end_time - start_time}s")
     return result

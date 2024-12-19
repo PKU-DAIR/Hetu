@@ -679,7 +679,7 @@ class Trainer:
 
                 iter_time = 0
                 run_level = ht.run_level("update")
-                ht.global_comm_barrier()
+                ht.global_comm_barrier_rpc()
                 start_time = time.time()
                 try:
                     with ht.autocast(self.precision):
@@ -711,7 +711,7 @@ class Trainer:
                             with open(f"case_study/{data_dispatch_pattern}-{os.environ.get('DP_BUCKET')}/{local_host_name}-{local_device.index}.txt", 'a') as f:
                                 f.write(f"{iter_time}\n")
                                 f.write("\n")
-                        ht.global_comm_barrier()
+                        ht.global_comm_barrier_rpc()
                 # TODO: consumed samples of each task
                 if stage_id == strategy_config.get_pp_degree(scheme_id) and run_level == ht.run_level("update"):
                     loss_out = results[0].numpy(force=True).mean()
@@ -736,7 +736,7 @@ class Trainer:
             }
             print(f"total run time num = {len(total_run_time)}")
             write_to_csv(run_time_entry, f"temp/run_time_{strategy_config.get_num_scheme()}_{local_host_name}_{local_device.index}")
-        ht.global_comm_barrier()
+        ht.global_comm_barrier_rpc()
         if gpu_id == 0:
             print(f"handler: {local_host_name}")
             total_cnt = dynamic_planner.token_num 

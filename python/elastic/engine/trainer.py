@@ -513,7 +513,7 @@ class MalleusTrainer(Trainer):
         for _ in range(PRE_PROFILING_ROUND):
             self.local_straggler.run_profile()
         self.local_straggler.end_profile()
-        ht.global_comm_barrier()
+        ht.global_comm_barrier_rpc()
         all_workload_baseline_time = []
         for device_idx in range(all_devices.num_devices):
             straggler_info = Straggler.read_profile(self.log_file_path + "_" + str(device_idx) + ".txt", PRE_PROFILING_ROUND - 1)
@@ -535,7 +535,7 @@ class MalleusTrainer(Trainer):
         unused_devices = []
         sliding_window = SLIDING_WINDOW
         
-        ht.global_comm_barrier()
+        ht.global_comm_barrier_rpc()
         for rank_idx in range(comm_args.all_devices.num_devices):
             device_idx = strategy_args.rank_to_device_mapping[rank_idx]
             curr_log_file = self.log_file_path + "_" + str(device_idx) + ".txt"
@@ -576,7 +576,7 @@ class MalleusTrainer(Trainer):
                     straggler_ratio = ((straggler_compute_time / straggler_layers / straggler_mbn / alpha) 
                         / (self.build_ctxs.normal_compute_time / self.build_ctxs.normal_layers / self.build_ctxs.normal_mbn))
                     used_devices_sr[device_idx] = straggler_ratio          
-        ht.global_comm_barrier()
+        ht.global_comm_barrier_rpc()
         
         new_strategy_model = StrategyModel(
             self.build_ctxs,
@@ -941,7 +941,7 @@ class MalleusTrainer(Trainer):
                         del os.environ["HETU_STRAGGLER_LOG_FILE"] 
                     # TODO: 目前跑实验会直接强行终止
                     os.killpg(0, signal.SIGTERM)
-                ht.global_comm_barrier()
+                ht.global_comm_barrier_rpc()
                 end_time = time.time()
                 curr_consumed_samples += args.global_batch_size
                 if run_level == ht.run_level("update"):
