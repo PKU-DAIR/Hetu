@@ -7,7 +7,7 @@ MICRO_BATCH_SIZE=${6:-2}
 DP=${7:-2}
 TP=${8:-4}
 PP=${9:-2}
-SERVER_ADDR=${10:-"172.24.179.236"}
+SERVER_ADDR=${10:-"127.0.0.1"}
 SERVER_PORT=${11:-"23457"}
 NUM_GPUS=$(( $DP * $TP *$PP ))
 

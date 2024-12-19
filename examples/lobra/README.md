@@ -41,11 +41,11 @@ We provide a set of scripts to profile the memory and time cost of different par
 ~~~bash
 # (under LobRA folder)
 # memory profiling
-# bash scripts/profile_memory.sh <MODEL_SIZE> <NUM_GPUS_LIMIT> <TRAIN_TASK_NUM> <TRAINER_CONFIG_PATH>
-bash scripts/profile_memory.sh 7B 16 6 exp_task6
+# bash scripts/profile_memory.sh <MODEL_SIZE> <NUM_GPUS_LIMIT> <TRAIN_TASK_NUM> <TRAINER_CONFIG_PATH> <MAX_SEQ_LENGTH> <SERVER_ADDR> <SERVER_PORT> [HOST_FILE] [ENV_FILE]
+bash scripts/profile_memory.sh 7B 16 6 exp_task6 16384 <ip> <port>
 # time cost profiling
-# bash scripts/cost_model_benchmark.sh <MODEL_SIZE> <TP_LIST> (TP degrees to be profiled)
-bash scripts/cost_model_benchmark.sh 7B 1,2,4,8
+# bash scripts/cost_model_benchmark.sh <MODEL_SIZE> <TP_LIST> <SERVER_ADDR> <SERVER_PORT> [HOST_FILE] [ENV_FILE] (<TP_LIST> refer to TP degrees to be profiled)
+bash scripts/cost_model_benchmark.sh 7B 1,2,4,8 <ip> <port>
 ~~~
 
 
@@ -82,13 +82,13 @@ Fine-tuning with homogeneous & heterogeneous parallel configurations can be laun
 
 ~~~bash
 # (under LobRA folder)
-# bash scripts/llama_lora_multi_task.sh <MODEL_SIZE> <NUM_GPUS> <BUCKET_NUM> <TRAIN_TASK_NUM> <MAX_SEQ_LENGTH> <TRAINER_CONFIG_PATH> <STRATEGY_CONFIG_PATH>
+# bash scripts/llama_lora_multi_task.sh <MODEL_SIZE> <NUM_GPUS> <BUCKET_NUM> <TRAIN_TASK_NUM> <MAX_SEQ_LENGTH> <SERVER_ADDR> <SERVER_PORT> <TRAINER_CONFIG_PATH> <STRATEGY_CONFIG_PATH> [HOST_FILE] [ENV_FILE]
 # fine-tuning with homoegeneous parallel configurations
 export DP_BUCKET=FALSE # whether to use dynamic bucketing
-bash scripts/llama_lora_multi_task.sh 7B 16 16 6 16384 exp_task6 [7B_homo_fuse]
+bash scripts/llama_lora_multi_task.sh 7B 16 16 6 16384 <ip> <port> exp_task6 [7B_homo_fuse]
 # fine-tuning with heterogeneous parallel configurations
 export DP_BUCKET=TRUE
-bash scripts/llama_lora_multi_task.sh 7B 16 16 6 16384 exp_task6 [7B_hetero_fuse]
+bash scripts/llama_lora_multi_task.sh 7B 16 16 6 16384 <ip> <port> exp_task6 [7B_hetero_fuse]
 ~~~
 
 If you don't specify `<STRATEGY_CONFIG_PATH>`, it will automatically get the deployment plan by configuration pruning.

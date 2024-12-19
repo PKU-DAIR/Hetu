@@ -71,7 +71,7 @@ if __name__ == '__main__':
         "--pssh_port", type=str, default='60001', help="pssh's port"
     )
     parser.add_argument(
-        "--pssh_password", type=str, default='gehao1602', help="pssh's password"
+        "--pssh_password", type=str, default='xxx', help="pssh's password"
     )
     parser.add_argument(
         "--server_addr", type=str, default='127.0.0.1', help="server's address"
