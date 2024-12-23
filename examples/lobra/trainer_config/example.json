@@ -1,0 +1,19 @@
+{
+    "variant": "canonical",
+    "train_task_num": 1,
+    "task": [
+        {
+            "rank": 16,
+            "lora_alpha": 16,
+            "target_modules": [
+                "q_proj", "k_proj", "v_proj", "o_proj", "dense_h_to_4h", "dense_4h_to_h"
+            ],
+            "global_batch_size": 64,
+            "dataset_name": "commitpackft",
+            "context_length": 8192,
+            "json_key": "text",
+            "steps": 21,
+            "epochs": 1
+        }
+    ]
+}

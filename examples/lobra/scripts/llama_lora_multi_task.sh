@@ -5,8 +5,8 @@ TRAIN_TASK_NUM=${4:-6}
 MAX_SEQ_LENGTH=${5:-16384}
 SERVER_ADDR=${6:-"${IP_1}"}
 SERVER_PORT=${7:-"23333"}
-TRAINER_CONFIG=${8:-'trainer_example'}
-STRATEGY_CONFIG=${9:-''}
+TRAINER_CONFIG=${8:-'example'}
+STRATEGY_CONFIG=${9:-'strategy_example'}
 HOST_FILE=${10:-'scripts/hostfile.yaml'}
 ENV_FILE=${11:-'scripts/env.sh'}
 
