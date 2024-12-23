@@ -3,8 +3,8 @@ NUM_GPUS=${2:-16}
 BUCKET_NUM=${3:-16}
 TRAIN_TASK_NUM=${4:-6}
 MAX_SEQ_LENGTH=${5:-16384}
-TRAINER_CONFIG=${6:-'exp_task6'}
-STRATEGY_CONFIG=${7:-'default_strategy'}
+TRAINER_CONFIG=${6:-'example'}
+STRATEGY_CONFIG=${7:-'strategy_example'}
 
 if [ "${MODEL_SIZE}" = "7B" ]; then
     NUM_LAYERS=32
