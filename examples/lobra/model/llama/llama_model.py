@@ -175,7 +175,15 @@ class ParallelMLP(ht.nn.Module):
         # [b*seq_len, h] -> [b*seq_len, 2* 2.7* h]
         intermediate_parallel = self.dense_h_to_4h(hidden_states)
         # fused kernel: x1*sigmoid(x1)*x2
-        intermediate_parallel = ht.swiglu(intermediate_parallel, name=f'swiglu_{self.name}')
+        with ht.recompute(multi_recompute = [
+            [False] if ds_parallel_config['recompute_granularity'] is None else
+            [
+                True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+            ]
+            for ds_parallel_config in self.ds_parallel_configs
+        ]):
+            intermediate_parallel = ht.swiglu(intermediate_parallel, name=f'swiglu_{self.name}')
 
         # [b*seq_len, 4h] -> [b*seq_len, h]
         output = self.dense_4h_to_h(intermediate_parallel)

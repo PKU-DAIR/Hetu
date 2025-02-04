@@ -326,7 +326,7 @@ class Module(object):
             # for name, child in self.named_children():
             #     print("Sub:", name, ",", child)
             # print(self.module_name, self.ds_parallel_configs)
-            # stack.enter_context(hetu.recompute(mutli_recompute))
+            stack.enter_context(hetu.recompute(mutli_recompute))
             # TODO: support multi-strategies 
             # stack.enter_context(hetu.cpu_offload() if self._cpu_offload else nullcontext())
 
@@ -335,8 +335,13 @@ class Module(object):
             
             # block之间显式地插入了comm op从而阻隔了连续的recompute
             # 之前需要在这里手动设置block的output不做recompute
-            # if isinstance(value, hetu.Tensor):
-            #     value._make_recompute([False for i in range(1 if self.ds_parallel_configs is None else len(self.ds_parallel_configs))])
+            
+            # 手动设置module的output不做recompute，从ds config传入
+            if isinstance(value, hetu.Tensor):
+                value._make_recompute(
+                    [False] if self.ds_parallel_configs is None else
+                    [ds_parallel_config.get('output_recompute', [False]) for ds_parallel_config in self.ds_parallel_configs]
+                )
             return value
     
     def forward(self, *input: Any, **kwargs: Any) -> Any:
