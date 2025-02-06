@@ -14,10 +14,12 @@ void ArangeCuda(double start, double step, NDArray& output, const Stream& stream
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     output->dtype(), spec_t, "RangeCuda", [&]() {
-      launch_loop_kernel<spec_t>(output, size, stream,
-                                 [start, step] __device__ (int x) -> spec_t {
-                                   return static_cast<spec_t>(start + step * size_t(x));
-                                 });
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {output}, size, stream,
+                                                  [start, step] __device__ (int x) -> spec_t {
+                                                    return static_cast<spec_t>(start + step * size_t(x));
+                                                  });
   });
   NDArray::MarkUsedBy({output}, stream);
 }

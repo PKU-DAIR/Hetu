@@ -32,31 +32,35 @@ void SGDUpdateCuda(const NDArray& grad, NDArray& param, NDArray& velocity,
     grad_ = grad;
   HT_DISPATCH_FLOATING_TYPES(grad->dtype(), spec_t, "SGDUpdateCuda", [&]() {
     if (momentum == 0) {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(param, grad, param, size, stream,
-                                                 [lr] __device__ (spec_t param, spec_t grad) -> spec_t {
-                                                   return param - static_cast<spec_t>(lr) * grad;
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({param, grad}, {param}, size, stream,
+                                         [lr] __device__ (spec_t param, spec_t grad) -> spec_t {
+                                           return param - static_cast<spec_t>(lr) * grad;
                                                  });
     } else {
       if (!nesterov) {
-        launch_loop_kernel_multiple_outputs<std::tuple<spec_t, spec_t, spec_t>, thrust::tuple<spec_t, spec_t>>
-                                          ({velocity, grad_, param}, {velocity, param}, size, stream,
-                                            [=] __device__ (spec_t velocity, spec_t grad, spec_t param)
-                                              -> thrust::tuple<spec_t, spec_t> {
-                                                auto update_velocity = velocity * momentum - grad * lr;
-                                                auto update_param = param + update_velocity;
+        using InType = std::tuple<spec_t, spec_t, spec_t>;
+        using OutType = thrust::tuple<spec_t, spec_t>;
+        launch_loop_kernel<InType, OutType>({velocity, grad_, param}, {velocity, param}, size, stream,
+                                          [lr, momentum] __device__ (spec_t velocity, spec_t grad, spec_t param)
+                                            -> thrust::tuple<spec_t, spec_t> {
+                                              auto update_velocity = velocity * momentum - grad * lr;
+                                              auto update_param = param + update_velocity;
                                                 return thrust::tuple<spec_t, spec_t>{
                                                   update_velocity,
                                                   update_param
                                                 };
                                             });
       } else {
-        launch_loop_kernel_multiple_outputs<std::tuple<spec_t, spec_t, spec_t>, thrust::tuple<spec_t, spec_t>>
-                                           ({velocity, grad_, param}, {velocity, param}, size, stream,
-                                            [=] __device__ (spec_t velocity, spec_t grad, spec_t param)
-                                              -> thrust::tuple<spec_t, spec_t> {
-                                                float temp = lr * grad;
-                                                auto update_velocity = momentum * (velocity - temp);
-                                                auto update_param = param + (update_velocity - temp);
+        using InType = std::tuple<spec_t, spec_t, spec_t>;
+        using OutType = thrust::tuple<spec_t, spec_t>;
+        launch_loop_kernel<InType, OutType>({velocity, grad_, param}, {velocity, param}, size, stream,
+                                          [lr, momentum] __device__ (spec_t velocity, spec_t grad, spec_t param)
+                                            -> thrust::tuple<spec_t, spec_t> {
+                                              float temp = lr * grad;
+                                              auto update_velocity = momentum * (velocity - temp);
+                                              auto update_param = param + (update_velocity - temp);
                                                 return thrust::tuple<spec_t, spec_t>{
                                                   update_velocity,
                                                   update_param
@@ -97,17 +101,20 @@ void SGDUpdateWithGradScalerCuda(const NDArray& grad, const NDArray& infinite_co
       return;
     }
     if (momentum == 0) {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(param, grad_, param, size, stream,
-                                                 [=] __device__ (spec_t param, spec_t grad) -> spec_t {
-                                                   return param - lr * grad;
-                                                 });
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({param, grad_}, {param}, size, stream,
+                                         [lr] __device__ (spec_t param, spec_t grad) -> spec_t {
+                                           return param - lr * grad;
+                                          });
     } else {
       if (!nesterov) {
-        launch_loop_kernel_multiple_outputs<std::tuple<spec_t, spec_t, spec_t>, thrust::tuple<spec_t, spec_t>>
-                                           ({velocity, grad_, param}, {velocity, param}, size, stream,
-                                            [=] __device__ (spec_t velocity, spec_t grad, spec_t param)
-                                              -> thrust::tuple<spec_t, spec_t> {
-                                                auto update_velocity = momentum * velocity - lr * grad;
+        using InType = std::tuple<spec_t, spec_t, spec_t>;
+        using OutType = thrust::tuple<spec_t, spec_t>;
+        launch_loop_kernel<InType, OutType>({velocity, grad_, param}, {velocity, param}, size, stream,
+                                           [lr, momentum] __device__ (spec_t velocity, spec_t grad, spec_t param)
+                                             -> thrust::tuple<spec_t, spec_t> {
+                                               auto update_velocity = momentum * velocity - lr * grad;
                                                 auto update_param = param + update_velocity;
                                                 return thrust::tuple<spec_t, spec_t>{
                                                   update_velocity,
@@ -115,10 +122,11 @@ void SGDUpdateWithGradScalerCuda(const NDArray& grad, const NDArray& infinite_co
                                                 };
                                             });
       } else {
-        launch_loop_kernel_multiple_outputs<std::tuple<spec_t, spec_t, spec_t>, thrust::tuple<spec_t, spec_t>>
-                                           ({velocity, grad_, param}, {velocity, param}, size, stream,
-                                            [=] __device__ (spec_t velocity, spec_t grad, spec_t param)
-                                              -> thrust::tuple<spec_t, spec_t> {
+        using InType = std::tuple<spec_t, spec_t, spec_t>;
+        using OutType = thrust::tuple<spec_t, spec_t>;
+        launch_loop_kernel<InType, OutType>({velocity, grad_, param}, {velocity, param}, size, stream,
+                                           [lr, momentum] __device__ (spec_t velocity, spec_t grad, spec_t param)
+                                             -> thrust::tuple<spec_t, spec_t> {
                                                 float temp = lr * grad;
                                                 auto update_velocity = momentum * (velocity - temp);
                                                 auto update_param = param + (update_velocity - temp);
@@ -156,10 +164,11 @@ void AdamCuda(const NDArray& grad, NDArray& param, NDArray& mean,
     grad_ = grad;
   HT_DISPATCH_FLOATING_TYPES(param->dtype(), spec_t, "AdamUpdateCuda", [&]() {
     int64_t cur_step = step->data_ptr<int64_t>()[0];
-    launch_loop_kernel_multiple_outputs<std::tuple<spec_t, spec_t, spec_t, spec_t>, thrust::tuple<spec_t, spec_t, spec_t>>
-                                       ({grad_, param, mean, variance}, {param, mean, variance}, size, stream,
-                                        [=] __device__ (spec_t grad, spec_t param, spec_t mean, spec_t variance)
-                                          -> thrust::tuple<spec_t, spec_t, spec_t> {
+    using InType = std::tuple<spec_t, spec_t, spec_t, spec_t>;
+    using OutType = thrust::tuple<spec_t, spec_t, spec_t>;
+    launch_loop_kernel<InType, OutType>({grad_, param, mean, variance}, {param, mean, variance}, size, stream,
+                                       [lr, beta1, beta2, eps, cur_step] __device__ (spec_t grad, spec_t param, spec_t mean, spec_t variance)
+                                         -> thrust::tuple<spec_t, spec_t, spec_t> {
                                             auto update_mean = mean * beta1 + grad * (1 - beta1);
                                             auto update_variance = variance * beta2 + grad * grad * (1 - beta2);
                                             spec_t bias1 = spec_t(1 - hetu::cuda::cuda_pow(beta1, float(cur_step)));

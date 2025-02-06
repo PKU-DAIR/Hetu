@@ -228,11 +228,6 @@
 
 - name: concat
   op: ConcatOp
-  args: Tensor inputA, Tensor inputB, int64_t axis
-  self: inputA
-
-- name: concat
-  op: ConcatenateOp
   args: TensorList inputs, int64_t axis=0
 
 # deprecated: only used in gpt inference, before symbolic shape is realized

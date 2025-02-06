@@ -19,10 +19,12 @@ void ArraySetCuda(NDArray& data, double value, const Stream& stream) {
   }
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     data->dtype(), spec_t, "ArraySetCuda", [&]() {
-      launch_loop_kernel<spec_t>(data, size, stream,
-                                 [=] __device__ (int /*idx*/) -> spec_t {
-                                   return static_cast<spec_t>(value);
-                                 });
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {data}, size, stream,
+                                                  [=] __device__ (int /*idx*/) -> spec_t {
+                                                    return static_cast<spec_t>(value);
+                                                  });
   });
   NDArray::MarkUsedBy({data}, stream);
 }

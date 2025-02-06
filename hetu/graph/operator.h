@@ -299,6 +299,7 @@ struct OpInstantiationContext {
   DeviceGroupUnion placement_group_union{};
   Device placement{};
   StreamIndex stream_index;
+  ContextStore ctx{};
   std::unique_ptr<Event> start[HT_MAX_NUM_MICRO_BATCHES];
   std::unique_ptr<Event> stop[HT_MAX_NUM_MICRO_BATCHES];
 

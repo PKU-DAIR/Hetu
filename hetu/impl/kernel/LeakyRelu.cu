@@ -19,7 +19,9 @@ void LeakyReluCuda(const NDArray& input, double alpha, NDArray& output,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "LeakyReluCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [alpha] __device__ (spec_t in) -> spec_t {
                                            return static_cast<double>(in) < 0 ? in * static_cast<spec_t>(alpha)
                                                                               : in;
@@ -40,7 +42,9 @@ void LeakyReluGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "LeakyReluGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, size, stream,
                                                  [alpha] __device__ (spec_t in, spec_t out_grad) -> spec_t {
                                                    return static_cast<double>(in) < 0 ? out_grad * static_cast<spec_t>(alpha)
                                                                                       : out_grad;

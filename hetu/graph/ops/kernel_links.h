@@ -68,15 +68,8 @@ DECLARE_KERNEL_CPU_AND_CUDA(BroadcastShapeMul, const NDArray&, double, NDArray&,
 DECLARE_KERNEL_CPU_AND_CUDA(Ceil, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckFinite, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckNumeric, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(Concat, const NDArray&, const NDArray&, NDArray&,
-                            size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ConcatGradient, const NDArray&, NDArray&, size_t,
-                            size_t, const Stream&);
-DECLARE_KERNEL_CPU(Concatenate, const NDArrayList&, NDArray&, size_t, const Stream&);
-DECLARE_KERNEL_CUDA(Concatenate, const NDArray&, NDArray&, size_t,
-                    size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ConcatenateGradient, const NDArray&, NDArray&,
-                            size_t, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(Concat, const NDArrayList&, NDArray&, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(ConcatGradient, const NDArray&, NDArrayList&, size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Contiguous, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(ContiguousGradient, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CUDA(DynamicConcatenate, const NDArray&, NDArray&, size_t,

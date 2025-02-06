@@ -28,6 +28,7 @@ protected:
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     NDArrayMeta output_meta = inputs[0]->meta();
     NDArrayMeta mask_meta = inputs[0]->meta();
+    mask_meta.set_shape(HTShape({inputs[0]->shape()[0], inputs[0]->shape()[1]}));
     mask_meta.set_dtype(DataType::BOOL);
     return {output_meta, mask_meta};
   }

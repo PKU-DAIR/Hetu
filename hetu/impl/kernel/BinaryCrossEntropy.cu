@@ -42,8 +42,9 @@ void BinaryCrossEntropyCuda(const NDArray& pred, const NDArray& label,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     pred->dtype(), spec_t, "BinaryCrossEntropyCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(
-        pred, label, loss, n_rows, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({pred, label}, {loss}, n_rows, stream,
         [] __device__ (spec_t pred, spec_t label) {
           spec_t v1 = hetu::cuda::cuda_log(pred);
           spec_t v2 = hetu::cuda::cuda_log(1 - pred);
@@ -73,8 +74,9 @@ void BinaryCrossEntropyGradientCuda(const NDArray& pred, const NDArray& label,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     pred->dtype(), spec_t, "BinaryCrossEntropyGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t, spec_t>(
-        pred, label, grad_loss, output, n_rows, stream,
+      using InType = std::tuple<spec_t, spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({pred, label, grad_loss}, {output}, n_rows, stream,
         kBCEGradFunctor<spec_t>());
     });
   NDArray::MarkUsedBy({pred, label, grad_loss, output}, stream);

@@ -50,6 +50,31 @@ class ContextStore {
     _ctx.insert({key, std::to_string(value)});
   }
 
+  std::vector<int64_t> get_int64_list(const std::string& key) const {
+    auto it = _ctx.find(key);
+    std::vector<int64_t> ret;
+    if (it == _ctx.end()) {
+      return ret;
+    }
+    std::stringstream ss(it->second);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+      ret.push_back(std::stoll(item));
+    }
+    return ret;
+  }
+
+  void put_int64_list(const std::string& key, const std::vector<int64_t>& value) {
+    std::stringstream ss;
+    for (size_t i = 0; i < value.size(); ++i) {
+      if (i > 0) {
+        ss << ",";
+      }
+      ss << value[i];
+    }
+    _ctx.insert({key, ss.str()});
+  }
+
   uint64_t get_uint64(const std::string& key,
                       uint64_t default_value = 0) const {
     auto it = _ctx.find(key);

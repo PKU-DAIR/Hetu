@@ -62,10 +62,12 @@ void SoftmaxCrossEntropyCuda(const NDArray& input, const NDArray& label,
           (const void*) contig_input->data_ptr<spec_t>(), &beta, desc, (void*)temp_->data_ptr<spec_t>()));             
       }   
 
-      launch_loop_kernel<spec_t, spec_t, spec_t>(temp_, label, temp_, size, stream,
-                                                 [] __device__ (spec_t a, spec_t b) {
-                                                   return -a * b;
-                                                });
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({temp_, label}, {temp_}, size, stream,
+                                         [] __device__ (spec_t a, spec_t b) {
+                                           return -a * b;
+                                          });
       NDArray::sum(temp_, {1}, false, stream.stream_index(), output);
       NDArray::MarkUsedBy({contig_input}, stream);
     });

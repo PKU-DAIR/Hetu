@@ -39,7 +39,7 @@ NDArrayList Dropout2dOpImpl::DoCompute(Operator& op,
 
 TensorList Dropout2dOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
   return {op->requires_grad(0) ? MakeDropout2dGradientOp(grad_outputs.at(0),
-                                  op->output(0), keep_prob(), inplace(),
+                                  op->output(1), keep_prob(), inplace(),
                                   op->grad_op_meta().set_name(op->grad_name()))
                                : Tensor()};
 }

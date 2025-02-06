@@ -620,14 +620,9 @@ void AttnCommRing::ExecComm(const NDArray& send_data, const NDArray& recv_data,
     return;
   }
   // 拼接起来
-  int64_t num_heads_offset = 0;
-  for (size_t i = 0; i < src_split_num; i++) {
-    HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
-                                 hetu::impl::Concatenate, recv_data_slices[i],
-                                 const_cast<NDArray&>(recv_data), num_heads_dim, num_heads_offset, 
-                                 comm_stream);
-    num_heads_offset += recv_data_slice_shape[num_heads_dim];
-  }
+  HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
+                               hetu::impl::Concat, recv_data_slices,
+                               const_cast<NDArray&>(recv_data), num_heads_dim, comm_stream);
   // HT_LOG_DEBUG << "[ParallelAttn]: ExecComm end";
 }
 

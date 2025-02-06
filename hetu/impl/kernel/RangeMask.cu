@@ -18,7 +18,9 @@ void RangeMaskCuda(const NDArray& input, int64_t min, int64_t max,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "RangeMaskCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [min, max] __device__ (spec_t x) -> spec_t {
                                            spec_t zero = 0;
                                            spec_t one = 1.0f;

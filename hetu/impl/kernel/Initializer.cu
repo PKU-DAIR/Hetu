@@ -24,9 +24,11 @@ void NormalInitsCuda(NDArray& data, double mean, double stddev, uint64_t seed,
   CUDARandomState rand_state = GetCUDARandomState(cuda_stream.device_id(), seed, 4);
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     data->dtype(), spec_t, "NormalInitsCuda", [&]() {
-      launch_loop_kernel<spec_t>(data, size, stream,
-                                 [=] __device__ (int idx) -> spec_t {
-                                   curandStatePhilox4_32_10_t state;
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {data}, size, stream,
+                                         [=] __device__ (int idx) -> spec_t {
+                                           curandStatePhilox4_32_10_t state;
                                    curand_init(rand_state.seed, idx, rand_state.offset, &state);
                                    return curand_normal(&state) *
                                           static_cast<spec_t>(stddev) +
@@ -52,9 +54,11 @@ void UniformInitsCuda(NDArray& data, double lb, double ub, uint64_t seed,
   CUDARandomState rand_state = GetCUDARandomState(cuda_stream.device_id(), seed, 4);
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     data->dtype(), spec_t, "UniformInitCuda", [&]() {
-      launch_loop_kernel<spec_t>(data, size, stream,
-                                 [=] __device__ (int idx) -> spec_t {
-                                   curandStatePhilox4_32_10_t state;
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {data}, size, stream,
+                                         [=] __device__ (int idx) -> spec_t {
+                                           curandStatePhilox4_32_10_t state;
                                    curand_init(rand_state.seed, idx, rand_state.offset, &state);
                                    return curand_uniform(&state) *
                                           (static_cast<spec_t>(ub) - static_cast<spec_t>(lb)) +
@@ -79,9 +83,11 @@ void TruncatedNormalInitsCuda(NDArray& data, double mean, double stddev,
   CUDARandomState rand_state = GetCUDARandomState(cuda_stream.device_id(), seed, 32);
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     data->dtype(), spec_t, "TruncatedNormalInitsCuda", [&]() {
-      launch_loop_kernel<spec_t>(data, size, stream,
-                                 [=] __device__ (int idx) -> spec_t {
-                                   curandStatePhilox4_32_10_t state;
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {data}, size, stream,
+                                         [=] __device__ (int idx) -> spec_t {
+                                           curandStatePhilox4_32_10_t state;
                                    curand_init(rand_state.seed, idx, rand_state.offset, &state);
                                    spec_t val;
                                    do {

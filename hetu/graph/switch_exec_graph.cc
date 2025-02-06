@@ -7,7 +7,7 @@
 #include "hetu/graph/operator.h"
 #include "hetu/graph/ops/Split.h"
 #include "hetu/graph/ops/Slice.h"
-#include "hetu/graph/ops/Concatenate.h"
+#include "hetu/graph/ops/Concat.h"
 #include "hetu/graph/ops/Contiguous.h"
 #include "hetu/graph/ops/placeholder.h"
 #include "hetu/graph/ops/Communication.h"
@@ -382,7 +382,7 @@ void ParamSlice::ParamSliceComm(Device2DTListPairMap& send_mapping,
       auto& old_tensor = _needed_slice_instances[i];
       auto& new_tensor = _owned_slice_instances[already_owned_slice_instance_num];
       HT_ASSERT(old_tensor->num_consumers() == 1)
-        << "the slice instance should only used once (by a single concatenate op)";
+        << "the slice instance should only used once (by a single concat op)";
       auto& consumer = old_tensor->consumer(0);
       for (size_t j = 0; j < consumer->num_inputs(); ++j) {
         if (consumer->input(j)->id() == old_tensor->id()) {
@@ -684,8 +684,8 @@ Tensor SwitchExecGraph::MergeAllParamSlices(const Tensor& param, ParamBlock& blo
     }  
   }
   auto concatenate_name = "concat_" + param->name() + "_at_dim_" + std::to_string(dim);
-  auto concatenate_output = MakeConcatenateOp(std::move(merged_slices), dim, 
-                                              OpMeta().set_name(concatenate_name).set_is_deduce_states(false));         
+  auto concatenate_output = MakeConcatOp(std::move(merged_slices), dim, 
+                                         OpMeta().set_name(concatenate_name).set_is_deduce_states(false));
   auto& concatenate_op = concatenate_output->producer();
   // 其他device上生成的不需要map placement_group和placement
   if (hetu::impl::comm::GetLocalDevice() == device) { 
@@ -1241,7 +1241,7 @@ void SwitchExecGraph::MakeCommGraph(SWITCH_MODE switch_mode, SWITCH_LEVEL switch
     auto& old_tensor = _recv_mapping[local_device].second[i];
     auto& new_tensor = recv_tensors[i];
     HT_ASSERT(old_tensor->num_consumers() == 1)
-      << "the slice instance should only used once (by a single concatenate op)";
+      << "the slice instance should only used once (by a single concat op)";
     auto it = _info_mapping.find(old_tensor->id());
     HT_ASSERT(it != _info_mapping.end())
       << "the info of the old tensor is not recorded";
@@ -1558,7 +1558,7 @@ void SwitchExecGraph::SwitchParams(SWITCH_MODE switch_mode,
     get_local_topo(topo, _comm_topo);
     HT_LOG_DEBUG << local_device << ": local topo of the comm graph is " << _comm_topo;
     // 计算运行时shape
-    // 该图中只存在placeholder、split、batchedisendirecv和concatenate
+    // 该图中只存在placeholder、split、batchedisendirecv和concat
     // 不需要symbolic方法（甚至不需要DoInferShape）
     // 直接用tensor的shape即可
     // Question: 是否正确？
@@ -2229,7 +2229,7 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
     auto& old_tensor = _recv_mapping[local_device].second[i];
     auto& new_tensor = recv_tensors[i];
     HT_ASSERT(old_tensor->num_consumers() == 1)
-      << "the slice instance should only used once (by a single concatenate op)";
+      << "the slice instance should only used once (by a single concat op)";
     auto& consumer = old_tensor->consumer(0);
     for (size_t j = 0; j < consumer->num_inputs(); ++j) {
       if (consumer->input(j)->id() == old_tensor->id()) {

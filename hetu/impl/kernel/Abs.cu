@@ -20,7 +20,9 @@ void AbsCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "AbsCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                            return hetu::cuda::cuda_abs(x);
                                          });
@@ -40,8 +42,10 @@ void AbsGradientCuda(const NDArray& input, const NDArray& output_grad, NDArray& 
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "AbsGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
-                                                 [] __device__ (spec_t x, spec_t y) -> spec_t {
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, size, stream,
+                                         [] __device__ (spec_t x, spec_t y) -> spec_t {
                                                    spec_t zero = 0;
                                                    return x == zero ? zero
                                                             : x > zero ? y
