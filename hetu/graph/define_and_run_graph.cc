@@ -40,9 +40,8 @@ Operator& DefineAndRunGraph::MakeOpInner(std::shared_ptr<OpInterface> body,
                                          TensorList inputs, OpMeta op_meta) {
   _check_all_inputs_in_graph(inputs, op_meta.extra_deps);
   // for optimization passes
-  // TODO: support multi-strategies offload
   op_meta = op_meta.set_multi_recompute(Recompute::multi_recompute())
-                   .set_is_cpu_offload(ActivationCPUOffload::enabled());
+                   .set_multi_cpu_offload(ActivationCPUOffload::multi_cpu_offload());
   auto& op = MakeAndAddOp(std::move(body), std::move(inputs), std::move(op_meta));
   if (op->op_meta().need_dequantization()) {
     OpId param_id = op->op_meta().parameter_dict["tensor_id"];

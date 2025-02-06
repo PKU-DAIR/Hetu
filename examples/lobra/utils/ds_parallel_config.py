@@ -394,6 +394,7 @@ def generate_lora_ds_parallel_config(
         blocks_json[f'blocks{block_id}'] = {
             'range': [block_id,],
             'recompute': block_recompute,
+            'cpu_offload': [False for _ in range(dp)],
             'output_recompute': block_output_recompute,
             'layernorm1': {
                 'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},

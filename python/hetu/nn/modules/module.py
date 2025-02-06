@@ -323,12 +323,20 @@ class Module(object):
                 mutli_recompute = [[False]]  
                 print(f"Warning: {self.__class__.__name__} does not have ds_parallel_configs attribute, undefined behavior may happen")
                 
+            # multi-strategies of cpu offload
+            if self._cpu_offload:
+                mutli_cpu_offload = [[True] for _ in range(1 if self.ds_parallel_configs is None else len(self.ds_parallel_configs))]
+            elif self.ds_parallel_configs is not None:
+                mutli_cpu_offload = [[False] if 'cpu_offload' not in self.ds_parallel_configs[i] else self.ds_parallel_configs[i]['cpu_offload'] for i in range(len(self.ds_parallel_configs))]
+            else:
+                mutli_cpu_offload = [[False]]
+                print(f"Warning: {self.__class__.__name__} does not have ds_parallel_configs attribute, undefined behavior may happen")
+                
             # for name, child in self.named_children():
             #     print("Sub:", name, ",", child)
             # print(self.module_name, self.ds_parallel_configs)
             stack.enter_context(hetu.recompute(mutli_recompute))
-            # TODO: support multi-strategies 
-            # stack.enter_context(hetu.cpu_offload() if self._cpu_offload else nullcontext())
+            stack.enter_context(hetu.cpu_offload(mutli_cpu_offload))
 
             # 实际forward
             value = self.forward(*input, **kwargs)

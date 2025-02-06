@@ -3,6 +3,7 @@ import builtins # bool is resovled as hetu.bool
 
 _cur_graph_contexts = []
 _cur_recompute_contexts = []
+_cur_cpu_offload_contexts = []
 
 class _OpContext(object):
     def __init__(self, 
@@ -223,13 +224,42 @@ def recompute(multi_recompute):
     return _RecomputeContext(multi_recompute)
 
 class _CPUOffloadContext(object):
+    def __init__(self, multi_cpu_offload):
+        self.multi_cpu_offload = multi_cpu_offload
+    
     def __enter__(self):
-        ht_core._internal_context.push_cpu_offload_ctx()
+        _cur_cpu_offload_contexts.append(self)
+        # 只要某一层的offload是true那么最终就要offload
+        cur_multi_cpu_offload = []
+        self.multi_len = len(self.multi_cpu_offload)
+        for cpu_offload_context in _cur_cpu_offload_contexts:
+            assert self.multi_len == len(cpu_offload_context.multi_cpu_offload), f"all multi len should be equal: self.multi_cpu_offload = {self.multi_cpu_offload}, cpu_offload_context.multi_cpu_offload = {cpu_offload_context.multi_cpu_offload}"
+        for i in range(self.multi_len):
+            pipeline_num = 1
+            for cpu_offload_context in _cur_cpu_offload_contexts:
+                if pipeline_num == 1:
+                    pipeline_num = len(cpu_offload_context.multi_cpu_offload[i])
+                else:
+                    assert len(cpu_offload_context.multi_cpu_offload[i]) == 1 or len(cpu_offload_context.multi_cpu_offload[i]) == pipeline_num \
+                        , "cpu offload state len should be 1 or equal to the pipeline num"
+            cur_cpu_offload = [False] * pipeline_num
+            for j in range(pipeline_num):
+                for cpu_offload_context in _cur_cpu_offload_contexts:
+                    if len(cpu_offload_context.multi_cpu_offload[i]) == 1:
+                        if cpu_offload_context.multi_cpu_offload[i][0] == True:
+                            cur_cpu_offload = [True] * pipeline_num
+                            break
+                    else:
+                        if cpu_offload_context.multi_cpu_offload[i][j] == True:
+                            cur_cpu_offload[j] = True
+                            break
+            cur_multi_cpu_offload.append(cur_cpu_offload)
+        ht_core._internal_context.push_cpu_offload_ctx(cur_multi_cpu_offload)
         return self
     
     def __exit__(self, e_type, e_value, e_trace):
         ht_core._internal_context.pop_cpu_offload_ctx()
-
+        _cur_cpu_offload_contexts.remove(self)
 def cpu_offload():
     return _CPUOffloadContext()
 

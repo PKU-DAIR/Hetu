@@ -4,7 +4,7 @@
 namespace hetu {
 namespace graph {
 
-bool ActivationCPUOffload::_enabled = false;
+std::stack<std::vector<std::vector<bool>>> ActivationCPUOffload::_multi_cpu_offload_stack{{std::vector<std::vector<bool>>{{false}}}};
 
 bool ActivationCPUOffload::IsNoOffloadOp(Operator& op) {
   return is_comm_op(op);
@@ -33,7 +33,7 @@ void ActivationCPUOffload::OffloadTensorToCPU(const OpRefList& topo_order, const
   auto& offload_op = offload_tensor->producer();
   if (tensor->placement_group_union().size() != 0)
     offload_op->MapToParallelDevices(tensor->placement_group_union());
-  offload_op->Instantiate(Device(kCPU), kOffloadStream);
+  offload_op->Instantiate(Device(kCPU), kD2HStream);
 
   // Find the first grad consumer of the tensor and build execution dependency
   TensorList in_deps;
@@ -78,7 +78,7 @@ void ActivationCPUOffload::OffloadTensorToCPU(const OpRefList& topo_order, const
       auto& load_op = load_tensor->producer();
       if (offload_tensor->placement_group_union().size() != 0)
         load_op->MapToParallelDevices(offload_tensor->placement_group_union());
-      load_op->Instantiate(out_consumer->placement(), kOffloadStream);
+      load_op->Instantiate(out_consumer->placement(), kH2DStream);
       device_ops[out_consumer->placement().index()] = load_tensor;
       HT_LOG_DEBUG << "[Offload] inputs of consumer " << out_consumer
                    << "before replacement: " << out_consumer->inputs();
@@ -106,7 +106,7 @@ void ActivationCPUOffload::OffloadToCPU(const OpRefList& topo_order) {
   OpRefList candidate_offload_ops;
   for (auto& op_ref : topo_order) {
     auto& op = op_ref.get();
-    if (!op->op_meta().is_cpu_offload || IsNoOffloadOp(op)) {
+    if (!op->op_meta().get_cpu_offload(op->graph().COMPUTE_STRATEGY_ID, op->suggested_hetero_id()) || IsNoOffloadOp(op)) {
       continue;
     }
     if (Operator::any_output_tensor_of(op, has_grad_consumer)) {

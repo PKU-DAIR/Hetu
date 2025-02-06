@@ -110,10 +110,32 @@ class OpMeta {
     return is_recompute.at(hetero_id); 
   }
 
-  // TODO: support multi-strategies offload
-  inline OpMeta& set_is_cpu_offload(bool cpu_offload) {
-    is_cpu_offload = cpu_offload;
+  inline OpMeta& set_multi_cpu_offload(const std::vector<std::vector<bool>>& multi_cpu_offload) {
+    multi_is_cpu_offload = multi_cpu_offload;
     return *this;
+  }
+
+  bool get_cpu_offload(size_t strategy_id, size_t hetero_id) {
+    std::vector<bool> is_cpu_offload;
+    size_t multi_len = multi_is_cpu_offload.size();
+    HT_ASSERT(multi_len > 0)
+      << name << " multi cpu offload is empty, something wrong";
+    if (multi_is_cpu_offload.size() == 1) {
+      is_cpu_offload = multi_is_cpu_offload.at(0);
+    } else {
+      HT_ASSERT(multi_len > strategy_id)
+        << name << " multi cpu offload size is wrong"
+        << ", can't fetch strategy id " << strategy_id << " within len " << multi_len;
+      is_cpu_offload = multi_is_cpu_offload.at(strategy_id);
+    }
+    size_t hetero_len = is_cpu_offload.size();
+    if (is_cpu_offload.size() == 1) {
+      return is_cpu_offload.at(0);
+    }
+    HT_ASSERT(hetero_len > hetero_id)
+      << name << " hetero cpu offload size is wrong"
+      << ", can't fetch hetero id " << hetero_id << " within len " << hetero_len;
+    return is_cpu_offload.at(hetero_id);
   }
 
   // TODO: support multi-strategies offload
@@ -165,8 +187,7 @@ class OpMeta {
   TensorList extra_deps;
   OpId origin_op_id{-1}; // for recomputation only
   std::vector<std::vector<bool>> multi_is_recompute{{false}}; // for multi recomputation strategy multi pipeline
-  // TODO: support multi-strategies offload
-  bool is_cpu_offload{false};
+  std::vector<std::vector<bool>> multi_is_cpu_offload{{false}}; // for multi cpu offload strategy multi pipeline
   bool is_offload{false}; // for offload D2H op only
   bool is_deduce_states{true};  
   bool is_cpu{false};
