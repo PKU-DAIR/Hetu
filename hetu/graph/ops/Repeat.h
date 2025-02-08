@@ -49,6 +49,8 @@ class RepeatOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   HTShape _repeats;
 
  public:
@@ -78,7 +80,7 @@ class RepeatGradientOpImpl final : public OpInterface {
  protected:
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs) const override {
-    return {inputs[1]->meta()};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -88,6 +90,8 @@ class RepeatGradientOpImpl final : public OpInterface {
                  RuntimeContext& ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
  public:
   inline bool require_contig_inputs() const override {
@@ -99,8 +103,7 @@ class RepeatGradientOpImpl final : public OpInterface {
   }
 };
 
-Tensor MakeRepeatGradientOp(Tensor grad_output, Tensor input,
-                            OpMeta op_meta = OpMeta());
+Tensor MakeRepeatGradientOp(Tensor grad_output, OpMeta op_meta = OpMeta());
 
 } // namespace graph
 } // namespace hetu

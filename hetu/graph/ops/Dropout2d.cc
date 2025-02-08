@@ -12,11 +12,11 @@ void Dropout2dOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   uint64_t seed = hetu::impl::GenNextRandomSeed();
   // record seed for recomputed dropout
   if (op->op_meta().get_recompute(op->graph().COMPUTE_STRATEGY_ID, op->suggested_hetero_id())) {
-    ctx.get_or_create(op->id()).put_uint64("seed", seed);
+    ctx.get_or_create(op->id()).put<uint64_t>("seed", seed);
   }
   // recomputed dropout
   if (op->op_meta().origin_op_id != -1) {
-    seed = ctx.get(op->op_meta().origin_op_id).get_uint64("seed");
+    seed = ctx.get_or_create(op->op_meta().origin_op_id).get<uint64_t>("seed");
   }
   HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                 hetu::impl::Dropout2d, inputs.at(0), 1 - keep_prob(),

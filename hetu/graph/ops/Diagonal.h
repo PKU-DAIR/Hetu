@@ -66,6 +66,8 @@ class DiagonalOpImpl final : public ViewsOpImpl {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
   
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const {};
 
@@ -112,8 +114,7 @@ class DiagonalGradientOpImpl final : public ViewsOpImpl {
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[1]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -122,6 +123,8 @@ class DiagonalGradientOpImpl final : public ViewsOpImpl {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& ctx) const override;
   
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
 
@@ -141,7 +144,7 @@ class DiagonalGradientOpImpl final : public ViewsOpImpl {
   }
 };
 
-Tensor MakeDiagonalGradientOp(Tensor grad_output, Tensor input, int64_t offset = 0,
+Tensor MakeDiagonalGradientOp(Tensor grad_output, int64_t offset = 0,
                               int64_t dim1 = 0, int64_t dim2 = 1, OpMeta op_meta = OpMeta());
 
 } // namespace graph

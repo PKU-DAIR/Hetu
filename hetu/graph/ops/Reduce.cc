@@ -56,6 +56,12 @@ HTShapeList ReduceOpImpl::DoInferShape(Operator& op,
   return outputlist;
 }
 
+void ReduceOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().hetero_dim());
+}
+
 DistributedStates ReduceOpImpl::StatesForDistributedReduce(
   const Tensor& input, 
   const HTShape& axes, 
@@ -174,20 +180,24 @@ void ReduceGradientOpImpl::DoCompute(Operator& op,
 HTShapeList ReduceGradientOpImpl::DoInferShape(Operator& op,
                                                const HTShapeList& input_shapes,
                                                RuntimeContext& ctx) const {
-  return  {input_shapes.at(2)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void ReduceGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
+  dst_ctx.put("hetero_dim", src_ctx.pop<int32_t>("hetero_dim"));
 }
 
 void ReduceGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                           const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(2)->get_distributed_states());
+  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 void ReduceGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                              TensorList& outputs, const OpMeta& op_meta) const {
-  
-  // std::cout << inputs_hetero_dim << std::endl;
-  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(2));
-
+  outputs.at(0)->cur_ds_union().set_hetero_dim(instantiation_ctx().ctx.get<int32_t>("hetero_dim"));
 }
 
 Tensor MakeReduceOp(Tensor input, ReductionType reduction, const HTAxes& axes,
@@ -269,7 +279,7 @@ Tensor MakeReduceGradientOp(Tensor input, Tensor ori_output, Tensor ori_input, c
   }
   return Graph::MakeOp(
           std::make_shared<ReduceGradientOpImpl>(shape, reduction, add_axes, keepdims, const_value),
-          {std::move(input), std::move(ori_output), std::move(ori_input)},
+          {std::move(input), std::move(ori_output)},
           std::move(op_meta))->output(0);
 }
 

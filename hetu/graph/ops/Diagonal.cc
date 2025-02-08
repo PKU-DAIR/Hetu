@@ -14,7 +14,7 @@ NDArrayList DiagonalOpImpl::DoCompute(Operator& op,
 }
 
 TensorList DiagonalOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
-  return {op->requires_grad(0) ? MakeDiagonalGradientOp(grad_outputs.at(0), op->input(0), offset(), dim1(), dim2(),
+  return {op->requires_grad(0) ? MakeDiagonalGradientOp(grad_outputs.at(0), offset(), dim1(), dim2(),
                                 op->grad_op_meta().set_name(op->grad_name()))
                               : Tensor()};
 }
@@ -37,6 +37,11 @@ HTShapeList DiagonalOpImpl::DoInferShape(Operator& op,
         std::min(ori_shape[dim1_] + offset(), ori_shape[dim2_]));
   }
   return {res_shape};
+}
+
+void DiagonalOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
 }
 
 void DiagonalOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -63,12 +68,18 @@ void DiagonalGradientOpImpl::DoCompute(Operator& op,
 HTShapeList DiagonalGradientOpImpl::DoInferShape(Operator& op,
                                                  const HTShapeList& input_shapes,
                                                  RuntimeContext& ctx) const {
-  return {input_shapes[1]};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void DiagonalGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void DiagonalGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
                                             const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
+  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 Tensor MakeDiagonalOp(Tensor input, int64_t offset, int64_t dim1, int64_t dim2, OpMeta op_meta) {
@@ -78,11 +89,11 @@ Tensor MakeDiagonalOp(Tensor input, int64_t offset, int64_t dim1, int64_t dim2, 
     std::move(op_meta))->output(0);
 }
 
-Tensor MakeDiagonalGradientOp(Tensor grad_output, Tensor input, int64_t offset,
+Tensor MakeDiagonalGradientOp(Tensor grad_output, int64_t offset,
                               int64_t dim1, int64_t dim2, OpMeta op_meta) {
   return Graph::MakeOp(
     std::make_shared<DiagonalGradientOpImpl>(offset, dim1, dim2),
-    {std::move(grad_output), std::move(input)},
+    {std::move(grad_output)},
     std::move(op_meta))->output(0);
 }
 

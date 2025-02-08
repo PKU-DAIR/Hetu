@@ -75,6 +75,8 @@ protected:
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
@@ -120,8 +122,7 @@ protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -129,6 +130,8 @@ protected:
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -149,7 +152,7 @@ protected:
   }
 };
 
-Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output, Tensor filter,
+Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output,
                                     const HTShape& padding, const HTStride& stride,
                                     OpMeta op_meta = OpMeta());
 
@@ -176,8 +179,7 @@ protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -185,6 +187,8 @@ protected:
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -205,7 +209,7 @@ protected:
   }
 };
 
-Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output, Tensor input,
+Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output,
                                   const HTShape& padding, const HTStride& stride,
                                   OpMeta op_meta = OpMeta());
 

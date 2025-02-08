@@ -52,7 +52,9 @@ class AsStridedOpImpl final : public ViewsOpImpl {
    
    HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                             RuntimeContext& runtime_ctx) const override;
-   
+
+   void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
    void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                   RuntimeContext& runtime_ctx) const {};
    
@@ -103,8 +105,7 @@ class AsStridedGradientOpImpl final : public ViewsOpImpl {
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[1]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -112,6 +113,8 @@ class AsStridedGradientOpImpl final : public ViewsOpImpl {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -135,7 +138,7 @@ class AsStridedGradientOpImpl final : public ViewsOpImpl {
   }
 };
 
-Tensor MakeAsStridedGradientOp(Tensor grad_output, Tensor input, const HTShape& outshape,
+Tensor MakeAsStridedGradientOp(Tensor grad_output, const HTShape& outshape,
                                const HTStride& stride, int64_t storage_offset, OpMeta op_meta = OpMeta());
 
 } // namespace graph

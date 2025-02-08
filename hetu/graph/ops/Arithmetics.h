@@ -158,6 +158,8 @@ class AddElewiseOpImpl final : public BinaryOpImpl {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
 
@@ -241,6 +243,8 @@ class SubElewiseOpImpl final : public BinaryOpImpl {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -386,6 +390,8 @@ public:
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -597,14 +603,15 @@ class AddElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
   
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs) const override {
     // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[1]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
   }
 
  public:
@@ -625,14 +632,15 @@ class SubElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs) const override {
     // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[1]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
   }
 
  public:
@@ -653,8 +661,16 @@ class MulElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
+
+  std::vector<NDArrayMeta> 
+  DoInferMeta(const TensorList& inputs) const override {
+    // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
+  }
 
  public:
   bool operator==(const OpInterface& rhs) const override {
@@ -676,6 +692,12 @@ class DivElewiseGradientOpImpl final : public BinaryGradientOpImpl {
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
+
+  std::vector<NDArrayMeta> 
+  DoInferMeta(const TensorList& inputs) const override {
+    // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
+    return {inputs.at(2)->meta()};
+  }
 
  public:
   bool operator==(const OpInterface& rhs) const override {

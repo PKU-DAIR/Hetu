@@ -46,12 +46,12 @@ TensorList SplitOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs)
     }
     TensorList grad_inputs = {};
     if (symbolic()) {
-      grad_inputs = {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, op->input(0), std::move(task_batch_idxs),
+      grad_inputs = {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, std::move(task_batch_idxs),
                                                                 _begin_pos_list, _output_shape_list,
                                                                 dim(), op->grad_op_meta().set_name(op->grad_name()))
                                           : Tensor()};
     } else {
-      grad_inputs = {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, op->input(0), std::move(task_batch_idxs),
+      grad_inputs = {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, std::move(task_batch_idxs),
                                                                 get_begin_pos_list(), get_output_shape_list(),
                                                                 dim(), op->grad_op_meta().set_name(op->grad_name()))
                                            : Tensor()};
@@ -60,12 +60,12 @@ TensorList SplitOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs)
     return std::move(grad_inputs);
   } else {
     if (symbolic()) {
-      return {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, op->input(0),
-                                                        _begin_pos_list, _output_shape_list,
+      return {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, _begin_pos_list,
+                                                        _output_shape_list,
                                                         op->grad_op_meta().set_name(op->grad_name()))
                                   : Tensor()};
     } else {
-      return {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, op->input(0), get_begin_pos_list(),
+      return {op->requires_grad(0) ? MakeSplitGradientOp(grad_outputs, get_begin_pos_list(),
                                                         get_output_shape_list(),
                                                         op->grad_op_meta().set_name(op->grad_name()))
                                   : Tensor()};
@@ -88,6 +88,12 @@ HTShapeList SplitOpImpl::DoInferShape(Operator& op,
     }
   }
   return std::move(ret);
+}
+
+void SplitOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().get_hetero_dim());
 }
 
 void SplitOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
@@ -221,17 +227,23 @@ void SplitGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
 HTShapeList SplitGradientOpImpl::DoInferShape(Operator& op, 
                                               const HTShapeList& input_shapes, 
                                               RuntimeContext& ctx) const {
-  return {input_shapes.back()}; 
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void SplitGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
+  dst_ctx.put("hetero_dim", src_ctx.pop<int32_t>("hetero_dim"));
 }
 
 void SplitGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                          const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());  
+  outputs.at(0)->set_distributed_states(instantiation_ctx().ctx.get<DistributedStates>("in_dstate"));  
 }
 
 void SplitGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                             TensorList& outputs, const OpMeta& op_meta) const {
-  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
+  outputs.at(0)->cur_ds_union().set_hetero_dim(instantiation_ctx().ctx.get<int32_t>("hetero_dim"));
 }
 
 // need symbolic shape
@@ -360,44 +372,40 @@ TensorList MakeSplitOp(Tensor input, TensorList task_batch_idxs, int64_t dim,
                        std::move(inputs), std::move(op_meta))->outputs();
 }
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            SyShapeList begin_pos_list,
                            SyShapeList output_shape_list,
                            OpMeta op_meta) {
-  grad_outputs.emplace_back(ori_input);
   return Graph::MakeOp(std::make_shared<SplitGradientOpImpl>(std::move(begin_pos_list), std::move(output_shape_list)),
                        std::move(grad_outputs), std::move(op_meta))->output(0);
 }
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            const HTShapeList& begin_pos_list,
                            const HTShapeList& output_shape_list,
                            OpMeta op_meta) {
-  grad_outputs.emplace_back(ori_input);
   return Graph::MakeOp(std::make_shared<SplitGradientOpImpl>(begin_pos_list, output_shape_list),
                        std::move(grad_outputs), std::move(op_meta))->output(0);
 }
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            TensorList task_batch_idxs,
                            SyShapeList begin_pos_list,
                            SyShapeList output_shape_list,
                            int64_t dim,
                            OpMeta op_meta) {
   grad_outputs.insert(grad_outputs.end(), task_batch_idxs.begin(), task_batch_idxs.end());
-  grad_outputs.emplace_back(ori_input);
   return Graph::MakeOp(std::make_shared<SplitGradientOpImpl>(std::move(begin_pos_list), std::move(output_shape_list), dim),
                        std::move(grad_outputs), std::move(op_meta))->output(0);
 }
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            TensorList task_batch_idxs,
                            const HTShapeList& begin_pos_list,
                            const HTShapeList& output_shape_list,
                            int64_t dim,
                            OpMeta op_meta) {
   grad_outputs.insert(grad_outputs.end(), task_batch_idxs.begin(), task_batch_idxs.end());
-  grad_outputs.emplace_back(ori_input);
   return Graph::MakeOp(std::make_shared<SplitGradientOpImpl>(begin_pos_list, output_shape_list, dim),
                        std::move(grad_outputs), std::move(op_meta))->output(0);
 }

@@ -59,6 +59,8 @@ class ConcatOpImpl final : public OpInterface {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
@@ -98,8 +100,7 @@ class ConcatGradientOpImpl final : public OpInterface {
   DoInferMeta(const TensorList& inputs) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     NDArrayMeta output_meta = inputs[0]->meta();
-    auto& inst_ctx = instantiation_ctx();
-    HTShape input_axis_size_list = inst_ctx.ctx.get_int64_list("input_axis_size_list");
+    HTShape input_axis_size_list = instantiation_ctx().ctx.get<HTShape>("input_axis_size_list");
     std::vector<NDArrayMeta> ret;
     for (size_t i = 0; i < input_axis_size_list.size(); i++) {
       HTShape shape = inputs[0]->shape();
@@ -116,6 +117,8 @@ class ConcatGradientOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;

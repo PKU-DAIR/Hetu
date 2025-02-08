@@ -20,7 +20,7 @@ void EmbeddingLookupOpImpl::DoCompute(Operator& op,
 
 TensorList EmbeddingLookupOpImpl::DoGradient(Operator& op,
                                              const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeEmbeddingLookupGradientOp(grad_outputs.at(0), op->input(1), op->output(0), op->input(0), 
+  auto grad_input = op->requires_grad(0) ? MakeEmbeddingLookupGradientOp(grad_outputs.at(0), op->input(1), op->output(0),
                                            _multi_offset, op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
   return {grad_input, Tensor()};
@@ -33,6 +33,11 @@ EmbeddingLookupOpImpl::DoInferShape(Operator& op,
   HTShape output_shape = input_shapes[1];
   output_shape.emplace_back(input_shapes[0][1]);
   return {output_shape};
+}
+
+void EmbeddingLookupOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
 }
 
 void EmbeddingLookupOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -88,14 +93,19 @@ HTShapeList
 EmbeddingLookupGradientOpImpl::DoInferShape(Operator& op,
                                             const HTShapeList& input_shapes,
                                             RuntimeContext &ctx) const {
-  return {input_shapes.at(3)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void EmbeddingLookupGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void EmbeddingLookupGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                                    const OpMeta& op_meta) const {
   const DistributedStates& ds_grad_output = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
-  const DistributedStates& ds_tb = inputs.at(3)->get_distributed_states();
+  const DistributedStates& ds_tb = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
 
   DistributedStates ds_tb_grad(ds_grad_output);
   if (ds_tb.check_pure_duplicate()) {
@@ -131,11 +141,11 @@ Tensor MakeEmbeddingLookupOp(Tensor input, Tensor id, std::vector<int64_t> multi
           std::move(op_meta))->output(0);
 }
 
-Tensor MakeEmbeddingLookupGradientOp(Tensor grad_output, Tensor id, Tensor ori_input, Tensor input,
+Tensor MakeEmbeddingLookupGradientOp(Tensor grad_output, Tensor id, Tensor ori_input,
                                      std::vector<int64_t> multi_offset, OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<EmbeddingLookupGradientOpImpl>(multi_offset),
-          {std::move(grad_output), std::move(id), std::move(ori_input), std::move(input)},
+          {std::move(grad_output), std::move(id), std::move(ori_input)},
           std::move(op_meta))->output(0);
 }
 

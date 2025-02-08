@@ -18,7 +18,7 @@ void RepeatOpImpl::DoCompute(Operator& op,
 }
 
 TensorList RepeatOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeRepeatGradientOp(grad_outputs.at(0), op->input(0),
+  auto grad_input = op->requires_grad(0) ? MakeRepeatGradientOp(grad_outputs.at(0),
                                           op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
   return {grad_input};
@@ -32,6 +32,11 @@ RepeatOpImpl::DoInferShape(Operator& op, const HTShapeList& input_shapes, Runtim
     output_shape[i + output_shape.size() - input_shapes[0].size()] *= input_shapes[0][i]; 
   }
   return {output_shape};
+}
+
+void RepeatOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
 }
 
 void RepeatOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -78,12 +83,18 @@ HTShapeList
 RepeatGradientOpImpl::DoInferShape(Operator& op, 
                                    const HTShapeList& input_shapes, 
                                    RuntimeContext& ctx) const {
-  return {input_shapes[1]};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void RepeatGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void RepeatGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                           const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
+  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 Tensor MakeRepeatOp(Tensor input, HTShape repeats, OpMeta op_meta) {
@@ -93,11 +104,10 @@ Tensor MakeRepeatOp(Tensor input, HTShape repeats, OpMeta op_meta) {
         std::move(op_meta))->output(0);
 }
 
-Tensor MakeRepeatGradientOp(Tensor grad_output, Tensor input,
-                            OpMeta op_meta) {
+Tensor MakeRepeatGradientOp(Tensor grad_output, OpMeta op_meta) {
   return Graph::MakeOp(
         std::make_shared<RepeatGradientOpImpl>(),
-        {std::move(grad_output), std::move(input)},
+        {std::move(grad_output)},
         std::move(op_meta))->output(0);
 }
 

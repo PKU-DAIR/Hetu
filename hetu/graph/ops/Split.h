@@ -177,6 +177,8 @@ class SplitOpImpl final : public ViewsOpImpl {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   SyShapeList _begin_pos_list;
   SyShapeList _output_shape_list;
   bool _symbolic;
@@ -301,7 +303,7 @@ class SplitGradientOpImpl : public ViewsOpImpl {
  protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
-    return {inputs.back()->meta()};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -317,6 +319,8 @@ class SplitGradientOpImpl : public ViewsOpImpl {
                   RuntimeContext& ctx) const override;
   
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   SyShapeList _begin_pos_list;
   SyShapeList _output_shape_list;
@@ -354,24 +358,24 @@ TensorList MakeSplitOp(Tensor input, const HTShape& chunks, int64_t dim,
 TensorList MakeSplitOp(Tensor input, TensorList task_batch_idxs, int64_t dim,
                        OpMeta op_meta = OpMeta());
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            SyShapeList begin_pos_list,
                            SyShapeList output_shape_list,
                            OpMeta op_meta = OpMeta());
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            const HTShapeList& begin_pos_list,
                            const HTShapeList& output_shape_list,
                            OpMeta op_meta = OpMeta());
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            TensorList task_batch_idxs,
                            SyShapeList begin_pos_list,
                            SyShapeList output_shape_list,
                            int64_t dim,
                            OpMeta op_meta = OpMeta());
 
-Tensor MakeSplitGradientOp(TensorList grad_outputs, Tensor ori_input,
+Tensor MakeSplitGradientOp(TensorList grad_outputs,
                            TensorList task_batch_idxs,
                            const HTShapeList& begin_pos_list,
                            const HTShapeList& output_shape_list,

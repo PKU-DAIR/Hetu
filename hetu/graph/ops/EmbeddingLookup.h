@@ -45,6 +45,8 @@ protected:
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
  public:
@@ -83,8 +85,7 @@ class EmbeddingLookupGradientOpImpl : public OpInterface {
 protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
-    NDArrayMeta output_meta = inputs[3]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -95,6 +96,8 @@ protected:
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -124,7 +127,7 @@ protected:
   std::vector<int64_t> _multi_offset;
 };
 
-Tensor MakeEmbeddingLookupGradientOp(Tensor grad_output, Tensor id, Tensor ori_input, Tensor input,
+Tensor MakeEmbeddingLookupGradientOp(Tensor grad_output, Tensor id, Tensor ori_input,
                                      std::vector<int64_t> multi_offset, OpMeta op_meta = OpMeta());
 
 } // namespace graph

@@ -82,6 +82,11 @@ class OpMeta {
     return *this;
   }
 
+  inline OpMeta& set_fw_op_id(OpId id) {
+    fw_op_id = id;
+    return *this;
+  }
+
   inline OpMeta& set_multi_recompute(const std::vector<std::vector<bool>>& multi_recompute) {
     multi_is_recompute = multi_recompute;
     return *this;
@@ -186,6 +191,7 @@ class OpMeta {
   DeviceGroupHierarchy device_group_hierarchy{}; // for multi ds multi hetero-dp deduce
   TensorList extra_deps;
   OpId origin_op_id{-1}; // for recomputation only
+  OpId fw_op_id{-1};
   std::vector<std::vector<bool>> multi_is_recompute{{false}}; // for multi recomputation strategy multi pipeline
   std::vector<std::vector<bool>> multi_is_cpu_offload{{false}}; // for multi cpu offload strategy multi pipeline
   bool is_offload{false}; // for offload D2H op only
@@ -406,6 +412,14 @@ class OpInterface : public shared_ptr_target {
     DoDeduceStatesHierarchy(inputs, outputs, op_meta, graph);
   }
 
+  inline void LoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+    DoLoadCtxForBackward(src_ctx, dst_ctx);
+  }
+
+  inline void SaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+    DoSaveCtxForBackward(inputs, dst_ctx);
+  }
+
   inline TensorList Gradient(Operator& op,
                              const TensorList& grad_outputs) const {
     return DoGradient(op, grad_outputs);
@@ -427,6 +441,12 @@ class OpInterface : public shared_ptr_target {
 
   inline HTShapeList InferShape(Operator& op, const HTShapeList& shapes,
                                 RuntimeContext& runtime_ctx) const {
+    if (op.op_meta().fw_op_id == -1) {
+      SaveCtxForBackward(op.inputs(), runtime_ctx.get_or_create(op.id()));
+    } else {
+      LoadCtxForBackward(runtime_ctx.get_or_create(op.op_meta().fw_op_id),
+                         runtime_ctx.get_or_create(op.id()));
+    }
     return DoInferShape(op, shapes, runtime_ctx);
   }
 
@@ -457,6 +477,14 @@ class OpInterface : public shared_ptr_target {
 
   virtual void DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
                                        const OpMeta& op_meta, Graph& graph) const;
+
+  virtual void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+    return;
+  }
+
+  virtual void DoSaveCtxForBackward(const TensorList& inputs,  ContextStore& dst_ctx) const {
+    return;
+  }
 
   virtual TensorList DoGradient(Operator&, const TensorList&) const {
     HT_RUNTIME_ERROR << "Op with type " << type() << "is not differentiable";
@@ -711,15 +739,16 @@ class OpDef : public shared_ptr_target {
   OpMeta grad_op_meta() const {
     return OpMeta()
       .set_stream_index(stream_index())
-      .set_device_group_hierarchy(device_group_hierarchy());
+      .set_device_group_hierarchy(device_group_hierarchy())
+      .set_fw_op_id(id());
   }
 
   void set_fw_op_id(OpId id) {
-    _fw_op_id = id;
+    _op_meta.fw_op_id = id;
   }
 
   OpId fw_op_id() const {
-    return _fw_op_id;
+    return _op_meta.fw_op_id;
   }
 
   bool inplace_at(size_t input_position) const {
@@ -903,7 +932,6 @@ class OpDef : public shared_ptr_target {
   TensorList _extra_in_dep_linkers;
   TensorList _extra_out_dep_linkers;
 
-  OpId _fw_op_id{-1}; // only used for bw op
   OpMeta _op_meta;
   OpInstantiationContext _inst_ctx;
 

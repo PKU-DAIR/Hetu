@@ -15,7 +15,7 @@ void InterpolateOpImpl::DoCompute(Operator& op,
 }
 
 TensorList InterpolateOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeInterpolateGradientOp(grad_outputs.at(0), op->input(0), align_corners(), scale_factor(),
+  auto grad_input = op->requires_grad(0) ? MakeInterpolateGradientOp(grad_outputs.at(0), align_corners(), scale_factor(),
                                           op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
   return {grad_input};
@@ -36,6 +36,11 @@ InterpolateOpImpl::DoInferShape(Operator& op,
     output[3] = output[3] * scale_factor();
   }
   return {output};
+}
+
+void InterpolateOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
 }
 
 void InterpolateOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -62,12 +67,18 @@ HTShapeList
 InterpolateGradientOpImpl::DoInferShape(Operator& op, 
                                         const HTShapeList& input_shapes, 
                                         RuntimeContext& ctx) const {
-  return {input_shapes.at(1)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void InterpolateGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void InterpolateGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                                const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
+  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 Tensor MakeInterpolateOp(Tensor input, const HTShape& outshape,
@@ -80,12 +91,12 @@ Tensor MakeInterpolateOp(Tensor input, const HTShape& outshape,
           std::move(op_meta))->output(0);
 }
 
-Tensor MakeInterpolateGradientOp(Tensor grad_output, Tensor input,
+Tensor MakeInterpolateGradientOp(Tensor grad_output,
                                  bool align_corners, double scale_factor,
                                  OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<InterpolateGradientOpImpl>(align_corners, scale_factor),
-          {std::move(grad_output), std::move(input)},
+          {std::move(grad_output)},
           std::move(op_meta))->output(0);
 }
 

@@ -219,7 +219,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
       for (auto& input : inputs) {
         input_shapes.push_back(input->shape());
       }
-      auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+      auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
       for (size_t i = 0; i < output_size; i++) {
         outputs.push_back(NDArray::empty(output_shapes[i],
                           op->instantiation_ctx().placement,
@@ -283,7 +283,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
       for (auto& input : inputs) {
         input_shapes.push_back(input->shape());
       }
-      auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+      auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
       for (size_t i = 0; i < output_size; i++) {
         outputs.push_back(NDArray::empty(output_shapes[i],
                           device,
@@ -337,7 +337,7 @@ NDArray OpInterface::DoAllocOutput(Operator& op, const NDArrayList& inputs,
     for (auto& input : inputs) {
       input_shapes.push_back(input->shape());
     }
-    auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+    auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
     return NDArray::empty(output_shapes[idx],
                           op->instantiation_ctx().placement,
                           op->output(idx)->dtype(),
@@ -417,6 +417,10 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
                   [](const Tensor& tensor) { return tensor->requires_grad(); });
   }
   // Outputs of this op
+  if (_op_meta.fw_op_id != -1) {
+    const auto& src_ctx = graph.GetOp(_op_meta.fw_op_id).instantiation_ctx().ctx;
+    _body->LoadCtxForBackward(src_ctx, instantiation_ctx().ctx);
+  }
   auto output_meta_list = _body->InferMeta(_inputs);
   if (output_meta_list.size() == 1) {
     auto& output_meta = output_meta_list.front();
@@ -479,6 +483,7 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
       HT_RUNTIME_ERROR << "deduce states do not support this graph type: " << graph.type();
     }
   }
+  _body->SaveCtxForBackward(_inputs, instantiation_ctx().ctx);
 }
 
 const Graph& OpDef::graph() const {

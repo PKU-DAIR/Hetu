@@ -66,6 +66,8 @@ protected:
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
@@ -109,7 +111,7 @@ class InterpolateGradientOpImpl final : public OpInterface {
 protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
-    return {inputs[1]->meta()};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -117,6 +119,8 @@ protected:
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -135,7 +139,7 @@ protected:
   }
 };
 
-Tensor MakeInterpolateGradientOp(Tensor grad_output, Tensor input,
+Tensor MakeInterpolateGradientOp(Tensor grad_output,
                                  bool align_corners = false, double scale_factor = 0,
                                  OpMeta op_meta = OpMeta());
 

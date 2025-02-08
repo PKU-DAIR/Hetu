@@ -1,135 +1,116 @@
 #pragma once
 
 #include "hetu/common/macros.h"
+#include "hetu/utils/json/json.hpp"
+#include "hetu/graph/distributed_states.h"
 
 namespace hetu {
+
+using json = nlohmann::json;
+using DistributedStates = hetu::graph::DistributedStates;
+
+template<typename T>
+std::string serialize(const T& obj) {
+    json j = obj;
+    return j.dump();
+}
+
+template<typename T>
+T deserialize(const std::string& str) {
+    json j = json::parse(str);
+    return j.get<T>();
+}
+
+template<typename T, typename = void>
+struct is_json_serializable : std::false_type {};
+
+template<typename T>
+struct is_json_serializable<T, std::void_t<
+  decltype(std::declval<json&>() = std::declval<T>())
+>> : std::true_type {};
 
 class ContextStore {
  public:
   ContextStore() {}
 
-  void put_bool(const std::string& key, bool value) {
-    _ctx.insert({key, value ? "true" : "false"});
-  }
-
-  bool get_bool(const std::string& key, bool default_value = false) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? (it->second == "true") : default_value;
-  }
-
-  void put_int32(const std::string& key, int32_t value) {
-    _ctx.insert({key, std::to_string(value)});
-  }
-
-  int32_t get_int32(const std::string& key, int32_t default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? std::stoi(it->second) : default_value;
-  }
-
-  void put_uint32(const std::string& key, uint32_t value) {
-    _ctx.insert({key, std::to_string(value)});
-  }
-
-  uint32_t get_uint32(const std::string& key,
-                      uint32_t default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? static_cast<uint32_t>(std::stoul(it->second))
-                            : default_value;
-  }
-
-  void put_int64(const std::string& key, int64_t value) {
-    _ctx.insert({key, std::to_string(value)});
-  }
-
-  int64_t get_int64(const std::string& key, int64_t default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? std::stoll(it->second) : default_value;
-  }
-
-  void put_uint64(const std::string& key, uint64_t value) {
-    _ctx.insert({key, std::to_string(value)});
-  }
-
-  std::vector<int64_t> get_int64_list(const std::string& key) const {
-    auto it = _ctx.find(key);
-    std::vector<int64_t> ret;
-    if (it == _ctx.end()) {
-      return ret;
-    }
-    std::stringstream ss(it->second);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-      ret.push_back(std::stoll(item));
-    }
-    return ret;
-  }
-
-  void put_int64_list(const std::string& key, const std::vector<int64_t>& value) {
-    std::stringstream ss;
-    for (size_t i = 0; i < value.size(); ++i) {
-      if (i > 0) {
-        ss << ",";
+  template <typename T>
+  void put(const std::string& key, const T& value) {
+    if constexpr (std::is_same_v<T, NDArray> ||
+                  std::is_same_v<T, NDArrayMeta> ||
+                  std::is_same_v<T, DistributedStates>) {
+      if constexpr (std::is_same_v<T, NDArray>) {
+        _ctx_ndarray.insert({key, value});
+      } else if constexpr (std::is_same_v<T, NDArrayMeta>) {
+        _ctx_ndarray_meta.insert({key, value});
+      } else if constexpr (std::is_same_v<T, DistributedStates>) {
+        _ctx_distributed_states.insert({key, value});
       }
-      ss << value[i];
+    } else if constexpr (is_json_serializable<T>::value) {
+      _ctx.insert({key, serialize(value)});
+    } else {
+      HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
     }
-    _ctx.insert({key, ss.str()});
   }
 
-  uint64_t get_uint64(const std::string& key,
-                      uint64_t default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? std::stoull(it->second) : default_value;
+  template <typename T>
+  T get(const std::string& key) const {
+    if constexpr (std::is_same_v<T, NDArray> ||
+                  std::is_same_v<T, NDArrayMeta> ||
+                  std::is_same_v<T, DistributedStates>) {
+      if constexpr (std::is_same_v<T, NDArray>) {
+        auto it = _ctx_ndarray.find(key);
+        HT_ASSERT(it != _ctx_ndarray.end()) << "NDArray " << key << " not found";
+        return it->second;
+      } else if constexpr (std::is_same_v<T, NDArrayMeta>) {
+        auto it = _ctx_ndarray_meta.find(key);
+        HT_ASSERT(it != _ctx_ndarray_meta.end()) << "NDArrayMeta " << key << " not found";
+        return it->second;
+      } else if constexpr (std::is_same_v<T, DistributedStates>) {
+        auto it = _ctx_distributed_states.find(key);
+        HT_ASSERT(it != _ctx_distributed_states.end()) << "DistributedStates " << key << " not found";
+        return it->second;
+      }
+    } else if constexpr (is_json_serializable<T>::value) {
+      auto it = _ctx.find(key);
+      HT_ASSERT(it != _ctx.end()) << "key-value pair " << key << " not found";
+      return deserialize<T>(it->second);
+    } else {
+      HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
+    }
   }
 
-  void put_float32(const std::string& key, float value) {
-    _ctx.insert({key, std::to_string(value)});
+  template <typename T>
+  T pop(const std::string& key) {
+    if constexpr (std::is_same_v<T, NDArray> ||
+                  std::is_same_v<T, NDArrayMeta> ||
+                  std::is_same_v<T, DistributedStates>) {
+      if constexpr (std::is_same_v<T, NDArray>) {
+        auto node_handle = _ctx_ndarray.extract(key);
+        HT_ASSERT(!node_handle.empty()) << "NDArray " << key << " not found";
+        return std::move(node_handle.mapped());
+      } else if constexpr (std::is_same_v<T, NDArrayMeta>) {
+        auto node_handle = _ctx_ndarray_meta.extract(key);
+        HT_ASSERT(!node_handle.empty()) << "NDArrayMeta " << key << " not found";
+        return std::move(node_handle.mapped());
+      } else if constexpr (std::is_same_v<T, DistributedStates>) {
+        auto node_handle = _ctx_distributed_states.extract(key);
+        HT_ASSERT(!node_handle.empty()) << "DistributedStates " << key << " not found";
+        return std::move(node_handle.mapped());
+      }
+    } else if constexpr (is_json_serializable<T>::value) {
+      auto node_handle = _ctx.extract(key);
+      HT_ASSERT(!node_handle.empty()) << "key-value pair " << key << " not found";
+      return deserialize<T>(std::move(node_handle.mapped()));
+    } else {
+      HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
+    }
   }
-
-  float get_float32(const std::string& key, float default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? std::stof(it->second) : default_value;
-  }
-
-  void put_float64(const std::string& key, double value) {
-    _ctx.insert({key, std::to_string(value)});
-  }
-
-  double get_float64(const std::string& key, double default_value = 0) const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? std::stod(it->second) : default_value;
-  }
-
-  void put_string(const std::string& key, const std::string& value) {
-    _ctx.insert({key, value});
-  }
-
-  const std::string& get_string(const std::string& key,
-                                const std::string& default_value = "") const {
-    auto it = _ctx.find(key);
-    return it != _ctx.end() ? it->second : default_value;
-  }
-
-  void put_ndarray(const std::string& key, const NDArray& value) {
-    _ctx_ndarray.insert({key, value});
-  }
-
-  const NDArray& get_ndarray(const std::string& key) const {
-    auto it = _ctx_ndarray.find(key);
-    HT_ASSERT(it != _ctx_ndarray.end()) << "NDArray " << key << " not found";
-    return it->second;
-  }
-
-  NDArray pop_ndarray(const std::string& key) {
-    auto it = _ctx_ndarray.find(key);
-    HT_ASSERT(it != _ctx_ndarray.end()) << "NDArray " << key << " not found";
-    NDArray result = it->second;
-    _ctx_ndarray.erase(it);
-    return result;
-  }  
 
  private:
   std::unordered_map<std::string, std::string> _ctx;
   std::unordered_map<std::string, NDArray> _ctx_ndarray;
+  std::unordered_map<std::string, NDArrayMeta> _ctx_ndarray_meta;
+  std::unordered_map<std::string, DistributedStates> _ctx_distributed_states;
 };
 
 } // namespace hetu

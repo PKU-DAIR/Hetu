@@ -29,29 +29,25 @@ TensorList ConcatOpImpl::DoGradient(Operator &op,
     return ret;
   }
   auto g_op_meta = op->grad_op_meta();
-  auto grad_inputs = MakeConcatGradientOp(grad_outputs.at(0), get_axis(), g_op_meta.set_name(op->grad_name(0)));
-  // insert input_axis_size_list to inst_ctx
-  auto& inst_ctx = grad_inputs.at(0)->producer()->instantiation_ctx();
-  HTShape input_axis_size_list;
-  for (auto& input : op->inputs()) {
-    input_axis_size_list.push_back(input->shape(get_axis()));
-  }
-  inst_ctx.ctx.put_int64_list("input_axis_size_list", input_axis_size_list);
-  return std::move(grad_inputs);
+  return MakeConcatGradientOp(grad_outputs.at(0), get_axis(), g_op_meta.set_name(op->grad_name(0)));
 }
 
 HTShapeList ConcatOpImpl::DoInferShape(Operator& op,
                                        const HTShapeList& input_shapes,
                                        RuntimeContext& ctx) const { 
   HTShape shapeA = input_shapes.at(0);
-  shapeA[get_axis()] = 0;
-  HTShape input_axis_size_list;
-  for (size_t i = 0; i < input_shapes.size(); i++) {
+  for (size_t i = 1; i < input_shapes.size(); i++) {
     shapeA[get_axis()] += input_shapes.at(i)[get_axis()];
-    input_axis_size_list.push_back(input_shapes.at(i)[get_axis()]);
   }
-  ctx.get_or_create(op->id()).put_int64_list("input_axis_size_list", input_axis_size_list);
   return {shapeA};
+}
+
+void ConcatOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  HTShape input_axis_size_list;
+  for (auto& input : op->inputs()) {
+    input_axis_size_list.push_back(input->shape(get_axis()));
+  }
+  dst_ctx.put("input_axis_size_list", input_axis_size_list);
 }
 
 void ConcatOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -83,13 +79,17 @@ void ConcatGradientOpImpl::DoCompute(Operator& op,
 HTShapeList ConcatGradientOpImpl::DoInferShape(Operator& op,
                                                const HTShapeList& input_shapes,
                                                RuntimeContext& ctx) const {
-  HTShape input_axis_size_list = ctx.get_or_create(op->fw_op_id()).get_int64_list("input_axis_size_list");
+  HTShape input_axis_size_list = ctx.get_or_create(op->op_id()).get<HTShape>("input_axis_size_list");
   HTShapeList ret;
   for (size_t i = 0; i < input_axis_size_list.size(); i++) {
     ret.push_back(input_shapes.at(0));
     ret.back()[get_axis()] = input_axis_size_list.at(i);
   }
   return ret;
+}
+
+void ConcatGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.put("input_axis_size_list", src_ctx.pop<HTShape>("input_axis_size_list"));
 }
 
 void ConcatGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

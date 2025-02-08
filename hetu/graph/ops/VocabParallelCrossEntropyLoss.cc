@@ -82,7 +82,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     // NDArray softmax = exp_logits / sum_exp_logits;
     NDArray softmax = NDArray::div(exp_logits, sum_exp_logits, op->instantiation_ctx().stream_index, exp_logits); // inplace
     OpRuntimeContext& op_ctx = ctx.get_or_create(op->id());
-    op_ctx.put_ndarray("softmax", softmax);
+    op_ctx.put<NDArray>("softmax", softmax);
     NDArray log_sum_exp_logits = NDArray::log(sum_exp_logits, op->instantiation_ctx().stream_index, sum_exp_logits); // inplace
     NDArray::MarkUsedBy({exp_logits, sum_exp_logits_partial, softmax}, op->instantiation_ctx().stream());
 
@@ -205,7 +205,7 @@ void VocabParallelCrossEntropyGradientOpImpl::DoCompute(
     auto vocab_range_index = op->input(0)->get_local_distributed_states().map_device_to_state_index(local_device_index)[1];
     auto vocab_start_index = vocab_size_per_partition * vocab_range_index;
     auto vocab_end_index = vocab_start_index + vocab_size_per_partition;
-    NDArray softmax = ctx.get_or_create(op->fw_op_id()).pop_ndarray("softmax");
+    NDArray softmax = ctx.get_or_create(op->fw_op_id()).pop<NDArray>("softmax");
 
     HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                 hetu::impl::VocabParallelCrossEntropyGradient, softmax,

@@ -40,6 +40,8 @@ protected:
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
@@ -75,8 +77,7 @@ class GatherGradientOpImpl final : public OpInterface {
 protected:
   std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const override {
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -84,6 +85,8 @@ protected:
                       
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -103,7 +106,7 @@ protected:
   }
 };
 
-Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id, Tensor input,
+Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id,
                             OpMeta op_meta = OpMeta());
 
 } // namespace graph
