@@ -150,7 +150,8 @@ static int32_t MatMulDeduceHeterProp(int32_t hetero_a, int32_t hetero_b, bool tr
 }
 
 void MatMulOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const Tensor& a = inputs.at(0);
   const Tensor& b = inputs.at(1);
   DistributedStates ds_c = MatMulDeduceStates(a, b, trans_a(), trans_b());
@@ -158,7 +159,8 @@ void MatMulOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void MatMulOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                     TensorList& outputs, const OpMeta& op_meta) const {
+                                     TensorList& outputs, const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   int32_t hetero_a = inputs_hetero_dim.at(0);
   int32_t hetero_b = inputs_hetero_dim.at(1);  
   int32_t hetero_res = MatMulDeduceHeterProp(hetero_a, hetero_b, trans_a(), trans_b()); 
@@ -239,7 +241,8 @@ void MatMulGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs, ND
 }
 
 void MatMulGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
   const Tensor& a = inputs.at(0);
   const Tensor& b = inputs.at(1);
   DistributedStates ds_c = MatMulDeduceStates(a, b, trans_a(), trans_b());
@@ -247,7 +250,8 @@ void MatMulGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& 
 }
 
 void MatMulGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                             TensorList& outputs, const OpMeta& op_meta) const {
+                                             TensorList& outputs, const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   int32_t hetero_a = inputs_hetero_dim.at(0);
   int32_t hetero_b = inputs_hetero_dim.at(1);  
   int32_t hetero_res = MatMulDeduceHeterProp(hetero_a, hetero_b, trans_a(), trans_b());              
@@ -255,7 +259,8 @@ void MatMulGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_
 }
 
 void MatMul4BitOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                      const OpMeta& op_meta) const {
+                                      const OpMeta& op_meta,
+                                      const InstantiationContext& inst_ctx) const {
   const Tensor& a = inputs.at(0);
   const Tensor& b = inputs.at(1);
   DistributedStates ds_c = MatMulDeduceStates(a, b, trans_a(), trans_b());

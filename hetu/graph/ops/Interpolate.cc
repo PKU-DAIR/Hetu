@@ -44,7 +44,8 @@ void InterpolateOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextSt
 }
 
 void InterpolateOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                       const OpMeta& op_meta) const {
+                                       const OpMeta& op_meta,
+                                       const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) << "InterpolateOpImpl: input states must be valid!";
   HT_ASSERT(ds_input.get_dim(-2) == 1) << "Input tensor shouldn't be partial!";
@@ -70,14 +71,15 @@ InterpolateGradientOpImpl::DoInferShape(Operator& op,
   return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
 }
 
-void InterpolateGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void InterpolateGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
   dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void InterpolateGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                               const OpMeta& op_meta) const {
-  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+                                               const OpMeta& op_meta,
+                                               const InstantiationContext& inst_ctx) const {
+  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
   outputs.at(0)->set_distributed_states(ds_input);
 }
 

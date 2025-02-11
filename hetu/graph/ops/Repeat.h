@@ -24,7 +24,7 @@ class RepeatOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape output_shape = repeats();
     HT_ASSERT(output_shape.size() >= inputs[0]->ndim())
     << output_shape << " has dim " << output_shape.size()
@@ -40,7 +40,8 @@ class RepeatOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -79,19 +80,20 @@ class RepeatGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
-    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override; 
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override; 
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
  public:
   inline bool require_contig_inputs() const override {

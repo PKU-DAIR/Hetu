@@ -32,7 +32,7 @@ NDArrayList AsStridedOpImpl::DoCompute(Operator& op,
 }
 
 TensorList AsStridedOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeAsStridedGradientOp(grad_outputs.at(0), op->input(0),
+  auto grad_input = op->requires_grad(0) ? MakeAsStridedGradientOp(grad_outputs.at(0),
                                           outshape(), stride(), storage_offset(),
                                           op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
@@ -53,7 +53,8 @@ void AsStridedOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStor
 }
 
 void AsStridedOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "AsStridedOpImpl: distributed states for input must be valid!";
@@ -116,15 +117,16 @@ AsStridedGradientOpImpl::DoInferShape(Operator& op,
   return {meta.shape};
 }
 
-void AsStridedGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void AsStridedGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
   dst_ctx.put("storage_offset", src_ctx.pop<int64_t>("storage_offset"));
   dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void AsStridedGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(instantiation_ctx().ctx.get<DistributedStates>("in_dstate"));
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inst_ctx.get<DistributedStates>("in_dstate"));
 }
 
 Tensor MakeAsStridedOp(Tensor input, const HTShape& outshape, const HTStride& stride,

@@ -53,7 +53,8 @@ HTShapeList BatchNormOpImpl::DoInferShape(Operator& op,
 // 注: input tensor shape=[N, C, H, W], 在N, H, W维上做切分均会影响到batch norm的mean和var, 
 // 导致最终结果产生差异(类比于batch和mini-batch做batchnorm的区别)
 void BatchNormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const auto& ds_input = inputs.at(0)->get_distributed_states();
   const auto& ds_scale = inputs.at(1)->get_distributed_states();
   const auto& ds_bias = inputs.at(2)->get_distributed_states();
@@ -86,7 +87,8 @@ BatchNormGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void BatchNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
   outputs.at(1)->set_distributed_states(inputs.at(2)->get_distributed_states());
   outputs.at(2)->set_distributed_states(inputs.at(2)->get_distributed_states());  

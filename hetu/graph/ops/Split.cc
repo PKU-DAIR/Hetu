@@ -93,11 +93,12 @@ HTShapeList SplitOpImpl::DoInferShape(Operator& op,
 void SplitOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", inputs.at(0)->meta());
   dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
-  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().get_hetero_dim());
+  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().hetero_dim());
 }
 
 void SplitOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                                 const OpMeta& op_meta) const {
+                                 const OpMeta& op_meta,
+                                 const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "SliceOpDef: distributed states for input must be valid!";
@@ -139,7 +140,8 @@ void SplitOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void SplitOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                    TensorList& outputs, const OpMeta& op_meta) const {
+                                    TensorList& outputs, const OpMeta& op_meta,
+                                    const InstantiationContext& inst_ctx) const {
   auto split_num = get_split_num();
   if (split_num == 0) {
     split_num = outputs.size();
@@ -230,20 +232,22 @@ HTShapeList SplitGradientOpImpl::DoInferShape(Operator& op,
   return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
 }
 
-void SplitGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void SplitGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
   dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
   dst_ctx.put("hetero_dim", src_ctx.pop<int32_t>("hetero_dim"));
 }
 
 void SplitGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                         const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(instantiation_ctx().ctx.get<DistributedStates>("in_dstate"));  
+                                         const OpMeta& op_meta,
+                                         const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inst_ctx.get<DistributedStates>("in_dstate"));  
 }
 
 void SplitGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                            TensorList& outputs, const OpMeta& op_meta) const {
-  outputs.at(0)->cur_ds_union().set_hetero_dim(instantiation_ctx().ctx.get<int32_t>("hetero_dim"));
+                                            TensorList& outputs, const OpMeta& op_meta,
+                                            const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->cur_ds_union().set_hetero_dim(inst_ctx.get<int32_t>("hetero_dim"));
 }
 
 // need symbolic shape

@@ -49,9 +49,10 @@ void BroadcastOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStor
 }
 
 void BroadcastOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   HT_LOG_INFO << op_meta.name << ": warning: deduce states for broadcast op was not checked! please use carefully!";
-  OpInterface::DoDeduceStates(inputs, outputs, op_meta);
+  OpInterface::DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
 }
 
 void BroadcastGradientOpImpl::DoCompute(Operator& op,
@@ -69,14 +70,15 @@ BroadcastGradientOpImpl::DoInferShape(Operator& op,
   return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
 }
 
-void BroadcastGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void BroadcastGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
 }
 
 void BroadcastGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   HT_LOG_INFO << op_meta.name << ": warning: deduce states for broadcast gradient op was not checked! please use carefully!";
-  OpInterface::DoDeduceStates(inputs, outputs, op_meta);
+  OpInterface::DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
 }
 
 Tensor MakeBroadcastOp(Tensor input, Tensor output, OpMeta op_meta) {

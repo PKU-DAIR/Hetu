@@ -17,7 +17,7 @@ class MatMulOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     const Tensor& a = inputs.at(0);
     const Tensor& b = inputs.at(1);
     const auto dim_a = a->ndim();
@@ -121,10 +121,12 @@ class MatMulOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -271,7 +273,7 @@ class MatMulGradientOpImpl final : public OpInterface {
   
   protected:
    std::vector<NDArrayMeta>
-   DoInferMeta(const TensorList& inputs) const override {
+   DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
      return {inputs.at(2)->meta()};
    }
 
@@ -281,10 +283,12 @@ class MatMulGradientOpImpl final : public OpInterface {
    }
 
    void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                       const OpMeta& op_meta) const override;   
+                       const OpMeta& op_meta,
+                       const InstantiationContext& inst_ctx) const override;   
 
    void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                          TensorList& outputs, const OpMeta& op_meta) const override;  
+                          TensorList& outputs, const OpMeta& op_meta,
+                          const InstantiationContext& inst_ctx) const override;  
 
    void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                   RuntimeContext& runtime_ctx) const override;
@@ -333,7 +337,7 @@ class MatMul4BitOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     const Tensor& a = inputs.at(0);
     const Tensor& b = inputs.at(1);
     const auto dim_a = a->ndim();
@@ -355,7 +359,8 @@ class MatMul4BitOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override {

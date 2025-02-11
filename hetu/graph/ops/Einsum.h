@@ -66,7 +66,7 @@ class EinsumOpImpl final : public OpInterface {
   EinsumParameters ParseMsg();
 
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     EinsumParameters para = params();
     LabelMap label_to_size;
     HTShape output_shape(para.output_size);
@@ -180,7 +180,7 @@ class EinsumGradientOpImpl final : public OpInterface {
  protected:
 
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     return {inputs[inputs.size() - 1]->meta()};
   }

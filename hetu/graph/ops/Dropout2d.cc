@@ -45,7 +45,8 @@ TensorList Dropout2dOpImpl::DoGradient(Operator& op, const TensorList& grad_outp
 }
 
 void Dropout2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "Dropout2dOpDef: distributed states for input must be valid!";

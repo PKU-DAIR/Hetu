@@ -68,7 +68,8 @@ IndexAddOpImpl::DoInferShape(Operator& op,
 }
 
 void IndexAddOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                    const OpMeta& op_meta) const {
+                                    const OpMeta& op_meta,
+                                    const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_id.is_valid()) 
@@ -77,7 +78,8 @@ void IndexAddOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& output
 }
 
 void IndexAddOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                       TensorList& outputs, const OpMeta& op_meta) const {
+                                       TensorList& outputs, const OpMeta& op_meta,
+                                       const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 
@@ -124,12 +126,14 @@ IndexAddGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void IndexAddGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                            const OpMeta& op_meta) const {
+                                            const OpMeta& op_meta,
+                                            const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
 }
 
 void IndexAddGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                               TensorList& outputs, const OpMeta& op_meta) const {
+                                               TensorList& outputs, const OpMeta& op_meta,
+                                               const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 

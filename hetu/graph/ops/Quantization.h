@@ -26,7 +26,7 @@ class QuantizationOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta out_meta = inputs.at(0)->meta();
     out_meta.set_dtype(qtype());
     HTShape absmax_shape = {int64_t(inputs.at(0)->numel() / blocksize())};
@@ -89,7 +89,7 @@ class DeQuantizationOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta out_meta = inputs.at(0)->meta();
     return {out_meta.set_dtype(dqtype())};
   }
@@ -101,7 +101,8 @@ class DeQuantizationOpImpl final : public OpInterface {
                  RuntimeContext& ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 

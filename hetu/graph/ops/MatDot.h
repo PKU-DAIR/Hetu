@@ -21,12 +21,13 @@ class MatDotOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[0]->meta()};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;

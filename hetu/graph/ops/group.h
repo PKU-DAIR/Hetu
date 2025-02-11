@@ -14,15 +14,17 @@ class GroupOpImpl final : public OpInterface {
   }
 
  protected:
-  std::vector<NDArrayMeta> DoInferMeta(const TensorList&) const override {
+  std::vector<NDArrayMeta> DoInferMeta(const TensorList&, const InstantiationContext&) const override {
     return {};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const {}  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const {}  
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const {}  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const {}  
 
   void DoCompute(Operator&, const NDArrayList&, NDArrayList&,
                  RuntimeContext&) const {}

@@ -29,7 +29,7 @@ class VocabParallelCrossEntropyOpImpl : public LossOpImpl {
   
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape output_shape = {inputs.at(0)->shape(0), 1};
     NDArrayMeta out_meta = inputs[0]->meta();
     if (_reduction != kNONE)
@@ -44,10 +44,12 @@ class VocabParallelCrossEntropyOpImpl : public LossOpImpl {
                      StreamIndex stream_index) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -84,7 +86,7 @@ class VocabParallelCrossEntropyGradientOpImpl : public LossGradientOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT(_reduction == kSUM || _reduction == kMEAN || _reduction == kNONE)
     << "Unsupported reduction type \'" << _reduction << "\' for " << type()
     << " operators. Expected: [\'mean\', \'sum\', \'none\']";  
@@ -92,10 +94,12 @@ class VocabParallelCrossEntropyGradientOpImpl : public LossGradientOpImpl {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;

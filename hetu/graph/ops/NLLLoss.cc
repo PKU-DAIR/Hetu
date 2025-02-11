@@ -35,7 +35,8 @@ HTShapeList NLLOpImpl::DoInferShape(Operator& op,
 }
 
 void NLLOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                               const OpMeta& op_meta) const {
+                               const OpMeta& op_meta,
+                               const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_preds = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_labels = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_preds.is_valid() && ds_labels.is_valid()
@@ -78,7 +79,8 @@ HTShapeList NLLGradOpImpl::DoInferShape(Operator& op,
 }
 
 void NLLGradOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                   const OpMeta& op_meta) const {
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());                                    
 }
 

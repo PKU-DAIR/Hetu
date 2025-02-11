@@ -21,7 +21,8 @@ TensorList AvgPoolOpImpl::DoGradient(Operator& op,
 }
 
 void AvgPoolOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                   const OpMeta& op_meta) const {
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds.is_valid()) 
     << "AvgPoolOpDef: distributed states for input tensor must be valid!";
@@ -44,7 +45,8 @@ void AvgPoolGradientOpImpl::DoCompute(Operator& op,
 }
 
 void AvgPoolGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                           const OpMeta& op_meta) const {
+                                           const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(2)->get_distributed_states());
 }
 

@@ -41,7 +41,8 @@ void EmbeddingLookupOpImpl::DoSaveCtxForBackward(const TensorList& inputs, Conte
 }
 
 void EmbeddingLookupOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                           const OpMeta& op_meta) const {
+                                           const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_id.is_valid() && 
@@ -70,7 +71,8 @@ void EmbeddingLookupOpImpl::DoDeduceStates(const TensorList& inputs, TensorList&
 }
 
 void EmbeddingLookupOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                              TensorList& outputs, const OpMeta& op_meta) const {
+                                              TensorList& outputs, const OpMeta& op_meta,
+                                              const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs_hetero_dim.at(1) >= 0)
     << "Only support hetero dim is a split dim";
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
@@ -96,16 +98,17 @@ EmbeddingLookupGradientOpImpl::DoInferShape(Operator& op,
   return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
 }
 
-void EmbeddingLookupGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void EmbeddingLookupGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
   dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void EmbeddingLookupGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                   const OpMeta& op_meta) const {
+                                                   const OpMeta& op_meta,
+                                                   const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_grad_output = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
-  const DistributedStates& ds_tb = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+  const DistributedStates& ds_tb = inst_ctx.get<DistributedStates>("in_dstate");
 
   DistributedStates ds_tb_grad(ds_grad_output);
   if (ds_tb.check_pure_duplicate()) {
@@ -128,7 +131,8 @@ void EmbeddingLookupGradientOpImpl::DoDeduceStates(const TensorList& inputs, Ten
 }
 
 void EmbeddingLookupGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                                      TensorList& outputs, const OpMeta& op_meta) const {
+                                                      TensorList& outputs, const OpMeta& op_meta,
+                                                      const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs_hetero_dim.at(0) == 0)
     << "Only support hetero dim is 0";
   outputs.at(0)->cur_ds_union().set_hetero_dim(-2);

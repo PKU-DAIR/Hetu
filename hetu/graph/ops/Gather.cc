@@ -40,7 +40,8 @@ void GatherOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& 
 }
 
 void GatherOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_id.is_valid()) 
@@ -68,14 +69,15 @@ GatherGradientOpImpl::DoInferShape(Operator& op,
   return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
 }
 
-void GatherGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void GatherGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
   dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
 }
 
 void GatherGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
-  const DistributedStates& ds_input = instantiation_ctx().ctx.get<DistributedStates>("in_dstate");
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
+  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
   outputs.at(0)->set_distributed_states(ds_input);
 }
 

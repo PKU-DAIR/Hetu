@@ -35,7 +35,7 @@ class UpdateScaleOpImpl final : public OpInterface {
   }  
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[0]->meta(), inputs[1]->meta()};
   };
 

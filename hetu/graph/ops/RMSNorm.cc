@@ -113,13 +113,15 @@ HTShapeList RMSNormOpImpl::DoInferShape(Operator& op,
 }
 
 void RMSNormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                                   const OpMeta& op_meta) const {
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   for (auto output : outputs)
     output->set_distributed_states(inputs.at(0)->get_distributed_states()); 
 }
 
 void RMSNormOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                      TensorList& outputs, const OpMeta& op_meta) const {
+                                      TensorList& outputs, const OpMeta& op_meta,
+                                      const InstantiationContext& inst_ctx) const {
   for (auto output : outputs)
     output->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
@@ -167,7 +169,8 @@ void RMSNormGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
 
 // workaround: need to care about all input cases
 void RMSNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                                           const OpMeta& op_meta) const {
+                                           const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_output_grad = inputs.at(0)->get_distributed_states();
   int reduce_dim = inputs.at(0)->ndim() - 1;
   HTAxes axes(reduce_dim);
@@ -185,7 +188,8 @@ void RMSNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList&
 }
 
 void RMSNormGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                              TensorList& outputs, const OpMeta& op_meta) const {
+                                              TensorList& outputs, const OpMeta& op_meta,
+                                              const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs_hetero_dim.at(0) >= 0)
     << "Currently not support complex hetero dim deducing"
     << ", the hetero dim should be spilt and reduced to partial";
@@ -270,7 +274,8 @@ HTShapeList FusedRMSNormOpImpl::DoInferShape(Operator& op,const HTShapeList& inp
 }
 
 void FusedRMSNormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                        const OpMeta& op_meta) const {
+                                        const OpMeta& op_meta,
+                                        const InstantiationContext& inst_ctx) const {
   size_t dim = normalized_shape().size();
   HTShape local_shape = inputs.at(0)->shape();
   int max_dim = local_shape.size() - dim;
@@ -291,7 +296,8 @@ void FusedRMSNormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& ou
 }
 
 void FusedRMSNormOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                           TensorList& outputs, const OpMeta& op_meta) const {
+                                           TensorList& outputs, const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
   outputs.at(1)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
@@ -313,7 +319,8 @@ FusedRMSNormGradientOpImpl::DoInferShape(Operator& op,const HTShapeList& input_s
 }
 
 void FusedRMSNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                const OpMeta& op_meta) const {
+                                                const OpMeta& op_meta,
+                                                const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_output_grad = inputs.at(0)->get_distributed_states();
   int reduce_dim = inputs.at(0)->ndim() - normalized_shape().size();
   HTAxes axes(reduce_dim);
@@ -328,7 +335,8 @@ void FusedRMSNormGradientOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 }
 
 void FusedRMSNormGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                                   TensorList& outputs, const OpMeta& op_meta) const {
+                                                   TensorList& outputs, const OpMeta& op_meta,
+                                                   const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs_hetero_dim.at(0) >= 0 && inputs_hetero_dim.at(0) < outputs.at(0)->ndim() - normalized_shape().size())
     << "Currently not support complex hetero dim deducing"
     << ", the hetero dim should be spilt and reduced to partial";

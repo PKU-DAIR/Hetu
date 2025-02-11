@@ -41,7 +41,8 @@ HTShapeList SCESOpImpl::DoInferShape(Operator& op,
 }
 
 void SCESOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                               const OpMeta& op_meta) const {
+                               const OpMeta& op_meta,
+                               const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_preds = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_labels = inputs.at(1)->get_distributed_states();
   int ndim = inputs.at(0)->ndim();
@@ -57,7 +58,8 @@ void SCESOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void SCESOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                   TensorList& outputs, const OpMeta& op_meta) const {
+                                   TensorList& outputs, const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 
@@ -93,12 +95,14 @@ HTShapeList SCESGradOpImpl::DoInferShape(Operator& op,
 }
 
 void SCESGradOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                    const OpMeta& op_meta) const {
+                                    const OpMeta& op_meta,
+                                    const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 
 void SCESGradOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                       TensorList& outputs, const OpMeta& op_meta) const {
+                                       TensorList& outputs, const OpMeta& op_meta,
+                                       const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 

@@ -29,7 +29,7 @@ class LinearOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     const Tensor& a = inputs.at(0);
     const Tensor& b = inputs.at(1);
     if (a->has_shape() && b->has_shape()) {
@@ -57,10 +57,12 @@ class LinearOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;

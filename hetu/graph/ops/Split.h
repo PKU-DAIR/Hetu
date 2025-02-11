@@ -117,7 +117,7 @@ class SplitOpImpl final : public ViewsOpImpl {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     std::vector<NDArrayMeta> meta_list;
     auto split_num = get_split_num();
     if (split_num == 0) {
@@ -162,10 +162,12 @@ class SplitOpImpl final : public ViewsOpImpl {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const {};
@@ -302,15 +304,17 @@ class SplitGradientOpImpl : public ViewsOpImpl {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
-    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override; 
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override; 
 
   NDArrayList DoCompute(Operator& op, const NDArrayList& inputs,
                         RuntimeContext& ctx) const override;
@@ -320,7 +324,7 @@ class SplitGradientOpImpl : public ViewsOpImpl {
   
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   SyShapeList _begin_pos_list;
   SyShapeList _output_shape_list;

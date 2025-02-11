@@ -23,7 +23,7 @@ TensorList ConcatOpImpl::DoGradient(Operator &op,
   }
   if (!requires_grad) {
     TensorList ret;
-    for (size_t i = 0; i < inputs.size(); i++) {
+    for (size_t i = 0; i < op->inputs().size(); i++) {
       ret.push_back(Tensor());
     }
     return ret;
@@ -44,14 +44,15 @@ HTShapeList ConcatOpImpl::DoInferShape(Operator& op,
 
 void ConcatOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   HTShape input_axis_size_list;
-  for (auto& input : op->inputs()) {
+  for (auto& input : inputs) {
     input_axis_size_list.push_back(input->shape(get_axis()));
   }
   dst_ctx.put("input_axis_size_list", input_axis_size_list);
 }
 
 void ConcatOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_0 = inputs.at(0)->get_distributed_states();
   auto device_num = ds_0.get_device_num();
   for (size_t i = 0; i < inputs.size(); i++) {
@@ -71,15 +72,15 @@ void ConcatOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 void ConcatGradientOpImpl::DoCompute(Operator& op,
                                      const NDArrayList& inputs,
                                      NDArrayList& outputs, RuntimeContext& ctx) const {
-  HT_DISPATCH_KERNEL_CPU_AND_CUDA(
+  HT_DISPATCH_KERNEL_CUDA_ONLY(
     op->instantiation_ctx().placement.type(), type(), hetu::impl::ConcatGradient, 
-    outputs.at(0), inputs, get_axis(), op->instantiation_ctx().stream());
+    inputs.at(0), outputs, get_axis(), op->instantiation_ctx().stream());
 }
 
 HTShapeList ConcatGradientOpImpl::DoInferShape(Operator& op,
                                                const HTShapeList& input_shapes,
                                                RuntimeContext& ctx) const {
-  HTShape input_axis_size_list = ctx.get_or_create(op->op_id()).get<HTShape>("input_axis_size_list");
+  HTShape input_axis_size_list = ctx.get_or_create(op->fw_op_id()).get<HTShape>("input_axis_size_list");
   HTShapeList ret;
   for (size_t i = 0; i < input_axis_size_list.size(); i++) {
     ret.push_back(input_shapes.at(0));
@@ -88,12 +89,13 @@ HTShapeList ConcatGradientOpImpl::DoInferShape(Operator& op,
   return ret;
 }
 
-void ConcatGradientOpImpl::DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const {
+void ConcatGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.put("input_axis_size_list", src_ctx.pop<HTShape>("input_axis_size_list"));
 }
 
 void ConcatGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
   for (auto& output : outputs) {
     output->set_distributed_states(inputs.at(0)->get_distributed_states());
   }
@@ -111,8 +113,8 @@ TensorList MakeConcatGradientOp(Tensor grad_output, size_t axis,
                                 OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<ConcatGradientOpImpl>(axis),
-          std::move({std::move(grad_output)}),
-          std::move(op_meta));
+          {std::move(grad_output)},
+          std::move(op_meta))->outputs();
 }
 
 } // namespace graph

@@ -50,7 +50,7 @@ class BroadcastOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta output_meta;
     if (mode() == 0) {
       output_meta = inputs[1]->meta();
@@ -63,7 +63,8 @@ class BroadcastOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -137,17 +138,18 @@ class BroadcastGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
-    return {instantiation_ctx().ctx.get<NDArrayMeta>("in_meta")};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
-  void DoLoadCtxForBackward(const ContextStore& src_ctx, ContextStore& dst_ctx) const override;
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;

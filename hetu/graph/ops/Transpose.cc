@@ -45,7 +45,8 @@ HTShapeList TransposeOpImpl::DoInferShape(Operator& op,
 }
 
 void TransposeOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   HTAxes perm = get_perms();
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
@@ -85,7 +86,8 @@ void TransposeOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outpu
 }
 
 void TransposeOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta,
+                                        const InstantiationContext& inst_ctx) const {
   HTAxes perm = get_perms();
   auto get_perm_index = [&](int32_t key) -> int32_t {
     for (int i = 0; i < perm.size(); i++) {

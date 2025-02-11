@@ -1752,8 +1752,9 @@ NDArray NDArray::cat(const NDArrayList& inputs, int axis,
     ? output
     : NDArray::empty(cat_shape, inputs.at(0)->device(), inputs.at(0)->dtype(),
                      stream_id);
+  Stream stream(inputs.at(0)->device(), stream_id);
   HT_DISPATCH_KERNEL_CUDA_ONLY(ret->device().type(), __FUNCTION__, hetu::impl::Concat,
-                               inputs, ret, parsed_axis, stream_id);
+                               inputs, ret, parsed_axis, stream);
   return ret;
 }
 
