@@ -8,11 +8,19 @@
 namespace hetu {
 namespace impl {
 
-constexpr int CONCAT_BATCH_SIZE = 128;
+constexpr int CONCAT_BATCH_SIZE = 64;
 
 template <typename spec_t, int batch_size>
 struct ConcatInputMeta {
   const spec_t* input[batch_size];
+  uint64_t offset[batch_size];
+  uint64_t dim_size[batch_size];
+  uint64_t numel[batch_size];
+};
+
+template <typename spec_t, int batch_size>
+struct ConcatGradientInputMeta {
+  spec_t* grad_input[batch_size];
   uint64_t offset[batch_size];
   uint64_t dim_size[batch_size];
   uint64_t numel[batch_size];
@@ -119,7 +127,7 @@ void parallel_concat(const NDArrayList& inputs, NDArray& output,
                      size_t dim, bool is_contig, const Stream& stream) {
   ConcatInputMeta<spec_t, batch_size> inputs_meta;
   uint64_t dim_stride = output->stride(dim);
-  unsigned int max_elements_per_tensor = 0;
+  uint64_t max_elements_per_tensor = 0;
 
   int batch_counter = 0;
   int64_t offset = 0;
@@ -147,6 +155,9 @@ void parallel_concat(const NDArrayList& inputs, NDArray& output,
     if (max_elements_per_tensor == 0)
       continue;
     
+    CUDAStream cuda_stream(stream);
+    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+    
     dim3 block, grid;
     int multiProcessorCount;
     CudaDeviceGetAttribute(&multiProcessorCount,
@@ -159,14 +170,15 @@ void parallel_concat(const NDArrayList& inputs, NDArray& output,
       grid = dim3(2LL * multiProcessorCount, (long long) batch_counter);
     }
 
-    CUDAStream cuda_stream(stream);
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
     auto [in_offset_arrs, in_offset_ptrs] = AllocOffsetCalculator(data, stream);
-    NDArray in_offset_ptrs_arr = hetu::cuda::to_ptr_ndarray(in_offset_ptrs, device_id);
+    NDArray in_offset_ptrs_arr = hetu::cuda::to_ptr_ndarray(in_offset_ptrs, cuda_stream.device_id());
     auto** in_offset_calculators = in_offset_ptrs_arr->data_ptr<OffsetCalculator*>();
 
     if (is_contig) {
-      int vec_size = get_vectorize_size(inputs...);
+      int vec_size = 4;
+      for (int i = 0; i < batch_counter; i++) {
+        vec_size = std::min(vec_size, get_vectorize_size(inputs_meta.input[i]));
+      }
       switch (vec_size) {
         case 4:
           concat_batched_copy_vectorized<spec_t, batch_size, 4><<<grid, block, 0, cuda_stream>>>(
@@ -207,7 +219,7 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
   }
   auto dtype = inputs[0]->dtype();
   for (const auto& input : inputs) {
-    HT_ASSERT_SAME_DTYPE(input, dtype);
+    HT_ASSERT_SAME_DTYPE(input, output);
   }
   if (output->numel() == 0) {
     return;  
@@ -220,12 +232,12 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
   
   for (const auto& input : inputs) {
     if (input->numel() == 0) continue;
-    HT_ASSERT(input->ndim() == output->ndim(),
-              "All tensors must have same number of dimensions");
+    HT_ASSERT(input->ndim() == output->ndim())
+      << "All tensors must have same number of dimensions";
     for (size_t i = 0; i < input->ndim(); i++) {
       if (i == dim) continue;
-      HT_ASSERT(input->shape(i) == output->shape(i),
-                "All tensors must have same shape except concat dimension");
+      HT_ASSERT(input->shape(i) == output->shape(i))
+        << "All tensors must have same shape except concat dimension";
     }
   }
   
@@ -262,7 +274,7 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
 template <typename spec_t, int batch_size>
 __global__ void concat_gradient_batched_copy(
   const spec_t* output_grad,
-  ConcatInputMeta<spec_t, batch_size> grads,
+  ConcatGradientInputMeta<spec_t, batch_size> grads,
   const int concat_dim,
   uint64_t dim_stride,
   const OffsetCalculator* out_grad_offset_calculator,
@@ -273,7 +285,7 @@ __global__ void concat_gradient_batched_copy(
   if (tid >= numel)
     return;
   
-  const spec_t* grad = grads.input[blockIdx.y];
+  spec_t* grad = grads.grad_input[blockIdx.y];
   uint64_t offset = grads.offset[blockIdx.y];
   uint64_t dim_size = grads.dim_size[blockIdx.y];
   uint64_t data_offset = offset * dim_stride;
@@ -290,7 +302,7 @@ __global__ void concat_gradient_batched_copy(
 template <typename spec_t, int batch_size, int vec_size>
 __global__ void concat_gradient_batched_copy_vectorized(
     const spec_t* output_grad,
-    ConcatInputMeta<spec_t, batch_size> grads,
+    ConcatGradientInputMeta<spec_t, batch_size> grads,
     const int concat_dim,
     uint64_t dim_stride,
     const OffsetCalculator* out_grad_offset_calculator,
@@ -303,7 +315,7 @@ __global__ void concat_gradient_batched_copy_vectorized(
     return;
   }
 
-  spec_t* grad = grads.input[blockIdx.y];
+  spec_t* grad = grads.grad_input[blockIdx.y];
   uint64_t offset = grads.offset[blockIdx.y];
   uint64_t dim_size = grads.dim_size[blockIdx.y];
   uint64_t data_offset = offset * dim_stride;
@@ -347,9 +359,9 @@ void parallel_concat_gradient(
     bool is_contig,
     const Stream& stream) {
   
-  ConcatInputMeta<spec_t, batch_size> grads_meta;
+  ConcatGradientInputMeta<spec_t, batch_size> grads_meta;
   uint64_t dim_stride = output_grad->stride(dim);
-  unsigned int max_elements_per_tensor = 0;
+  uint64_t max_elements_per_tensor = 0;
 
   int batch_counter = 0;
   int64_t offset = 0;
@@ -369,7 +381,7 @@ void parallel_concat_gradient(
         dim_size = input_grads[i + batch_counter]->shape(dim);
       }
 
-      grads_meta.input[batch_counter] = input_grads[i + batch_counter]->data_ptr<spec_t>();
+      grads_meta.grad_input[batch_counter] = input_grads[i + batch_counter]->data_ptr<spec_t>();
       grads_meta.offset[batch_counter] = offset;
       grads_meta.dim_size[batch_counter] = dim_size;
       grads_meta.numel[batch_counter] = input_grads[i + batch_counter]->numel();
@@ -389,6 +401,7 @@ void parallel_concat_gradient(
     dim3 block, grid;
     int multiProcessorCount;
     CUDAStream cuda_stream(stream);
+    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
     CudaDeviceGetAttribute(
       &multiProcessorCount,
       cudaDevAttrMultiProcessorCount,
@@ -406,8 +419,6 @@ void parallel_concat_gradient(
       grid = dim3(2LL * multiProcessorCount, (long long)batch_counter);
     }
 
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
-
     auto [in_grad_offset_arrs, in_grad_offset_ptrs] = 
       AllocOffsetCalculator(grad_batch, stream);
     NDArray in_grad_offset_ptrs_arr = 
@@ -416,7 +427,10 @@ void parallel_concat_gradient(
       in_grad_offset_ptrs_arr->data_ptr<OffsetCalculator*>();
 
     if (is_contig) {
-      int vec_size = get_vectorize_size(input_grads...);
+      int vec_size = 4;
+      for (int i = 0; i < batch_counter; i++) {
+        vec_size = std::min(vec_size, get_vectorize_size(grads_meta.grad_input[i]));
+      }
       switch (vec_size) {
         case 4:
           concat_gradient_batched_copy_vectorized<spec_t, batch_size, 4>
@@ -483,7 +497,7 @@ void ConcatGradientCuda(
   HT_ASSERT_CUDA_DEVICE(output_grad);
   for (auto& grad : input_grads) {
     HT_ASSERT_SAME_DEVICE(grad, output_grad);
-    HT_ASSERT_SAME_DTYPE(grad, output_grad->dtype());
+    HT_ASSERT_SAME_DTYPE(grad, output_grad);
   }
   if (output_grad->numel() == 0) {
     return;
@@ -506,12 +520,12 @@ void ConcatGradientCuda(
 
   for (const auto& grad : input_grads) {
     if (grad->numel() == 0) continue;
-    HT_ASSERT(grad->ndim() == output_grad->ndim(),
-              "All tensors must have same number of dimensions");
+    HT_ASSERT(grad->ndim() == output_grad->ndim())
+      << "All tensors must have same number of dimensions";
     for (size_t i = 0; i < grad->ndim(); i++) {
       if (i == dim) continue;
-      HT_ASSERT(grad->shape(i) == output_grad->shape(i),
-                "All tensors must have same shape except concat dimension");
+      HT_ASSERT(grad->shape(i) == output_grad->shape(i))
+        << "All tensors must have same shape except concat dimension";
     }
   }
 
@@ -537,7 +551,7 @@ void ConcatGradientCuda(
         }
       } else {
         int64_t offset = 0;
-        for (const auto& input_grad : input_grads) {
+        for (auto& input_grad : input_grads) {
           if (input_grad->numel() == 0 && input_grad->ndim() == 1)
             continue;
           int64_t dim_size = input_grad->shape(dim);

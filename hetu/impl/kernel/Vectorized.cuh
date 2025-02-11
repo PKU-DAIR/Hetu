@@ -17,6 +17,14 @@ static constexpr uint32_t NUM_THREADS = 256;
 static constexpr uint32_t THREAD_WORK_SIZE = 4;
 static constexpr uint32_t BLOCK_WORK_SIZE = NUM_THREADS * THREAD_WORK_SIZE;
 
+template <typename T, int vt>
+struct VectorizedStorage {
+  T data[vt];
+  
+  __device__ T& operator[](int i) { return data[i]; }
+  __device__ const T& operator[](int i) const { return data[i]; }
+};
+
 template <typename spec_t>
 int get_vectorize_size(const spec_t* ptr) {
   uint64_t address = reinterpret_cast<uint64_t>(ptr);
@@ -282,8 +290,8 @@ __global__ void loop_kernel(
   int nv = nt * vt;
   int idx = nv * blockIdx.x + tid;
 
-  InTuple inputs[vt];
-  OutTuple results[vt];
+  VectorizedStorage<InTuple, vt> inputs;
+  VectorizedStorage<OutTuple, vt> results;
 
   #pragma unroll
   for (int i = 0; i < vt; i++) {
@@ -302,9 +310,8 @@ __global__ void loop_kernel(
       }
 
       // Load inputs
-      InTuple inputs;
       load_multiple_inputs<InTuple, num_inputs>::apply(
-          input_ptrs, &inputs, in_offsets, 0);
+          input_ptrs, &inputs[i], in_offsets, 0);
 
       // Apply operation
       results[i] = hetu::impl::apply(op, inputs[i]);
@@ -329,8 +336,10 @@ void launch_loop_kernel(
   constexpr int num_inputs = std::tuple_size<InTuple>::value;
   constexpr int num_outputs = thrust::tuple_size<OutTuple>::value;
     
-  HT_ASSERT(num_inputs == inputs.size(), "Input count mismatch");
-  HT_ASSERT(num_outputs == outputs.size(), "Output count mismatch");
+  HT_ASSERT(num_inputs == inputs.size())
+    << "Input count mismatch";
+  HT_ASSERT(num_outputs == outputs.size())
+    << "Output count mismatch";
 
   // Check contiguous
   bool all_contiguous = true;
@@ -422,9 +431,7 @@ __device__ inline void unroll_kernel_for_multi_outputs_with_idx_impl(
     if (index >= remaining) break;
     int linear_idx = base_idx + index;
     load_multiple_inputs<in_t, num_inputs>::apply(input_ptrs, inputs, linear_idx, i);
-    results[i] = hetu::impl::apply([linear_idx, &op](auto&&... args) {
-        return op(linear_idx, std::forward<decltype(args)>(args)...);
-      }, inputs[i]);
+    results[i] = hetu::impl::apply_with_idx(op, linear_idx, inputs[i]);
   }
 
   // Store outputs
@@ -459,16 +466,21 @@ __device__ void unroll_kernel_with_idx_impl(
   const IN_t*... inputs) {
     
   int thread_idx = threadIdx.x;
+  out_t results[THREAD_WORK_SIZE];
   #pragma unroll
   for (int i = 0; i < THREAD_WORK_SIZE; i++) {
     int index = thread_idx + i * NUM_THREADS;
     if (index >= remaining) break;
     int linear_idx = base_idx + index;
-    output[linear_idx] = hetu::impl::apply(
-      [linear_idx, &op](auto&&... args) {
-        return op(linear_idx, std::forward<decltype(args)>(args)...);
-      },
-      thrust::make_tuple(inputs[linear_idx]...));
+    auto input_tuple = std::make_tuple(inputs[linear_idx]...);
+    results[i] = hetu::impl::apply_with_idx(op, linear_idx, input_tuple);
+  }
+  #pragma unroll
+  for (int i = 0; i < THREAD_WORK_SIZE; i++) {
+    int index = thread_idx + i * NUM_THREADS;
+    if (index >= remaining) break;
+    int linear_idx = base_idx + index;
+    output[linear_idx] = results[i];
   }
 }
 
@@ -480,12 +492,20 @@ __device__ void unroll_kernel_with_idx_impl(
   out_t* output) {
     
   int thread_idx = threadIdx.x;
+  out_t results[THREAD_WORK_SIZE];
   #pragma unroll
   for (int i = 0; i < THREAD_WORK_SIZE; i++) {
     int index = thread_idx + i * NUM_THREADS;
     if (index >= remaining) break;
     int linear_idx = base_idx + index;
-    output[linear_idx] = op(linear_idx);
+    results[i] = op(linear_idx);
+  }
+  #pragma unroll
+  for (int i = 0; i < THREAD_WORK_SIZE; i++) {
+    int index = thread_idx + i * NUM_THREADS;
+    if (index >= remaining) break;
+    int linear_idx = base_idx + index;
+    output[linear_idx] = results[i];
   }
 }
 
@@ -513,11 +533,8 @@ __device__ void vectorize_kernel_with_idx_impl(func_t op, aligned_vector<out_t, 
     aligned_vector<out_t, vec_size> ret;
     #pragma unroll
     for (int j = 0; j < vec_size; j++) {
-      ret.val[j] = hetu::impl::apply(
-                [linear_idx, j, &op](auto&&... args) {
-                    return op(linear_idx + j, std::forward<decltype(args)>(args)...);
-                },
-                thrust::make_tuple(inputs[index].val[j]...));
+      auto input_tuple = std::make_tuple(inputs[index].val[j]...);
+      ret.val[j] = hetu::impl::apply_with_idx(op, linear_idx + j, input_tuple);
     }
     output[index] = ret;
   }
@@ -595,33 +612,36 @@ __global__ void loop_kernel_with_idx(
   int nv = nt * vt;
   int idx = nv * blockIdx.x + tid;
 
-  InTuple inputs[vt];
-  OutTuple results[vt];
+  VectorizedStorage<InTuple, vt> inputs;
+  VectorizedStorage<OutTuple, vt> results;
 
   #pragma unroll
   for (int i = 0; i < vt; i++) {
     if (idx < size) {
-      // Get input/output offsets
-      int in_offsets[num_inputs];
+      // Get output offsets
       int out_offsets[num_outputs];
-      #pragma unroll
-      for (int j = 0; j < num_inputs; j++) {
-        in_offsets[j] = in_offset_calculators[j]->get(idx);
-      }
       #pragma unroll
       for (int j = 0; j < num_outputs; j++) {
         out_offsets[j] = out_offset_calculators[j]->get(idx);
       }
 
-      // Load inputs
-      InTuple inputs;
-      load_multiple_inputs<InTuple, num_inputs>::apply(
-        input_ptrs, &inputs, in_offsets, 0);
+      if constexpr (num_inputs > 0) {
+        int in_offsets[num_inputs];
+        #pragma unroll
+        for (int j = 0; j < num_inputs; j++) {
+          in_offsets[j] = in_offset_calculators[j]->get(idx);
+        }
 
-      // Apply operation with index
-      results[i] = hetu::impl::apply([idx, &op](auto&&... args) {
-        return op(idx, std::forward<decltype(args)>(args)...);
-      }, inputs[i]);
+        // Load inputs
+        load_multiple_inputs<InTuple, num_inputs>::apply(
+          input_ptrs, &inputs[i], in_offsets, 0);
+
+        // Apply operation with index
+        results[i] = hetu::impl::apply_with_idx(op, idx, inputs[i]);
+      } else {
+        // Apply operation with index
+        results[i] = op(idx);
+      }
 
       // Store outputs
       store_multiple_outputs<OutTuple, num_outputs>::apply(
@@ -642,8 +662,10 @@ void launch_loop_kernel_with_idx(
     
   constexpr int num_inputs = std::tuple_size<InTuple>::value;
   constexpr int num_outputs = thrust::tuple_size<OutTuple>::value;
-  HT_ASSERT(num_inputs == inputs.size(), "Input count mismatch");
-  HT_ASSERT(num_outputs == outputs.size(), "Output count mismatch");
+  HT_ASSERT(num_inputs == inputs.size())
+    << "Input count mismatch";
+  HT_ASSERT(num_outputs == outputs.size())
+    << "Output count mismatch";
 
   // Check if all tensors are contiguous
   bool all_contiguous = true;
@@ -662,19 +684,19 @@ void launch_loop_kernel_with_idx(
   void** output_ptrs = ptrs_arr->data_ptr<void*>();
   void** input_ptrs = output_ptrs + num_outputs;
 
+  CUDAStream cuda_stream(stream);
+  hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+
   if (all_contiguous) {
     // Use unrolled kernel for contiguous tensors
     int64_t grid = DIVUP(size, BLOCK_WORK_SIZE);
-    CUDAStream cuda_stream(stream);
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
         
     if constexpr (num_outputs == 1) {
       using OutType = typename thrust::tuple_element<0, OutTuple>::type;
       OutType* out_ptr = reinterpret_cast<OutType*>(output_ptrs[0]);
       auto in_ptrs_tuple = get_input_ptrs<InTuple>(inputs);
       std::apply([&](auto... args) {
-        launch_vectorized_kernel_with_idx<<<grid, NUM_THREADS, 0, cuda_stream>>>(
-            op, size, stream, out_ptr, args...);
+        launch_vectorized_kernel_with_idx(op, size, stream, out_ptr, args...);
       }, in_ptrs_tuple);
     } else {
       // Multiple outputs: use specialized multi-output kernel

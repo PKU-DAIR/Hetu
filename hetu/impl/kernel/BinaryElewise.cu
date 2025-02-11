@@ -333,9 +333,9 @@ void launch_broadcast_loop_kernel(const NDArray& inputA, const NDArray& inputB, 
       auto size = sizeA;                                                                  \
       if (inputA->dtype() == inputB->dtype()) {                                           \
         HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                           \
-          using InType = std::tuple<spec_t, spec_t>;                                      \
-          using OutType = thrust::tuple<spec_t>;                                          \
           inputA->dtype(), spec_t, name, [&]() {                                          \
+            using InType = std::tuple<spec_t, spec_t>;                                    \
+            using OutType = thrust::tuple<spec_t>;                                        \
             launch_loop_kernel<InType, OutType>({inputA, inputB}, {output}, size, stream, \
                 op<spec_t, spec_t>());                                                    \
           });                                                                             \
@@ -354,9 +354,9 @@ void launch_broadcast_loop_kernel(const NDArray& inputA, const NDArray& inputB, 
                             strideA, strideB, out_stride);                                \
       if (inputA->dtype() == inputB->dtype()) {                                           \
         HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                           \
-          using InType = std::tuple<spec_t, spec_t>;                                      \
-          using OutType = thrust::tuple<spec_t>;                                          \
           inputA->dtype(), spec_t, name, [&]() {                                          \
+            using InType = std::tuple<spec_t, spec_t>;                                    \
+            using OutType = thrust::tuple<spec_t>;                                        \
             launch_broadcast_loop_kernel<spec_t, spec_t, spec_t>(                         \
               inputA, inputB, output, num_dims,                                           \
               shapeA, shapeB, out_shape,                                                  \

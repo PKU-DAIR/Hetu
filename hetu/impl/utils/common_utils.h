@@ -84,5 +84,25 @@ __host__ __device__ constexpr decltype(auto) apply(F&& f, Tuple&& t) {
           std::tuple_size<std::remove_reference_t<Tuple>>::value>{});
 }
 
+template <class F, class Tuple, std::size_t... INDEX>
+__host__ __device__ constexpr decltype(auto) apply_with_idx_impl(
+    F&& f,
+    int idx,
+    Tuple&& t,
+    std::index_sequence<INDEX...>)
+{
+  return std::forward<F>(f)(idx, std::get<INDEX>(std::forward<Tuple>(t))...);
+}
+
+template <class F, class Tuple>
+__host__ __device__ constexpr decltype(auto) apply_with_idx(F&& f, int idx, Tuple&& t) {
+  return apply_with_idx_impl(
+      std::forward<F>(f),
+      idx,
+      std::forward<Tuple>(t),
+      std::make_index_sequence<
+          std::tuple_size<std::remove_reference_t<Tuple>>::value>{});
+}
+
 } // namespace impl
 } // namespace hetu

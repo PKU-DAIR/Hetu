@@ -49,7 +49,8 @@ void Dropout2dCuda(const NDArray& input, double drop_rate,
   const float scale = 1.0f / (1.0f - drop_rate);
   
   // Initialize random values
-  NDArray rand_vals = NDArray::empty({static_cast<int64_t>(num_channels)}, input->dtype(), stream.stream_index());
+  NDArray rand_vals = NDArray::empty({static_cast<int64_t>(num_channels)}, input->device(),
+                                     input->dtype(), stream.stream_index());
   CUDAStream cuda_stream(stream);
   hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
   curandGenerator_t gen;
@@ -60,8 +61,8 @@ void Dropout2dCuda(const NDArray& input, double drop_rate,
   HT_DISPATCH_FLOATING_TYPES(input->dtype(), spec_t, "Dropout2dMaskGenerator", [&]() {
     curand_gen_uniform<spec_t>(gen, rand_vals->data_ptr<spec_t>(), num_channels);
     using InType = std::tuple<spec_t>;
-    using OutType = thrust::tuple<bool>;
-    launch_loop_kernel<InType, OutType>({rand_vals}, {mask}, num_channels, stream,
+    using MaskType = thrust::tuple<bool>;
+    launch_loop_kernel<InType, MaskType>({rand_vals}, {mask}, num_channels, stream,
       [drop_rate] __device__ (spec_t rand_val) -> bool {
         return rand_val >= drop_rate;
       });
@@ -74,10 +75,8 @@ void Dropout2dCuda(const NDArray& input, double drop_rate,
     op.W = W;
     op.HW = HW;
     op.CHW = CHW;
-
-    using InType = std::tuple<spec_t>;
     using OutType = thrust::tuple<spec_t>;
-    launch_loop_kernel<InType, OutType>({input}, {output}, input->numel(), stream, op);
+    launch_loop_kernel_with_idx<InType, OutType>({input}, {output}, input->numel(), stream, op);
   });
   CURAND_CALL(curandDestroyGenerator(gen));
   NDArray::MarkUsedBy({rand_vals, mask, input, output}, stream);
@@ -116,7 +115,7 @@ void Dropout2dGradientCuda(const NDArray& grad, const NDArray& fw_mask,
 
     using InType = std::tuple<spec_t>;
     using OutType = thrust::tuple<spec_t>;
-    launch_loop_kernel<InType, OutType>({grad}, {output}, grad->numel(), stream, op);
+    launch_loop_kernel_with_idx<InType, OutType>({grad}, {output}, grad->numel(), stream, op);
   });
   
   NDArray::MarkUsedBy({fw_mask, grad, output}, stream);

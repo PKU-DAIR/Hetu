@@ -111,6 +111,8 @@ void HardsigmoidCuda(const NDArray& input, NDArray& output, const Stream& stream
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "HardsigmoidCuda", [&]() {
+      spec_t six_percent_one = spec_t(1.0 / 6.0);
+      spec_t two_percent_one = spec_t(0.5);
       using InType = std::tuple<spec_t>;
       using OutType = thrust::tuple<spec_t>;
       launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
