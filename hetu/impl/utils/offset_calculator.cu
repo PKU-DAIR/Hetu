@@ -29,7 +29,7 @@ static void OffCalcInitOnce(const Stream& stream) {
 } // namespace
 
 std::tuple<NDArray, OffsetCalculator*>
-AllocOffsetCalculator(const NDArray& arr, const Stream& stream, bool force_non_contiguous=false) {
+AllocOffsetCalculator(const NDArray& arr, const Stream& stream, bool force_non_contiguous) {
   OffCalcInitOnce(stream);
   if (arr->is_contiguous() && !force_non_contiguous) {
     return {trivial_offset_calculator_arr, trivial_offset_calculator};
