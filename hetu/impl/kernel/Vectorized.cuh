@@ -350,34 +350,43 @@ void launch_loop_kernel(
 
   // Prepare data pointers
   auto device_id = stream.device_index();
-  std::vector<void*> data_ptrs(num_outputs + num_inputs);
-  for (int i = 0; i < num_outputs; ++i)
-    data_ptrs[i] = outputs[i]->raw_data_ptr();
-  for (int i = 0; i < num_inputs; ++i)
-    data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
-    
-  NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
-  void** output_ptrs = ptrs_arr->data_ptr<void*>();
-  void** input_ptrs = output_ptrs + num_outputs;
+
+  CUDAStream cuda_stream(stream);
+  hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
 
   if (all_contiguous) {
     if constexpr (num_outputs == 1) {
       // Single output: use vectorized kernel if possible
       using OutType = typename thrust::tuple_element<0, OutTuple>::type;
-      OutType* out_ptr = reinterpret_cast<OutType*>(output_ptrs[0]);
+      OutType* out_ptr = reinterpret_cast<OutType*>(outputs[0]->raw_data_ptr());
       auto in_ptrs_tuple = get_input_ptrs<InTuple>(inputs);
       std::apply([&](auto... args) {
           launch_vectorized_kernel(op, size, stream, out_ptr, args...);
       }, in_ptrs_tuple);
     } else {
       // Multiple outputs: use unrolled kernel
+      std::vector<void*> data_ptrs(num_outputs + num_inputs);
+      for (int i = 0; i < num_outputs; ++i)
+        data_ptrs[i] = outputs[i]->raw_data_ptr();
+      for (int i = 0; i < num_inputs; ++i)
+        data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
+      NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
+      void** output_ptrs = ptrs_arr->data_ptr<void*>();
+      void** input_ptrs = output_ptrs + num_outputs;
       int64_t grid = DIVUP(size, BLOCK_WORK_SIZE);
-      CUDAStream cuda_stream(stream);
-      hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
       unroll_kernel_for_multi_outputs<InTuple, OutTuple, num_outputs, num_inputs>
           <<<grid, NUM_THREADS, 0, cuda_stream>>>(input_ptrs, output_ptrs, size, op);
+      NDArray::MarkUsedBy({ptrs_arr}, stream);
     }
   } else {
+    std::vector<void*> data_ptrs(num_outputs + num_inputs);
+    for (int i = 0; i < num_outputs; ++i)
+      data_ptrs[i] = outputs[i]->raw_data_ptr();
+    for (int i = 0; i < num_inputs; ++i)
+      data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
+    NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
+    void** output_ptrs = ptrs_arr->data_ptr<void*>();
+    void** input_ptrs = output_ptrs + num_outputs;
     // Non-contiguous: use general loop kernel with offset calculators
     constexpr int unroll_factor = num_outputs == 1 ? (sizeof(DataType2Size(outputs[0]->dtype())) >= 4 ? 2 : 4) : 2;
     dim3 block(NUM_THREADS);
@@ -392,17 +401,14 @@ void launch_loop_kernel(
     auto** out_calcs = in_calcs + num_inputs;
 
     // Launch kernel
-    CUDAStream cuda_stream(stream);
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
     loop_kernel<NUM_THREADS, unroll_factor, num_outputs, num_inputs, InTuple, OutTuple>
         <<<grid, block, 0, cuda_stream>>>(
             input_ptrs, output_ptrs, size, op, in_calcs, out_calcs);
 
     offset_arrs.push_back(offset_ptrs_arr);
     NDArray::MarkUsedBy(offset_arrs, stream);
+    NDArray::MarkUsedBy({ptrs_arr}, stream);
   }
-    
-  NDArray::MarkUsedBy({ptrs_arr}, stream);
 }
 
 /**
@@ -674,15 +680,6 @@ void launch_loop_kernel_with_idx(
 
   // Prepare data pointers
   auto device_id = stream.device_index();
-  std::vector<void*> data_ptrs(num_outputs + num_inputs);
-  for (int i = 0; i < num_outputs; ++i)
-    data_ptrs[i] = outputs[i]->raw_data_ptr();
-  for (int i = 0; i < num_inputs; ++i)
-    data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
-    
-  NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
-  void** output_ptrs = ptrs_arr->data_ptr<void*>();
-  void** input_ptrs = output_ptrs + num_outputs;
 
   CUDAStream cuda_stream(stream);
   hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
@@ -693,18 +690,36 @@ void launch_loop_kernel_with_idx(
         
     if constexpr (num_outputs == 1) {
       using OutType = typename thrust::tuple_element<0, OutTuple>::type;
-      OutType* out_ptr = reinterpret_cast<OutType*>(output_ptrs[0]);
+      OutType* out_ptr = reinterpret_cast<OutType*>(outputs[0]->raw_data_ptr());
       auto in_ptrs_tuple = get_input_ptrs<InTuple>(inputs);
       std::apply([&](auto... args) {
         launch_vectorized_kernel_with_idx(op, size, stream, out_ptr, args...);
       }, in_ptrs_tuple);
     } else {
       // Multiple outputs: use specialized multi-output kernel
+      std::vector<void*> data_ptrs(num_outputs + num_inputs);
+      for (int i = 0; i < num_outputs; ++i)
+        data_ptrs[i] = outputs[i]->raw_data_ptr();
+      for (int i = 0; i < num_inputs; ++i)
+        data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
+      NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
+      void** output_ptrs = ptrs_arr->data_ptr<void*>();
+      void** input_ptrs = output_ptrs + num_outputs;
       unroll_kernel_for_multi_outputs_with_idx<InTuple, OutTuple, num_outputs, num_inputs>
           <<<grid, NUM_THREADS, 0, cuda_stream>>>(input_ptrs, output_ptrs, size, op);
+      NDArray::MarkUsedBy({ptrs_arr}, stream);
     }
   } else {
     // Use loop kernel with offset calculators for non-contiguous tensors
+    std::vector<void*> data_ptrs(num_outputs + num_inputs);
+    for (int i = 0; i < num_outputs; ++i)
+      data_ptrs[i] = outputs[i]->raw_data_ptr();
+    for (int i = 0; i < num_inputs; ++i)
+      data_ptrs[num_outputs + i] = inputs[i]->raw_data_ptr();
+    NDArray ptrs_arr = hetu::cuda::to_ptr_ndarray(data_ptrs, device_id);
+    void** output_ptrs = ptrs_arr->data_ptr<void*>();
+    void** input_ptrs = output_ptrs + num_outputs;
+
     constexpr int unroll_factor = num_outputs == 1 ? (sizeof(DataType2Size(outputs[0]->dtype())) >= 4 ? 2 : 4) : 2;
     dim3 block(NUM_THREADS);
     dim3 grid(DIVUP(size, unroll_factor * block.x));
@@ -724,9 +739,8 @@ void launch_loop_kernel_with_idx(
 
     offset_arrs.push_back(offset_ptrs_arr);
     NDArray::MarkUsedBy(offset_arrs, stream);
+    NDArray::MarkUsedBy({ptrs_arr}, stream);
   }
-    
-  NDArray::MarkUsedBy({ptrs_arr}, stream);
 }
 
 } // namespace impl
