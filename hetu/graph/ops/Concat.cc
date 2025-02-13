@@ -90,7 +90,7 @@ HTShapeList ConcatGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void ConcatGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("input_axis_size_list", src_ctx.pop<HTShape>("input_axis_size_list"));
+  dst_ctx.migrate_from<HTShape>(src_ctx, "input_axis_size_list");
 }
 
 void ConcatGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

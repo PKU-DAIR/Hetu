@@ -39,14 +39,14 @@ class ContextStore {
                   std::is_same_v<T, NDArrayMeta> ||
                   std::is_same_v<T, DistributedStates>) {
       if constexpr (std::is_same_v<T, NDArray>) {
-        _ctx_ndarray.insert({key, value});
+        _ctx_ndarray.insert_or_assign(key, value);
       } else if constexpr (std::is_same_v<T, NDArrayMeta>) {
-        _ctx_ndarray_meta.insert({key, value});
+        _ctx_ndarray_meta.insert_or_assign(key, value);
       } else if constexpr (std::is_same_v<T, DistributedStates>) {
-        _ctx_distributed_states.insert({key, value});
+        _ctx_distributed_states.insert_or_assign(key, value);
       }
     } else if constexpr (is_json_serializable<T>::value) {
-      _ctx.insert({key, serialize(value)});
+      _ctx.insert_or_assign(key, serialize(value));
     } else {
       HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
     }
@@ -103,6 +103,28 @@ class ContextStore {
       return deserialize<T>(std::move(node_handle.mapped()));
     } else {
       HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
+    }
+  }
+
+  template <typename T>
+  bool contains(const std::string& key) const {
+    if constexpr (std::is_same_v<T, NDArray> ||
+                  std::is_same_v<T, NDArrayMeta> ||
+                  std::is_same_v<T, DistributedStates>) {
+      return _ctx_ndarray.find(key) != _ctx_ndarray.end() ||
+             _ctx_ndarray_meta.find(key) != _ctx_ndarray_meta.end() ||
+             _ctx_distributed_states.find(key) != _ctx_distributed_states.end();
+    } else if constexpr (is_json_serializable<T>::value) {
+      return _ctx.find(key) != _ctx.end();
+    } else {
+      HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
+    }
+  }
+
+  template <typename T>
+  void migrate_from(ContextStore& src, const std::string& key) {
+    if (!this->contains<T>(key) || (this->contains<T>(key) && src.contains<T>(key))) {
+      this->put(key, src.pop<T>(key));
     }
   }
 

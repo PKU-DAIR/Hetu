@@ -32,6 +32,10 @@ protected:
     return {output_meta, mask_meta};
   }
 
+  void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
+
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 
@@ -41,6 +45,8 @@ protected:
 
   NDArrayList DoCompute(Operator& op, const NDArrayList& inputs,
                         RuntimeContext& runtime_ctx) const override;
+
+  HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
   double _keep_prob;
 
@@ -84,12 +90,18 @@ protected:
     return {output_meta};
   }
 
+  void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
+
   void DoCompute(Operator& op, const NDArrayList& inputs,
                  NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
 
   NDArrayList DoCompute(Operator& op, const NDArrayList& inputs,
                         RuntimeContext& runtime_ctx) const override;
+
+  HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
   double _keep_prob;
   bool _fw_inplace;

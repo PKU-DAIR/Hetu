@@ -44,6 +44,12 @@ TensorList Dropout2dOpImpl::DoGradient(Operator& op, const TensorList& grad_outp
                                : Tensor()};
 }
 
+HTShapeList Dropout2dOpImpl::DoInferShape(Operator& op,
+                                          const HTShapeList& input_shapes,
+                                          RuntimeContext& ctx) const {
+  return {input_shapes[0], HTShape({input_shapes[0][0], input_shapes[0][1]})};
+}
+
 void Dropout2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                      const OpMeta& op_meta,
                                      const InstantiationContext& inst_ctx) const {
@@ -76,6 +82,18 @@ Dropout2dGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
   }
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
+}
+
+HTShapeList Dropout2dGradientOpImpl::DoInferShape(Operator& op,
+                                                  const HTShapeList& input_shapes,
+                                                  RuntimeContext& ctx) const {
+  return {input_shapes[0]};
+}
+
+void Dropout2dGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());    
 }
 
 Tensor MakeDropout2dOp(Tensor input, double keep_prob,

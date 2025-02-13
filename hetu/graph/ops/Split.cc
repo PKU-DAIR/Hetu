@@ -233,9 +233,9 @@ HTShapeList SplitGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void SplitGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
-  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
-  dst_ctx.put("hetero_dim", src_ctx.pop<int32_t>("hetero_dim"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<int32_t>(src_ctx, "hetero_dim");
 }
 
 void SplitGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

@@ -88,8 +88,8 @@ RepeatGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void RepeatGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
-  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
 }
 
 void RepeatGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

@@ -44,6 +44,22 @@ TensorList DropoutOpImpl::DoGradient(Operator& op, const TensorList& grad_output
                                : Tensor()};
 }
 
+HTShapeList DropoutOpImpl::DoInferShape(Operator& op,
+                                        const HTShapeList& input_shapes,
+                                        RuntimeContext& ctx) const {
+  return {input_shapes[0], input_shapes[0]};
+}
+
+void DropoutOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
+  const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
+  HT_ASSERT(ds_input.is_valid()) 
+    << "DropoutOpDef: distributed states for input must be valid!";
+  outputs.at(0)->set_distributed_states(ds_input);
+  outputs.at(1)->set_distributed_states(ds_input);
+}
+
 void DropoutGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
                                       NDArrayList& outputs,
                                       RuntimeContext& ctx) const {
@@ -62,6 +78,18 @@ NDArrayList DropoutGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inp
   }
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
+}
+
+HTShapeList DropoutGradientOpImpl::DoInferShape(Operator& op,
+                                                const HTShapeList& input_shapes,
+                                                RuntimeContext& ctx) const {
+  return {input_shapes[0]};
+}
+
+void DropoutGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                           const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 
 Tensor MakeDropoutOp(Tensor input, double keep_prob,

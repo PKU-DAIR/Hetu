@@ -442,8 +442,10 @@ class OpInterface : public shared_ptr_target {
     return DoInstantiate(op, placement, stream_id);
   }
 
-  inline HTShapeList InferShape(Operator& op, const HTShapeList& shapes,
-                                RuntimeContext& runtime_ctx) const;
+  void LoadAndSaveCtxForBackward(Operator& op, RuntimeContext& runtime_ctx) const;
+
+  HTShapeList InferShape(Operator& op, const HTShapeList& shapes,
+                         RuntimeContext& runtime_ctx) const;
 
   inline NDArrayList AllocOutputs(Operator& op, const NDArrayList& inputs,
                                   RuntimeContext& runtime_ctx) const {
@@ -579,6 +581,10 @@ class OpDef : public shared_ptr_target {
 
   inline bool Instantiate(const Device& placement, StreamIndex stream_id) {
     return _body->Instantiate(get_self(), placement, stream_id);
+  }
+
+  void LoadAndSaveCtxForBackward(RuntimeContext& runtime_ctx) {
+    _body->LoadAndSaveCtxForBackward(get_self(), runtime_ctx);
   }
 
   HTShapeList InferShape(const HTShapeList& input_shapes,

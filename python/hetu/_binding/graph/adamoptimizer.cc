@@ -38,6 +38,10 @@ inline PyObject* PyAdamOptimizer_pynew(PyTypeObject* type, PyObject* args,
   auto* self = reinterpret_cast<PyAdamOptimizer*>(unsafe_self);
 
   static PyArgParser parser({
+    "AdamOptimizer(float lr, float beta1=0.9, float beta2=0.999, float eps=1e-8)",
+
+    "AdamOptimizer(TensorList vars, float lr, float beta1=0.9, float beta2=0.999, float eps=1e-8)",
+
     "AdamOptimizer(float init_lr, float max_lr, float min_lr, int lr_warmup_steps, int lr_decay_steps, string lr_decay_style, "
                   "float start_wd=0, float end_wd=0, int wd_incr_steps=-1, string wd_incr_style=\"constant\", "
                   "float beta1=0.9, float beta2=0.999, float eps=1e-8)",
@@ -55,6 +59,40 @@ inline PyObject* PyAdamOptimizer_pynew(PyTypeObject* type, PyObject* args,
   // Can we defer the copy to device placement?
   if (parsed_args.signature_index() == 0) {
     new(&self->optimizer) AdamOptimizer();
+    self->optimizer = AdamOptimizer(parsed_args.get_float64_or_default(0),
+                                    parsed_args.get_float64_or_default(0),
+                                    parsed_args.get_float64_or_default(0),
+                                    0,
+                                    1000,
+                                    "constant",
+                                    0,
+                                    0,
+                                    -1,
+                                    "constant",
+                                    parsed_args.get_float64_or_default(1),
+                                    parsed_args.get_float64_or_default(2),
+                                    parsed_args.get_float64_or_default(3)
+                                    );
+  } else if (parsed_args.signature_index() == 1) {
+    new(&self->optimizer) AdamOptimizer();
+    auto params = parsed_args.get_tensor_list_or_empty(0);
+    self->optimizer = AdamOptimizer(params,
+                                    parsed_args.get_float64_or_default(1),
+                                    parsed_args.get_float64_or_default(1),
+                                    parsed_args.get_float64_or_default(1),
+                                    0,
+                                    1000,
+                                    "constant",
+                                    0,
+                                    0,
+                                    -1,
+                                    "constant",
+                                    parsed_args.get_float64_or_default(2),
+                                    parsed_args.get_float64_or_default(3),
+                                    parsed_args.get_float64_or_default(4)
+                                    );
+  } else if (parsed_args.signature_index() == 2) {
+    new(&self->optimizer) AdamOptimizer();
     self->optimizer = AdamOptimizer(parsed_args.get_float64_or_default(0), 
                                     parsed_args.get_float64_or_default(1), 
                                     parsed_args.get_float64_or_default(2), 
@@ -69,7 +107,7 @@ inline PyObject* PyAdamOptimizer_pynew(PyTypeObject* type, PyObject* args,
                                     parsed_args.get_float64_or_default(11),        
                                     parsed_args.get_float64_or_default(12)
                                     );
-  } else if (parsed_args.signature_index() == 1) {
+  } else if (parsed_args.signature_index() == 3) {
     new(&self->optimizer) AdamOptimizer();
     auto params = parsed_args.get_tensor_list_or_empty(0);
     self->optimizer = AdamOptimizer(params,

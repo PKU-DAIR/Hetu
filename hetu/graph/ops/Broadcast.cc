@@ -71,7 +71,7 @@ BroadcastGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void BroadcastGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
 }
 
 void BroadcastGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

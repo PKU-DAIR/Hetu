@@ -154,8 +154,8 @@ Conv2dGradientofFilterOpImpl::DoInferShape(Operator&op,
 }
 
 void Conv2dGradientofFilterOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta_1"));
-  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate_1"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_1");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate_1");
 }
 
 void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -195,8 +195,8 @@ Conv2dGradientofDataOpImpl::DoInferShape(Operator&op,
 }
 
 void Conv2dGradientofDataOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta_0"));
-  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate_0"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_0");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate_0");
 }
 
 void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

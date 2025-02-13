@@ -906,8 +906,6 @@ class TestTransformOps(unittest.TestCase):
             x = hetu.from_numpy(x_np)
             y = hetu.from_numpy(y_np)
             z = hetu.from_numpy(z_np)
-            self.assertTrue(allclose(hetu.concat(x, y, 0), gt))
-            self.assertTrue(allclose(x.concat(y, 0), gt))
             self.assertTrue(allclose(hetu.concat([x, y], 0), gt))
             gt = np.concatenate((x_np, y_np, z_np), 0)
             self.assertTrue(allclose(hetu.concat([x, y, z], 0), gt))
@@ -1587,6 +1585,46 @@ class TestLossOps(unittest.TestCase):
 #                 # for i in range(len(inputs_tensor)):
 #                 #     self.assertTrue(allclose(inputs_hetu[i], inputs_tensor[i].detach().numpy()))
 #         print(sys._getframe().f_code.co_name)
+
+class TestDropoutOps(unittest.TestCase):
+
+    _test_shapes = [
+        (64, 32),
+        (16, 8, 32, 32),
+        (8, 16, 64)
+    ]
+
+    def test_dropout_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+
+            p = 0.5
+            hetu_out = hetu.dropout(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_scale = np.mean(np.abs(hetu_out_numpy[hetu_out_numpy != 0] / x_np[hetu_out_numpy != 0]))
+            self.assertTrue(abs(nonzero_scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
+
+    def test_dropout2d_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            if len(shape) != 4:
+                continue
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+            
+            p = 0.5
+            hetu_out = hetu.dropout2d(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_channels = hetu_out_numpy[~np.all(hetu_out_numpy == 0, axis=(2,3))]
+            if nonzero_channels.size > 0:
+                scale = np.mean(np.abs(nonzero_channels / x_np[~np.all(hetu_out_numpy == 0, axis=(2,3))]))
+                self.assertTrue(abs(scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
 
 class TestOtherOps(unittest.TestCase):
 

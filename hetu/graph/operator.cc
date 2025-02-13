@@ -196,15 +196,19 @@ bool OpInterface::DoInstantiate(Operator& op, const Device& placement,
   return true;
 }
 
-inline HTShapeList OpInterface::InferShape(Operator& op,
-                                           const HTShapeList& shapes,
-                                           RuntimeContext& runtime_ctx) const {
+void OpInterface::LoadAndSaveCtxForBackward(Operator& op, RuntimeContext& runtime_ctx) const {
   if (op->op_meta().fw_op_id == -1) {
     SaveCtxForBackward(op->inputs(), runtime_ctx.get_or_create(op->id()));
   } else {
     LoadCtxForBackward(runtime_ctx.get_or_create(op->op_meta().fw_op_id),
-                      runtime_ctx.get_or_create(op->id()));
+                       runtime_ctx.get_or_create(op->id()));
   }
+}
+
+HTShapeList OpInterface::InferShape(Operator& op,
+                                    const HTShapeList& shapes,
+                                    RuntimeContext& runtime_ctx) const {
+  LoadAndSaveCtxForBackward(op, runtime_ctx);
   return DoInferShape(op, shapes, runtime_ctx);
 }
 

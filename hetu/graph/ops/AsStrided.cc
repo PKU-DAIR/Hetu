@@ -118,9 +118,9 @@ AsStridedGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void AsStridedGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.put("in_meta", src_ctx.pop<NDArrayMeta>("in_meta"));
-  dst_ctx.put("storage_offset", src_ctx.pop<int64_t>("storage_offset"));
-  dst_ctx.put("in_dstate", src_ctx.pop<DistributedStates>("in_dstate"));
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<int64_t>(src_ctx, "storage_offset");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
 }
 
 void AsStridedGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
