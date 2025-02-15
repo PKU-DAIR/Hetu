@@ -64,12 +64,14 @@ HTShapeList RotaryOpImpl::DoInferShape(Operator& op, const HTShapeList& input_sh
 }
 
 void RotaryOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   return outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 
 void RotaryOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                     TensorList& outputs, const OpMeta& op_meta) const {
+                                     TensorList& outputs, const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 
@@ -123,12 +125,14 @@ HTShapeList RotaryGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void RotaryGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
   return outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 
 void RotaryGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                             TensorList& outputs, const OpMeta& op_meta) const {
+                                             TensorList& outputs, const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 

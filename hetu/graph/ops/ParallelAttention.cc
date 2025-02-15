@@ -620,14 +620,9 @@ void AttnCommRing::ExecComm(const NDArray& send_data, const NDArray& recv_data,
     return;
   }
   // 拼接起来
-  int64_t num_heads_offset = 0;
-  for (size_t i = 0; i < src_split_num; i++) {
-    HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
-                                 hetu::impl::Concatenate, recv_data_slices[i],
-                                 const_cast<NDArray&>(recv_data), num_heads_dim, num_heads_offset, 
-                                 comm_stream);
-    num_heads_offset += recv_data_slice_shape[num_heads_dim];
-  }
+  HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
+                               hetu::impl::Concat, recv_data_slices,
+                               const_cast<NDArray&>(recv_data), num_heads_dim, comm_stream);
   // HT_LOG_DEBUG << "[ParallelAttn]: ExecComm end";
 }
 
@@ -891,7 +886,8 @@ void AttnCommRing::Profile(const Operator& op, size_t micro_batch_id, bool is_bw
  ------------------------ Normal Op Impl ------------------------
 *****************************************************************/
 
-std::vector<NDArrayMeta> ParallelAttentionOpImpl::DoInferMeta(const TensorList& inputs) const {
+std::vector<NDArrayMeta> ParallelAttentionOpImpl::DoInferMeta(const TensorList& inputs,
+                                                              const InstantiationContext& inst_ctx) const {
   std::vector<NDArrayMeta> out_metas = {};
   auto& input = inputs.at(0); // packed qkv
   NDArrayMeta base = input->meta();
@@ -928,7 +924,8 @@ std::vector<NDArrayMeta> ParallelAttentionOpImpl::DoInferMeta(const TensorList& 
 }
 
 void ParallelAttentionOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ParallelAttentionOpImpl: distributed states for input must be valid!";
@@ -1127,7 +1124,8 @@ HTShapeList ParallelAttentionOpImpl::DoInferShape(Operator& op,
   return out_shapes;
 }
 
-std::vector<NDArrayMeta> ParallelAttentionGradientOpImpl::DoInferMeta(const TensorList& inputs) const {
+std::vector<NDArrayMeta> ParallelAttentionGradientOpImpl::DoInferMeta(const TensorList& inputs,
+                                                                      const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs.at(0)->shape().size() == 2)
     << "ParallelAttentionGradientOp input shape should be [batch_size * seq_len, q_num_heads * head_dim]";
   NDArrayMeta output_meta = inputs.at(0)->meta();
@@ -1137,7 +1135,8 @@ std::vector<NDArrayMeta> ParallelAttentionGradientOpImpl::DoInferMeta(const Tens
 }
 
 void ParallelAttentionGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                     const OpMeta& op_meta) const {
+                                                     const OpMeta& op_meta,
+                                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ParallelAttentionGradientOpImpl: distributed states for input must be valid!";

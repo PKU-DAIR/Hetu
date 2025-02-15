@@ -84,10 +84,12 @@ void CheckNumericCuda(const NDArray& input, NDArray& output, const Stream& strea
     AllocOffsetCalculator(output, stream);
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "CheckFiniteCuda", [&]() {
-      launch_loop_kernel<spec_t>(output, size, stream,
-                                 [=] __device__ (int /*idx*/) -> spec_t {
-                                   return static_cast<spec_t>(0.f);
-                                 });
+      using InType = std::tuple<>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel_with_idx<InType, OutType>({}, {output}, size, stream,
+                                                  [=] __device__ (int /*idx*/) -> spec_t {
+                                                    return static_cast<spec_t>(0.f);
+                                                  });
       check_numeric_kernel<spec_t><<<blocks, threads, 0, cuda_stream>>>(
         input->data_ptr<spec_t>(), size, output->data_ptr<float>(),
         in_offset_calculator);

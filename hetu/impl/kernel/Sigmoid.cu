@@ -19,7 +19,9 @@ void SigmoidCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "SigmoidCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                            spec_t one = 1.0f;
                                            return one / (one + hetu::cuda::cuda_exp(-x));
@@ -40,11 +42,13 @@ void SigmoidGradientCuda(const NDArray& out_grad, const NDArray& output, NDArray
     return;
   HT_DISPATCH_FLOATING_TYPES(
     out_grad->dtype(), spec_t, "SigmoidGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(out_grad, output, in_grad, size, stream,
-                                                 [] __device__ (spec_t out_grad, spec_t output) -> spec_t {
-                                                   spec_t one = 1.0f;
-                                                   return out_grad * output * (one - output);
-                                                });
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({out_grad, output}, {in_grad}, size, stream,
+                                         [] __device__ (spec_t out_grad, spec_t output) -> spec_t {
+                                           spec_t one = 1.0f;
+                                           return out_grad * output * (one - output);
+                                          });
   });
   NDArray::MarkUsedBy({out_grad, output, in_grad}, stream);
 }

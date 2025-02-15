@@ -58,7 +58,7 @@ class PoolOpImpl : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape shape = {-1, -1, -1, -1};
     if (inputs[0]->has_shape()) {
       HT_ASSERT_HAS_DIMS(inputs[0], 4);
@@ -136,7 +136,7 @@ class PoolGradientOpImpl : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     NDArrayMeta output_meta = inputs[2]->meta();
     return {output_meta};

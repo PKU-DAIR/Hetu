@@ -19,7 +19,7 @@ class NLLLossOpImpl final : public LossOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     if (inputs[0]->has_shape() && inputs[1]->has_shape()) {
       HT_ASSERT(inputs[0]->ndim() == inputs[1]->ndim() + 1)
       << "Input's dims should be 1 more than label's."
@@ -37,7 +37,8 @@ class NLLLossOpImpl final : public LossOpImpl {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -67,7 +68,7 @@ class NLLLossGradientOpImpl final : public LossGradientOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT(_reduction == kSUM || _reduction == kMEAN || _reduction == kNONE)
     << "Unsupported reduction type \'" << _reduction << "\' for " << type()
     << " operators. Expected: [\'mean\', \'sum\', \'none\']";
@@ -75,7 +76,8 @@ class NLLLossGradientOpImpl final : public LossGradientOpImpl {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
                       
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;

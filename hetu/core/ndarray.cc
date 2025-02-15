@@ -1743,31 +1743,19 @@ NDArray NDArray::cat(const NDArrayList& inputs, int axis,
                      StreamIndex stream_id,
                      NDArray& output) {
   auto parsed_axis = NDArrayMeta::ParseAxis(axis, inputs.at(0)->ndim());
-  if (parsed_axis == 0) {
-    std::vector<HTShape> shapes;
-    shapes.reserve(inputs.size());
-    std::transform(inputs.begin(), inputs.end(), std::back_inserter(shapes),
-                   [](const NDArray& x) { return x->shape(); });
-    auto cat_shape = NDArrayMeta::Concat(shapes, 0);
-    // TODO: For axis 0, we can copy the inputs one-by-one,
-    // but it would be better to refine the concat kernel
-    // to accept multiple inputs.
-    NDArray ret = output.is_defined()
-      ? output
-      : NDArray::empty(cat_shape, inputs.at(0)->device(), inputs.at(0)->dtype(),
-                       stream_id);
-    HTShape chunks(inputs.size());
-    std::transform(inputs.begin(), inputs.end(), chunks.begin(),
-                   [](const NDArray& x) { return x->shape(0); });
-    auto splits = NDArray::split(ret, chunks, 0, stream_id);
-    for (size_t i = 0; i < inputs.size(); i++) {
-      NDArray::copy(inputs.at(i), stream_id, splits[i]);
-    }
-    return ret;
-  } else {
-    HT_NOT_IMPLEMENTED << "Currently we only support concat on axis 0.";
-    __builtin_unreachable();
-  }
+  std::vector<HTShape> shapes;
+  shapes.reserve(inputs.size());
+  std::transform(inputs.begin(), inputs.end(), std::back_inserter(shapes),
+                 [](const NDArray& x) { return x->shape(); });
+  auto cat_shape = NDArrayMeta::Concat(shapes, 0);
+  NDArray ret = output.is_defined()
+    ? output
+    : NDArray::empty(cat_shape, inputs.at(0)->device(), inputs.at(0)->dtype(),
+                     stream_id);
+  Stream stream(inputs.at(0)->device(), stream_id);
+  HT_DISPATCH_KERNEL_CUDA_ONLY(ret->device().type(), __FUNCTION__, hetu::impl::Concat,
+                               inputs, ret, parsed_axis, stream);
+  return ret;
 }
 
 // deprecated: dynamic shape at inference when using different seq_len

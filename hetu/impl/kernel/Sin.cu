@@ -19,7 +19,9 @@ void SinCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "SinCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                            return hetu::cuda::cuda_sin(x);
                                          });
@@ -37,7 +39,9 @@ void CosCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "CosCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                            return hetu::cuda::cuda_cos(x);
                                          });
@@ -58,10 +62,12 @@ void SinGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "SinGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
-                                                 [] __device__ (spec_t x, spec_t y) -> spec_t {
-                                                   return y * hetu::cuda::cuda_cos(x);
-                                                });
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, size, stream,
+                                         [] __device__ (spec_t x, spec_t y) -> spec_t {
+                                           return y * hetu::cuda::cuda_cos(x);
+                                          });
   });
   NDArray::MarkUsedBy({input, output_grad, input_grad}, stream);
 }
@@ -79,10 +85,12 @@ void CosGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "CosGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
-                                                 [] __device__ (spec_t x, spec_t y) -> spec_t {
-                                                   return -y * hetu::cuda::cuda_sin(x);
-                                                });
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, size, stream,
+                                         [] __device__ (spec_t x, spec_t y) -> spec_t {
+                                           return -y * hetu::cuda::cuda_sin(x);
+                                          });
   });
   NDArray::MarkUsedBy({input, input_grad}, stream);
 }

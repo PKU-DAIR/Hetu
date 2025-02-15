@@ -24,8 +24,9 @@ void KLDivLossCuda(const NDArray& pred, const NDArray& label,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     pred->dtype(), spec_t, "KLDivLossCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(
-        pred, label, loss, n_rows, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({pred, label}, {loss}, n_rows, stream,
         [] __device__ (spec_t pred, spec_t label) {
           spec_t lglabel = hetu::cuda::cuda_log(label);
           // clip to -100 following PyTorch
@@ -54,8 +55,9 @@ void KLDivLossGradientCuda(const NDArray& pred, const NDArray& label,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     label->dtype(), spec_t, "KLDivLossGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(
-        label, grad_loss, output, n_rows, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({label, grad_loss}, {output}, n_rows, stream,
         [] __device__ (spec_t label, spec_t grad_loss) {
           return - grad_loss * label;
         });

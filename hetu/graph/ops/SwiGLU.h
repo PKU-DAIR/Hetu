@@ -24,7 +24,7 @@ class SwiGLUOpImpl final : public UnaryOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape output_shape(inputs[0]->shape());
     output_shape.back() /= 2;
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
@@ -56,7 +56,7 @@ class SwiGLUGradientOpImpl final : public UnaryGradientOpImpl {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
                                            .set_shape(inputs[0]->shape())
                                            .set_device(inputs[0]->device());

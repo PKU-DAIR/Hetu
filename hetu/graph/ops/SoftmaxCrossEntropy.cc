@@ -41,7 +41,8 @@ HTShapeList SCEOpImpl::DoInferShape(Operator& op,
 }
 
 void SCEOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                               const OpMeta& op_meta) const {
+                               const OpMeta& op_meta,
+                               const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_preds = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_labels = inputs.at(1)->get_distributed_states();
   int ndim = inputs.at(0)->ndim();
@@ -87,7 +88,8 @@ HTShapeList SCEGradOpImpl::DoInferShape(Operator& op,
 }
 
 void SCEGradOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                   const OpMeta& op_meta) const {
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 

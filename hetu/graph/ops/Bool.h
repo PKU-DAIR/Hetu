@@ -19,7 +19,7 @@ class BoolOpImpl final : public UnaryOpImpl {
 
 protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     NDArrayMeta output_meta = inputs[0]->meta();
     return {output_meta};

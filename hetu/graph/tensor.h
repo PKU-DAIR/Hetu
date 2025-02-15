@@ -461,6 +461,7 @@ class TensorDef : public shared_ptr_target {
   // deprecated: DistributedStatesList _distributed_states; // for multi ds deduce
   DistributedStatesHierarchy _ds_hierarchy; // for multi ds multi hetero-dp deduce
   DistributedStatesUnion _dummy_ds_union{}; // for deduce_states=False op outputs
+  DistributedStates _dummy_ds{}; // for deduce_states=False op outputs
   HTShape _global_shape;
   bool _is_grad{false};
   bool _use_compute_suggested_hetero_id{true};

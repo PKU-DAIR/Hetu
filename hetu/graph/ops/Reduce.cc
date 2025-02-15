@@ -56,6 +56,12 @@ HTShapeList ReduceOpImpl::DoInferShape(Operator& op,
   return outputlist;
 }
 
+void ReduceOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().hetero_dim());
+}
+
 DistributedStates ReduceOpImpl::StatesForDistributedReduce(
   const Tensor& input, 
   const HTShape& axes, 
@@ -132,7 +138,8 @@ DistributedStates ReduceOpImpl::StatesForDistributedReduce(
 }
 
 void ReduceOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ReduceOpDef: distributed states for input must be valid!";
@@ -145,7 +152,8 @@ void ReduceOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void ReduceOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                     TensorList& outputs, const OpMeta& op_meta) const {
+                                     TensorList& outputs, const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   // HT_ASSERT(inputs_hetero_dim.at(0) < 0)
     // << "Currently not support complex hetero dim deducing";
 
@@ -174,20 +182,26 @@ void ReduceGradientOpImpl::DoCompute(Operator& op,
 HTShapeList ReduceGradientOpImpl::DoInferShape(Operator& op,
                                                const HTShapeList& input_shapes,
                                                RuntimeContext& ctx) const {
-  return  {input_shapes.at(2)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void ReduceGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<int32_t>(src_ctx, "hetero_dim");
 }
 
 void ReduceGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(2)->get_distributed_states());
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
+  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 void ReduceGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                             TensorList& outputs, const OpMeta& op_meta) const {
-  
-  // std::cout << inputs_hetero_dim << std::endl;
-  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(2));
-
+                                             TensorList& outputs, const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->cur_ds_union().set_hetero_dim(inst_ctx.get<int32_t>("hetero_dim"));
 }
 
 Tensor MakeReduceOp(Tensor input, ReductionType reduction, const HTAxes& axes,
@@ -269,7 +283,7 @@ Tensor MakeReduceGradientOp(Tensor input, Tensor ori_output, Tensor ori_input, c
   }
   return Graph::MakeOp(
           std::make_shared<ReduceGradientOpImpl>(shape, reduction, add_axes, keepdims, const_value),
-          {std::move(input), std::move(ori_output), std::move(ori_input)},
+          {std::move(input), std::move(ori_output)},
           std::move(op_meta))->output(0);
 }
 

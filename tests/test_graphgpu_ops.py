@@ -898,19 +898,33 @@ class TestTransformOps(unittest.TestCase):
 
     def test_concat_op(self):
         print(sys._getframe().f_code.co_name)
+        dims = [0, 1]
         for shape in TestTransformOps._test_shapes:
-            x_np = np.random.randn(*shape).astype(np.float32)
-            y_np = np.random.randn(*shape).astype(np.float32)
-            z_np = np.random.randn(*shape).astype(np.float32)
-            gt = np.concatenate((x_np, y_np), 0)
-            x = hetu.from_numpy(x_np)
-            y = hetu.from_numpy(y_np)
-            z = hetu.from_numpy(z_np)
-            self.assertTrue(allclose(hetu.concat(x, y, 0), gt))
-            self.assertTrue(allclose(x.concat(y, 0), gt))
-            self.assertTrue(allclose(hetu.concat([x, y], 0), gt))
-            gt = np.concatenate((x_np, y_np, z_np), 0)
-            self.assertTrue(allclose(hetu.concat([x, y, z], 0), gt))
+            for dim in dims:
+                x_np = np.random.randn(*shape).astype(np.float32)
+                y_np = np.random.randn(*shape).astype(np.float32)
+                z_np = np.random.randn(*shape).astype(np.float32)
+                gt = np.concatenate((x_np, y_np), dim)
+                x = hetu.from_numpy(x_np)
+                y = hetu.from_numpy(y_np)
+                z = hetu.from_numpy(z_np)
+                self.assertTrue(allclose(hetu.concat([x, y], dim), gt))
+                gt = np.concatenate((x_np, y_np, z_np), dim)
+                self.assertTrue(allclose(hetu.concat([x, y, z], dim), gt))
+                
+                if GRAD_TEST:
+                    torch_in = torch.tensor(x_np, requires_grad=True)
+                    torch_out = torch.cat([torch_in, torch.from_numpy(y_np), torch.from_numpy(z_np)], dim)
+                    torch_loss = torch_out.sum()
+                    torch_optimizer = optim.SGD([torch_in], lr = 0.5)
+                    hetu_in = hetu.Tensor(x_np, requires_grad=True)
+                    hetu_out = hetu.concat([hetu_in, y, z], dim)
+                    hetu_loss = hetu_out.sum()
+                    hetu_optimizer = hetu.SGDOptimizer([hetu_in], lr = 0.5)
+                    torch_loss.backward()
+                    torch_optimizer.step()
+                    hetu_optimizer.minimize(hetu_loss)
+                    self.assertTrue(allclose(hetu_in, torch_in.detach().numpy()))
         print(sys._getframe().f_code.co_name)
     
     def test_pad_op(self):
@@ -1587,6 +1601,46 @@ class TestLossOps(unittest.TestCase):
 #                 # for i in range(len(inputs_tensor)):
 #                 #     self.assertTrue(allclose(inputs_hetu[i], inputs_tensor[i].detach().numpy()))
 #         print(sys._getframe().f_code.co_name)
+
+class TestDropoutOps(unittest.TestCase):
+
+    _test_shapes = [
+        (64, 32),
+        (16, 8, 32, 32),
+        (8, 16, 64)
+    ]
+
+    def test_dropout_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+
+            p = 0.5
+            hetu_out = hetu.dropout(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_scale = np.mean(np.abs(hetu_out_numpy[hetu_out_numpy != 0] / x_np[hetu_out_numpy != 0]))
+            self.assertTrue(abs(nonzero_scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
+
+    def test_dropout2d_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            if len(shape) != 4:
+                continue
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+            
+            p = 0.5
+            hetu_out = hetu.dropout2d(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_channels = hetu_out_numpy[~np.all(hetu_out_numpy == 0, axis=(2,3))]
+            if nonzero_channels.size > 0:
+                scale = np.mean(np.abs(nonzero_channels / x_np[~np.all(hetu_out_numpy == 0, axis=(2,3))]))
+                self.assertTrue(abs(scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
 
 class TestOtherOps(unittest.TestCase):
 

@@ -88,7 +88,7 @@ class RMSNormOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     std::vector<NDArrayMeta> out_metas = {};
     Tensor x0 = input_indexs(0) >= 0 ? inputs.at(input_indexs(0)) : Tensor();
     Tensor residual_ = input_indexs(1) >= 0 ? inputs.at(input_indexs(1)) : Tensor();
@@ -145,10 +145,12 @@ class RMSNormOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -248,7 +250,7 @@ class RMSNormGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     std::vector<NDArrayMeta> out_metas = {};
     Tensor dz = input_indexs(0) >= 0 ? inputs.at(input_indexs(0)) : Tensor();
     Tensor dx_ = input_indexs(1) >= 0 ? inputs.at(input_indexs(1)) : Tensor();
@@ -297,10 +299,12 @@ class RMSNormGradientOpImpl final : public OpInterface {
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   float _dropout_p;
   float _rowscale_const;
@@ -361,7 +365,7 @@ class FusedRMSNormOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     size_t dim = normalized_shape().size();
     HTShape output_shape = inputs[0]->shape();
@@ -379,10 +383,12 @@ protected:
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -440,15 +446,17 @@ class FusedRMSNormGradientOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[0]->meta(), inputs[2]->meta()};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;

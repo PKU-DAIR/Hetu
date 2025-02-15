@@ -28,12 +28,11 @@ TensorList ArrayReshapeOpImpl::DoGradient(Operator& op,
     if (!op->input(0)->symbolic()) {
       op->input(0)->init_symbolic_shape(); // leaf
     }
-    return {op->requires_grad(0) ? MakeArrayReshapeGradientOp(grad_outputs.at(0), op->input(0), op->input(0)->symbolic_shape(),
+    return {op->requires_grad(0) ? MakeArrayReshapeGradientOp(grad_outputs.at(0),
                                                             op->grad_op_meta().set_name(op->grad_name()))
                                  : Tensor()};
-  }
-  else {
-    return {op->requires_grad(0) ? MakeArrayReshapeGradientOp(grad_outputs.at(0), op->input(0), op->input(0)->shape(),
+  } else {
+    return {op->requires_grad(0) ? MakeArrayReshapeGradientOp(grad_outputs.at(0),
                                                               op->grad_op_meta().set_name(op->grad_name()))
                                  : Tensor()};
   }
@@ -86,6 +85,12 @@ HTShapeList ArrayReshapeOpImpl::DoInferShape(Operator& op,
   return {output_shape};
 }
 
+void ArrayReshapeOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("hetero_dim", inputs.at(0)->cur_ds_union().hetero_dim());
+}
+
 // deprecated: only used in gpt inference, before symbolic shape is realized
 HTShapeList ArrayReshapeOpImpl::DoInferDynamicShape(Operator& op, 
                                                     const HTShapeList& input_shapes, 
@@ -116,7 +121,8 @@ HTShapeList ArrayReshapeOpImpl::DoInferDynamicShape(Operator& op,
 }
 
 void ArrayReshapeOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                        const OpMeta& op_meta) const {
+                                        const OpMeta& op_meta,
+                                        const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ArrayReshapeOpDef: distributed states for input must be valid!";
@@ -126,7 +132,8 @@ void ArrayReshapeOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& ou
 }
 
 void ArrayReshapeOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                           TensorList& outputs, const OpMeta& op_meta) const {
+                                           TensorList& outputs, const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 
@@ -139,17 +146,25 @@ NDArrayList ArrayReshapeGradientOpImpl::DoCompute(Operator& op,
 
 HTShapeList
 ArrayReshapeGradientOpImpl::DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const {
-  return {input_shapes.at(1)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void ArrayReshapeGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<int32_t>(src_ctx, "hetero_dim");
 }
 
 void ArrayReshapeGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());    
+                                                const OpMeta& op_meta,
+                                                const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inst_ctx.get<DistributedStates>("in_dstate"));    
 }
 
 void ArrayReshapeGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                                   TensorList& outputs, const OpMeta& op_meta) const {
-  outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
+                                                   TensorList& outputs, const OpMeta& op_meta,
+                                                   const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->cur_ds_union().set_hetero_dim(inst_ctx.get<int32_t>("hetero_dim"));
 }
 
 // fixed shape
@@ -183,21 +198,10 @@ Tensor MakeArrayReshapeOp(Tensor input, const HTShape& output_shape,
       std::move(op_meta))->output(0);
 }
 
-// fixed shape
-Tensor MakeArrayReshapeGradientOp(Tensor grad_output, Tensor ori_input, const HTShape& in_shape,
-                                  OpMeta op_meta) {
+Tensor MakeArrayReshapeGradientOp(Tensor grad_output, OpMeta op_meta) {
   return Graph::MakeOp(
-      std::make_shared<ArrayReshapeGradientOpImpl>(in_shape),
-      {std::move(grad_output), std::move(ori_input)},
-      std::move(op_meta))->output(0);
-}
-
-// symbolic shape
-Tensor MakeArrayReshapeGradientOp(Tensor grad_output, Tensor ori_input, const SyShape& in_shape,
-                                  OpMeta op_meta) {
-  return Graph::MakeOp(
-      std::make_shared<ArrayReshapeGradientOpImpl>(in_shape),
-      {std::move(grad_output), std::move(ori_input)},
+      std::make_shared<ArrayReshapeGradientOpImpl>(),
+      {std::move(grad_output)},
       std::move(op_meta))->output(0);
 }
 

@@ -56,7 +56,8 @@ TensorList DeQuantizationOpImpl::DoGradient(Operator& op, const TensorList& grad
 }
 
 void DeQuantizationOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 

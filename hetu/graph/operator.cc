@@ -11,7 +11,7 @@ namespace hetu {
 namespace graph {
 
 void OpInterface::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                 const OpMeta& op_meta) const {
+                                 const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   // default: distributed states of output tensor directly copy from input tensor
   // check input states is valid & check distributed states of all input tensor are the same.
   HT_ASSERT(inputs.size() > 0) << op_meta.name << ": distributed states should be manually set when in_degree=0!";
@@ -36,7 +36,8 @@ void OpInterface::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void OpInterface::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                    TensorList& outputs, const OpMeta& op_meta) const {
+                                    TensorList& outputs, const OpMeta& op_meta,
+                                    const InstantiationContext& inst_ctx) const {
   HT_ASSERT(inputs_hetero_dim.size() > 0) 
     << op_meta.name << ": distributed states hetero dim should be manually set when in_degree is 0";
   HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << " " << op_meta.name << ": default copy states hetero dim from inputs";
@@ -55,7 +56,8 @@ void OpInterface::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_di
 }
 
 void OpInterface::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta, Graph& graph) const {
+                                          const OpMeta& op_meta, const InstantiationContext& inst_ctx,
+                                          Graph& graph) const {
   int32_t hetero_size = 1;
   std::vector<int32_t> inputs_hetero_dim;
   for (const auto& input : inputs) {
@@ -94,7 +96,7 @@ void OpInterface::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& 
   // 创建所有outputs的ds union并确定hetero dim
   graph.CREATE_STRATEGY = true;
   // HT_LOG_WARN << "DeduceHeterProp for " << op_meta.name;
-  DeduceHeterProp(inputs_hetero_dim, outputs, op_meta);
+  DeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
   graph.CREATE_STRATEGY = false;
   // 依据是否为hetero
   // 创建所有outputs的ds union中的ds
@@ -114,7 +116,7 @@ void OpInterface::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& 
   graph.USE_HETERO_ID = true;
   for (size_t cur_hetero_id = 0; cur_hetero_id < hetero_size; cur_hetero_id++) {
     graph.CUR_HETERO_ID = cur_hetero_id;
-    DeduceStates(inputs, outputs, op_meta);
+    DeduceStates(inputs, outputs, op_meta, inst_ctx);
   }
   /*
   for (auto& output : outputs) {
@@ -194,6 +196,22 @@ bool OpInterface::DoInstantiate(Operator& op, const Device& placement,
   return true;
 }
 
+void OpInterface::LoadAndSaveCtxForBackward(Operator& op, RuntimeContext& runtime_ctx) const {
+  if (op->op_meta().fw_op_id == -1) {
+    SaveCtxForBackward(op->inputs(), runtime_ctx.get_or_create(op->id()));
+  } else {
+    LoadCtxForBackward(runtime_ctx.get_or_create(op->op_meta().fw_op_id),
+                       runtime_ctx.get_or_create(op->id()));
+  }
+}
+
+HTShapeList OpInterface::InferShape(Operator& op,
+                                    const HTShapeList& shapes,
+                                    RuntimeContext& runtime_ctx) const {
+  LoadAndSaveCtxForBackward(op, runtime_ctx);
+  return DoInferShape(op, shapes, runtime_ctx);
+}
+
 HTShapeList OpInterface::DoInferShape(Operator& op,
                                       const HTShapeList& input_shapes,
                                       RuntimeContext& runtime_ctx) const {
@@ -219,7 +237,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
       for (auto& input : inputs) {
         input_shapes.push_back(input->shape());
       }
-      auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+      auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
       for (size_t i = 0; i < output_size; i++) {
         outputs.push_back(NDArray::empty(output_shapes[i],
                           op->instantiation_ctx().placement,
@@ -283,7 +301,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
       for (auto& input : inputs) {
         input_shapes.push_back(input->shape());
       }
-      auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+      auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
       for (size_t i = 0; i < output_size; i++) {
         outputs.push_back(NDArray::empty(output_shapes[i],
                           device,
@@ -337,7 +355,7 @@ NDArray OpInterface::DoAllocOutput(Operator& op, const NDArrayList& inputs,
     for (auto& input : inputs) {
       input_shapes.push_back(input->shape());
     }
-    auto output_shapes = DoInferShape(op, input_shapes, runtime_ctx);
+    auto output_shapes = InferShape(op, input_shapes, runtime_ctx);
     return NDArray::empty(output_shapes[idx],
                           op->instantiation_ctx().placement,
                           op->output(idx)->dtype(),
@@ -417,7 +435,11 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
                   [](const Tensor& tensor) { return tensor->requires_grad(); });
   }
   // Outputs of this op
-  auto output_meta_list = _body->InferMeta(_inputs);
+  if (_op_meta.fw_op_id != -1) {
+    auto& src_ctx = graph.GetOp(_op_meta.fw_op_id)->instantiation_ctx().ctx;
+    _body->LoadCtxForBackward(src_ctx, instantiation_ctx().ctx);
+  }
+  auto output_meta_list = _body->InferMeta(_inputs, instantiation_ctx().ctx);
   if (output_meta_list.size() == 1) {
     auto& output_meta = output_meta_list.front();
     HT_ASSERT(output_meta.dtype != kUndeterminedDataType)
@@ -460,7 +482,7 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
       // if ds of all inputs are none, then do not deduce states; 
       // if ds of partial inputs are none, return error
       if (!exist_none_ds) {
-        _body->DeduceStatesHierarchy(_inputs, _outputs, _op_meta, graph);
+        _body->DeduceStatesHierarchy(_inputs, _outputs, _op_meta, instantiation_ctx().ctx, graph);
       } else if (exist_ds) {
         HT_RUNTIME_ERROR << "Only part of " << name() << " inputs has distributed states!";
       }
@@ -478,6 +500,9 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
     } else {
       HT_RUNTIME_ERROR << "deduce states do not support this graph type: " << graph.type();
     }
+  }
+  if (_op_meta.fw_op_id == -1) {
+    _body->SaveCtxForBackward(_inputs, instantiation_ctx().ctx);
   }
 }
 

@@ -15,7 +15,7 @@ void GatherOpImpl::DoCompute(Operator& op,
 
 TensorList GatherOpImpl::DoGradient(Operator& op,
                                     const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeGatherGradientOp(grad_outputs.at(0), get_dim(), op->input(1), op->input(0),
+  auto grad_input = op->requires_grad(0) ? MakeGatherGradientOp(grad_outputs.at(0), get_dim(), op->input(1),
                                           op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
   return {grad_input, Tensor()};
@@ -34,8 +34,14 @@ GatherOpImpl::DoInferShape(Operator& op,
   return {input_shapes.at(1)};
 }
 
+void GatherOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+}
+
 void GatherOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_id.is_valid()) 
@@ -60,12 +66,19 @@ HTShapeList
 GatherGradientOpImpl::DoInferShape(Operator& op,
                                    const HTShapeList& input_shapes,
                                    RuntimeContext& ctx) const {
-  return {input_shapes.at(2)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void GatherGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
 }
 
 void GatherGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                          const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(2)->get_distributed_states());
+                                          const OpMeta& op_meta,
+                                          const InstantiationContext& inst_ctx) const {
+  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
+  outputs.at(0)->set_distributed_states(ds_input);
 }
 
 Tensor MakeGatherOp(Tensor input, int64_t dim, Tensor id, OpMeta op_meta) {
@@ -75,11 +88,10 @@ Tensor MakeGatherOp(Tensor input, int64_t dim, Tensor id, OpMeta op_meta) {
           std::move(op_meta))->output(0);
 }
 
-Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id, Tensor input,
-                            OpMeta op_meta) {
+Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id, OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<GatherGradientOpImpl>(dim),
-          {std::move(grad_output), std::move(id), std::move(input)},
+          {std::move(grad_output), std::move(id)},
           std::move(op_meta))->output(0);
 }
 

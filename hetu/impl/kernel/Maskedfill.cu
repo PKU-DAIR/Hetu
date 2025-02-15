@@ -20,10 +20,12 @@ void MaskedfillCuda(const NDArray& input, const NDArray& mask,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "MaskfillCuda", [&]() {
-      launch_loop_kernel<spec_t, int64_t, spec_t>(input, mask, output, size, stream,
-                                                  [val] __device__ (spec_t in, int64_t mask_) -> spec_t {
-                                                    return bool(mask_) ? static_cast<spec_t>(val) : in;
-                                                 });
+      using InType = std::tuple<spec_t, int64_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, mask}, {output}, size, stream,
+                                         [val] __device__ (spec_t in, int64_t mask_) -> spec_t {
+                                           return bool(mask_) ? static_cast<spec_t>(val) : in;
+                                         });
   });
   NDArray::MarkUsedBy({input, mask, output}, stream);
 }

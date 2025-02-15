@@ -51,16 +51,17 @@ class StridedOffsetCalculator : public OffsetCalculator {
 
   __host__ __device__ inline size_t get(size_t linear_idx) const override {
     size_t offset = 0;
-    for (int i = _dims - 1; i >= 0; i--) {
+    #pragma unroll
+    for (int i = _dims - 1; i >= 1; i--) {
       int64_t shape_i = _shape[i];
       auto div_idx = linear_idx / shape_i;
       auto mod_idx = linear_idx - div_idx * shape_i;
       offset += mod_idx * _stride[i];
       linear_idx = div_idx;
     }
-    return offset;
+    return offset + linear_idx * _stride[0];
   }
- 
+
  protected:
   int _dims;
   int64_t _shape[HT_MAX_NDIM];

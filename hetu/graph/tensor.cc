@@ -130,7 +130,10 @@ bool TensorDef::has_cur_ds_union() {
       << "ExecutableGraph only has at most one single strategy"
       << ", but found " << name() << " has " << _ds_hierarchy.size() << " strategy";
     return _ds_hierarchy.size() == 1;
-  } 
+  } else if (graph().type() == GraphType::EAGER) {
+    // workaround for unit test
+    return true;
+  }
   return cur_strategy_id() < _ds_hierarchy.size();
 }
 
@@ -259,6 +262,10 @@ DistributedStates& TensorDef::inferred_cur_ds() {
     else {
       return ds_union.get(inferred_local_placement_group_idx());
     }
+  }
+  else if (graph().type() == GraphType::EAGER) {
+    // workaround for unit tests
+    return _dummy_ds;
   }
   // 其他graph类型暂不支持
   else {

@@ -44,10 +44,15 @@ HTShapeList BroadcastOpImpl::DoInferShape(Operator& op,
   return outputlist;
 }
 
+void BroadcastOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+}
+
 void BroadcastOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   HT_LOG_INFO << op_meta.name << ": warning: deduce states for broadcast op was not checked! please use carefully!";
-  OpInterface::DoDeduceStates(inputs, outputs, op_meta);
+  OpInterface::DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
 }
 
 void BroadcastGradientOpImpl::DoCompute(Operator& op,
@@ -58,18 +63,22 @@ void BroadcastGradientOpImpl::DoCompute(Operator& op,
                op->instantiation_ctx().stream_index, outputs.at(0));
 }
 
-
 HTShapeList
 BroadcastGradientOpImpl::DoInferShape(Operator& op,
                                       const HTShapeList& input_shapes,
                                       RuntimeContext& ctx) const {
-  return {input_shapes.at(1)};
+  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+}
+
+void BroadcastGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
 }
 
 void BroadcastGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   HT_LOG_INFO << op_meta.name << ": warning: deduce states for broadcast gradient op was not checked! please use carefully!";
-  OpInterface::DoDeduceStates(inputs, outputs, op_meta);
+  OpInterface::DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
 }
 
 Tensor MakeBroadcastOp(Tensor input, Tensor output, OpMeta op_meta) {
@@ -146,7 +155,7 @@ Tensor MakeBroadcastGradientOp(Tensor input, Tensor ori_input,
   }
   return Graph::MakeOp(
           std::make_shared<BroadcastGradientOpImpl>(add_axes, keep_dims),
-          {std::move(input), std::move(ori_input), std::move(ori_output)},
+          {std::move(input)},
           std::move(op_meta))->output(0);
 }
 

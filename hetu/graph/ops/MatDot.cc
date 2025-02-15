@@ -33,7 +33,8 @@ HTShapeList MatDotOpImpl::DoInferShape(Operator& op,
 }
 
 void MatDotOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_a = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_b = inputs.at(1)->get_distributed_states();
   HT_ASSERT(ds_a.is_valid() && ds_b.is_valid() && 

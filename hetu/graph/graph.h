@@ -1073,32 +1073,6 @@ inline OpRefList Graph::TopoSort(const OpRefList& ops, int32_t num_ops_hint,
         }
       }
     }
-    /*
-    // Question: is it necessary?
-    // ensure update ops are executed later
-    if (is_optimizer_update_op(ret[i])) {
-      if (visited.find(ret[i].get()->id()) != visited.end())
-        continue;
-      visited.insert(ret[i].get()->id());
-      TensorId updated_var_id = ret[i].get()->input(0)->id();
-      for (size_t j = ret.size() - 1; j > i; j--) {
-        if (is_optimizer_update_op(ret[j]))
-          continue;
-        bool non_conflicting = Operator::all_input_tensors_of(
-          ret[j].get(),
-          [&](const Tensor& tensor) { return tensor->id() != updated_var_id; });
-        if (non_conflicting)
-          continue;
-        // insert ret[i] after ret[j]
-        auto& update_op_ref = ret[i];
-        for (size_t k = i; k < j; k++)
-          ret[k] = ret[k + 1];
-        ret[j] = update_op_ref;
-        i--;
-        break;
-      }
-    }
-    */
   }
 
   return ret;

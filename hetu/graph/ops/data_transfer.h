@@ -17,7 +17,7 @@ class DataH2DOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {NDArrayMeta().set(inputs.front()->meta()).set_device(device())};
   }
 
@@ -67,7 +67,7 @@ class DataD2HOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {NDArrayMeta().set(inputs.front()->meta()).set_device(device())};
   }
 
@@ -119,7 +119,7 @@ class DataTransferOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta out_meta = inputs.front()->meta();
     out_meta.set_dtype(_dtype);
     if (_dev != kUndeterminedDevice)

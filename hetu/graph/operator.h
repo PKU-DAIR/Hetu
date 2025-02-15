@@ -82,6 +82,11 @@ class OpMeta {
     return *this;
   }
 
+  inline OpMeta& set_fw_op_id(OpId id) {
+    fw_op_id = id;
+    return *this;
+  }
+
   inline OpMeta& set_multi_recompute(const std::vector<std::vector<bool>>& multi_recompute) {
     multi_is_recompute = multi_recompute;
     return *this;
@@ -110,10 +115,32 @@ class OpMeta {
     return is_recompute.at(hetero_id); 
   }
 
-  // TODO: support multi-strategies offload
-  inline OpMeta& set_is_cpu_offload(bool cpu_offload) {
-    is_cpu_offload = cpu_offload;
+  inline OpMeta& set_multi_cpu_offload(const std::vector<std::vector<bool>>& multi_cpu_offload) {
+    multi_is_cpu_offload = multi_cpu_offload;
     return *this;
+  }
+
+  bool get_cpu_offload(size_t strategy_id, size_t hetero_id) {
+    std::vector<bool> is_cpu_offload;
+    size_t multi_len = multi_is_cpu_offload.size();
+    HT_ASSERT(multi_len > 0)
+      << name << " multi cpu offload is empty, something wrong";
+    if (multi_is_cpu_offload.size() == 1) {
+      is_cpu_offload = multi_is_cpu_offload.at(0);
+    } else {
+      HT_ASSERT(multi_len > strategy_id)
+        << name << " multi cpu offload size is wrong"
+        << ", can't fetch strategy id " << strategy_id << " within len " << multi_len;
+      is_cpu_offload = multi_is_cpu_offload.at(strategy_id);
+    }
+    size_t hetero_len = is_cpu_offload.size();
+    if (is_cpu_offload.size() == 1) {
+      return is_cpu_offload.at(0);
+    }
+    HT_ASSERT(hetero_len > hetero_id)
+      << name << " hetero cpu offload size is wrong"
+      << ", can't fetch hetero id " << hetero_id << " within len " << hetero_len;
+    return is_cpu_offload.at(hetero_id);
   }
 
   // TODO: support multi-strategies offload
@@ -164,9 +191,9 @@ class OpMeta {
   DeviceGroupHierarchy device_group_hierarchy{}; // for multi ds multi hetero-dp deduce
   TensorList extra_deps;
   OpId origin_op_id{-1}; // for recomputation only
+  OpId fw_op_id{-1};
   std::vector<std::vector<bool>> multi_is_recompute{{false}}; // for multi recomputation strategy multi pipeline
-  // TODO: support multi-strategies offload
-  bool is_cpu_offload{false};
+  std::vector<std::vector<bool>> multi_is_cpu_offload{{false}}; // for multi cpu offload strategy multi pipeline
   bool is_offload{false}; // for offload D2H op only
   bool is_deduce_states{true};  
   bool is_cpu{false};
@@ -176,6 +203,7 @@ class OpMeta {
 std::ostream& operator<<(std::ostream&, const OpMeta&);
 
 using OpRuntimeContext = ContextStore;
+using InstantiationContext = ContextStore;
 
 class RuntimeContext {
  public:
@@ -299,6 +327,7 @@ struct OpInstantiationContext {
   DeviceGroupUnion placement_group_union{};
   Device placement{};
   StreamIndex stream_index;
+  InstantiationContext ctx{};
   std::unique_ptr<Event> start[HT_MAX_NUM_MICRO_BATCHES];
   std::unique_ptr<Event> stop[HT_MAX_NUM_MICRO_BATCHES];
 
@@ -352,17 +381,18 @@ class OpInterface : public shared_ptr_target {
     return false;
   }
 
-  inline std::vector<NDArrayMeta> InferMeta(const TensorList& inputs) const {
-    return DoInferMeta(inputs);
+  inline std::vector<NDArrayMeta> InferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
+    return DoInferMeta(inputs, inst_ctx);
   }
 
   inline void DeduceStates(const TensorList& inputs, TensorList& outputs, 
-                           const OpMeta& op_meta) const {
-    return DoDeduceStates(inputs, outputs, op_meta);
+                           const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
+    return DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
   }
 
   inline void DeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                              TensorList& outputs, const OpMeta& op_meta) const {
+                              TensorList& outputs, const OpMeta& op_meta,
+                              const InstantiationContext& inst_ctx) const {
     bool is_all_homo = true;
     for (const auto& input_hetero_dim : inputs_hetero_dim) {
       if (input_hetero_dim != NULL_HETERO_DIM) {
@@ -376,12 +406,21 @@ class OpInterface : public shared_ptr_target {
       }
       return;
     }
-    return DoDeduceHeterProp(inputs_hetero_dim, outputs, op_meta);
+    return DoDeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
   }
 
   inline void DeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
-                                    const OpMeta& op_meta, Graph& graph) const {
-    DoDeduceStatesHierarchy(inputs, outputs, op_meta, graph);
+                                    const OpMeta& op_meta, const InstantiationContext& inst_ctx,
+                                    Graph& graph) const {
+    DoDeduceStatesHierarchy(inputs, outputs, op_meta, inst_ctx, graph);
+  }
+
+  inline void LoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+    DoLoadCtxForBackward(src_ctx, dst_ctx);
+  }
+
+  inline void SaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+    DoSaveCtxForBackward(inputs, dst_ctx);
   }
 
   inline TensorList Gradient(Operator& op,
@@ -403,10 +442,10 @@ class OpInterface : public shared_ptr_target {
     return DoInstantiate(op, placement, stream_id);
   }
 
-  inline HTShapeList InferShape(Operator& op, const HTShapeList& shapes,
-                                RuntimeContext& runtime_ctx) const {
-    return DoInferShape(op, shapes, runtime_ctx);
-  }
+  void LoadAndSaveCtxForBackward(Operator& op, RuntimeContext& runtime_ctx) const;
+
+  HTShapeList InferShape(Operator& op, const HTShapeList& shapes,
+                         RuntimeContext& runtime_ctx) const;
 
   inline NDArrayList AllocOutputs(Operator& op, const NDArrayList& inputs,
                                   RuntimeContext& runtime_ctx) const {
@@ -425,16 +464,26 @@ class OpInterface : public shared_ptr_target {
 
  protected:
   virtual std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const = 0;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const = 0;
 
   virtual void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                              const OpMeta& op_meta) const;
+                              const OpMeta& op_meta, const InstantiationContext& inst_ctx) const;
 
   virtual void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim, 
-                                 TensorList& outputs, const OpMeta& op_meta) const;
+                                 TensorList& outputs, const OpMeta& op_meta,
+                                 const InstantiationContext& inst_ctx) const;
 
   virtual void DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
-                                       const OpMeta& op_meta, Graph& graph) const;
+                                       const OpMeta& op_meta, const InstantiationContext& inst_ctx,
+                                       Graph& graph) const;
+
+  virtual void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+    return;
+  }
+
+  virtual void DoSaveCtxForBackward(const TensorList& inputs,  ContextStore& dst_ctx) const {
+    return;
+  }
 
   virtual TensorList DoGradient(Operator&, const TensorList&) const {
     HT_RUNTIME_ERROR << "Op with type " << type() << "is not differentiable";
@@ -523,15 +572,19 @@ class OpDef : public shared_ptr_target {
   }
 
   inline void DeduceStates() {
-    return _body->DeduceStates(inputs(), outputs(), op_meta());
+    return _body->DeduceStates(inputs(), outputs(), op_meta(), instantiation_ctx().ctx);
   }
 
   inline void DeduceStatesHierarchy() {
-    return _body->DeduceStatesHierarchy(inputs(), outputs(), op_meta(), graph());
+    return _body->DeduceStatesHierarchy(inputs(), outputs(), op_meta(), instantiation_ctx().ctx, graph());
   }
 
   inline bool Instantiate(const Device& placement, StreamIndex stream_id) {
     return _body->Instantiate(get_self(), placement, stream_id);
+  }
+
+  void LoadAndSaveCtxForBackward(RuntimeContext& runtime_ctx) {
+    _body->LoadAndSaveCtxForBackward(get_self(), runtime_ctx);
   }
 
   HTShapeList InferShape(const HTShapeList& input_shapes,
@@ -689,15 +742,16 @@ class OpDef : public shared_ptr_target {
   OpMeta grad_op_meta() const {
     return OpMeta()
       .set_stream_index(stream_index())
-      .set_device_group_hierarchy(device_group_hierarchy());
+      .set_device_group_hierarchy(device_group_hierarchy())
+      .set_fw_op_id(id());
   }
 
   void set_fw_op_id(OpId id) {
-    _fw_op_id = id;
+    _op_meta.fw_op_id = id;
   }
 
   OpId fw_op_id() const {
-    return _fw_op_id;
+    return _op_meta.fw_op_id;
   }
 
   bool inplace_at(size_t input_position) const {
@@ -860,7 +914,7 @@ class OpDef : public shared_ptr_target {
   }
 
   bool is_bw_op() const {
-    return _fw_op_id != -1;
+    return _op_meta.fw_op_id != -1;
   }
 
  protected:
@@ -881,7 +935,6 @@ class OpDef : public shared_ptr_target {
   TensorList _extra_in_dep_linkers;
   TensorList _extra_out_dep_linkers;
 
-  OpId _fw_op_id{-1}; // only used for bw op
   OpMeta _op_meta;
   OpInstantiationContext _inst_ctx;
 

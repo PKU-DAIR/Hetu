@@ -319,54 +319,57 @@ void launch_broadcast_loop_kernel(const NDArray& inputA, const NDArray& inputB, 
   }
 }
 
-#define BinaryElewiseCudaHelper(inputA, inputB, output, op, stream, name)      \
-  do {                                                                         \
-    HT_ASSERT_CUDA_DEVICE(inputA);                                             \
-    HT_ASSERT_SAME_DEVICE(inputA, output);                                     \
-    HT_ASSERT_SAME_DEVICE(inputB, output);                                     \
-    size_t sizeA = inputA->numel();                                            \
-    size_t sizeB = inputB->numel();                                            \
-    if (output->numel() == 0) {                                                \
-      return;                                                                  \
-    }                                                                          \
-    if (sizeA == sizeB) {                                                      \
-      auto size = sizeA;                                                       \
-      if (inputA->dtype() == inputB->dtype()) {                                \
-        HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                \
-          inputA->dtype(), spec_t, name, [&]() {                               \
-            launch_loop_kernel<spec_t, spec_t, spec_t>(                        \
-                inputA, inputB, output, size, stream,                          \
-                op<spec_t, spec_t>());                                         \
-          });                                                                  \
-        NDArray::MarkUsedBy(                                                   \
-          {inputA, inputB, output}, stream);                                   \
-      } else {                                                                 \
-        HT_NOT_IMPLEMENTED                                                     \
-          << name << " across different data types is not supported yet";      \
-      }                                                                        \
-    } else {                                                                   \
-      size_t num_dims = 0;                                                     \
-      HTShape shapeA, shapeB, out_shape;                                       \
-      HTStride strideA, strideB, out_stride;                                   \
-      merge_broadcast_shape(inputA, inputB, output, num_dims,                  \
-                            shapeA, shapeB, out_shape,                         \
-                            strideA, strideB, out_stride);                     \
-      if (inputA->dtype() == inputB->dtype()) {                                \
-        HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                \
-          inputA->dtype(), spec_t, name, [&]() {                               \
-            launch_broadcast_loop_kernel<spec_t, spec_t, spec_t>(              \
-              inputA, inputB, output, num_dims,                                \
-              shapeA, shapeB, out_shape,                                       \
-              strideA, strideB, out_stride,                                    \
-              stream, op<spec_t, spec_t>());                                   \
-        });                                                                    \
-        NDArray::MarkUsedBy(                                                   \
-          {inputA, inputB, output}, stream);                                   \
-      } else {                                                                 \
-        HT_NOT_IMPLEMENTED                                                     \
-          << name << " across different data types is not supported yet";      \
-      }                                                                        \
-    }                                                                          \
+#define BinaryElewiseCudaHelper(inputA, inputB, output, op, stream, name)                 \
+  do {                                                                                    \
+    HT_ASSERT_CUDA_DEVICE(inputA);                                                        \
+    HT_ASSERT_SAME_DEVICE(inputA, output);                                                \
+    HT_ASSERT_SAME_DEVICE(inputB, output);                                                \
+    size_t sizeA = inputA->numel();                                                       \
+    size_t sizeB = inputB->numel();                                                       \
+    if (output->numel() == 0) {                                                           \
+      return;                                                                             \
+    }                                                                                     \
+    if (sizeA == sizeB) {                                                                 \
+      auto size = sizeA;                                                                  \
+      if (inputA->dtype() == inputB->dtype()) {                                           \
+        HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                           \
+          inputA->dtype(), spec_t, name, [&]() {                                          \
+            using InType = std::tuple<spec_t, spec_t>;                                    \
+            using OutType = thrust::tuple<spec_t>;                                        \
+            launch_loop_kernel<InType, OutType>({inputA, inputB}, {output}, size, stream, \
+                op<spec_t, spec_t>());                                                    \
+          });                                                                             \
+        NDArray::MarkUsedBy(                                                              \
+          {inputA, inputB, output}, stream);                                              \
+      } else {                                                                            \
+        HT_NOT_IMPLEMENTED                                                                \
+          << name << " across different data types is not supported yet";                 \
+      }                                                                                   \
+    } else {                                                                              \
+      size_t num_dims = 0;                                                                \
+      HTShape shapeA, shapeB, out_shape;                                                  \
+      HTStride strideA, strideB, out_stride;                                              \
+      merge_broadcast_shape(inputA, inputB, output, num_dims,                             \
+                            shapeA, shapeB, out_shape,                                    \
+                            strideA, strideB, out_stride);                                \
+      if (inputA->dtype() == inputB->dtype()) {                                           \
+        HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(                                           \
+          inputA->dtype(), spec_t, name, [&]() {                                          \
+            using InType = std::tuple<spec_t, spec_t>;                                    \
+            using OutType = thrust::tuple<spec_t>;                                        \
+            launch_broadcast_loop_kernel<spec_t, spec_t, spec_t>(                         \
+              inputA, inputB, output, num_dims,                                           \
+              shapeA, shapeB, out_shape,                                                  \
+              strideA, strideB, out_stride,                                               \
+              stream, op<spec_t, spec_t>());                                              \
+        });                                                                               \
+        NDArray::MarkUsedBy(                                                              \
+          {inputA, inputB, output}, stream);                                              \
+      } else {                                                                            \
+        HT_NOT_IMPLEMENTED                                                                \
+          << name << " across different data types is not supported yet";                 \
+      }                                                                                   \
+    }                                                                                     \
   } while (0);
 
 void AddElewiseCuda(const NDArray& inputA, const NDArray& inputB,

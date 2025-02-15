@@ -30,7 +30,8 @@ HTShapeList NormOpImpl::DoInferShape(Operator& op, const HTShapeList& input_shap
 }
 
 void NormOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                const OpMeta& op_meta) const {
+                                const OpMeta& op_meta,
+                                const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds.is_valid()) 
     << "NormOpImpl: distributed states for input tensor must be valid!";
@@ -77,7 +78,8 @@ HTShapeList NormGradientOpImpl::DoInferShape(Operator& op, const HTShapeList& in
 }
 
 void NormGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                        const OpMeta& op_meta) const {
+                                        const OpMeta& op_meta,
+                                        const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 

@@ -1,7 +1,7 @@
 #include "hetu/graph/headers.h"
 #include "hetu/graph/profiler.h"
 #include "hetu/graph/subgraph.h"
-#include "hetu/graph/ops/Concatenate.h"
+#include "hetu/graph/ops/Concat.h"
 #include "hetu/graph/ops/ParallelAttention.h"
 #include <queue>
 
@@ -40,7 +40,7 @@ void SubGraph::alloc_concat_memory(Operator& final_concat_op, RuntimeContext& ru
       << "cannot find the runtime allocation of " << cur_op
       << ", it should already generated";
     auto cur_ndarray = runtime_ctx.get_runtime_allocation(cur_op->output(0)->id());
-    auto concat_axis = dynamic_cast<ConcatenateOpImpl&>(cur_op->body()).get_axis();
+    auto concat_axis = dynamic_cast<ConcatOpImpl&>(cur_op->body()).get_axis();
     auto concat_num = cur_op->num_inputs();
     if (concat_axis >= 1) {
       // 无法处理在非第0维存在切分的情况

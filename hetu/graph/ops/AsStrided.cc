@@ -32,7 +32,7 @@ NDArrayList AsStridedOpImpl::DoCompute(Operator& op,
 }
 
 TensorList AsStridedOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
-  auto grad_input = op->requires_grad(0) ? MakeAsStridedGradientOp(grad_outputs.at(0), op->input(0),
+  auto grad_input = op->requires_grad(0) ? MakeAsStridedGradientOp(grad_outputs.at(0),
                                           outshape(), stride(), storage_offset(),
                                           op->grad_op_meta().set_name(op->grad_name()))
                                         : Tensor();
@@ -46,8 +46,15 @@ AsStridedOpImpl::DoInferShape(Operator& op,
   return {outshape()};
 }
 
+void AsStridedOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("storage_offset", storage_offset());
+  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+}
+
 void AsStridedOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "AsStridedOpImpl: distributed states for input must be valid!";
@@ -61,13 +68,14 @@ void AsStridedOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outpu
 void AsStridedGradientOpImpl::DoCompute(Operator& op,
                                         const NDArrayList& inputs, NDArrayList& outputs,
                                         RuntimeContext& ctx) const {
-  auto in_storage_offset = inputs.at(1)->storage_offset();
+  auto in_storage_offset = ctx.get_or_create(op->id()).get<int64_t>("storage_offset");
   auto out_storage_offset = storage_offset();
   auto shared_offset = std::min(in_storage_offset, out_storage_offset);
   auto in_offset = in_storage_offset - shared_offset;
   auto out_offset = out_storage_offset - shared_offset;
-  HTShape in_shape = inputs.at(1)->shape();
-  HTStride in_stride = inputs.at(1)->stride();
+  auto in_meta = ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta");
+  HTShape in_shape = in_meta.shape;
+  HTStride in_stride = in_meta.stride;
 
   HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                hetu::impl::AsStridedGradient, inputs.at(0),
@@ -79,13 +87,14 @@ NDArrayList
 AsStridedGradientOpImpl::DoCompute(Operator& op,
                                    const NDArrayList& inputs,
                                    RuntimeContext& ctx) const {
-  HTShape in_shape = inputs.at(1)->shape();
-  HTStride in_stride = inputs.at(1)->stride();
+  auto in_meta = ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta");
+  HTShape in_shape = in_meta.shape;
+  HTStride in_stride = in_meta.stride;
   HTShape out_shape = outshape();
   HTStride out_stride = stride();
   
   // Allocate grad_input storage
-  auto in_storage_offset = inputs.at(1)->storage_offset();
+  auto in_storage_offset = ctx.get_or_create(op->id()).get<int64_t>("storage_offset");
   auto out_storage_offset = storage_offset();
   auto shared_offset = std::min(in_storage_offset, out_storage_offset);
   auto in_offset = in_storage_offset - shared_offset;
@@ -94,7 +103,7 @@ AsStridedGradientOpImpl::DoCompute(Operator& op,
   auto base_size2 = min_storage_size(out_shape, out_stride, out_offset);
   auto base_size = std::max(base_size1, base_size2);
   NDArray grad_input = NDArray::zeros({base_size}, op->instantiation_ctx().placement,
-                                      op->input(1)->dtype(), op->instantiation_ctx().stream_index);
+                                      op->input(0)->dtype(), op->instantiation_ctx().stream_index);
   NDArrayList outputs = {grad_input};
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
@@ -104,12 +113,20 @@ HTShapeList
 AsStridedGradientOpImpl::DoInferShape(Operator& op, 
                                       const HTShapeList& input_shapes,
                                       RuntimeContext& ctx) const {
-  return {input_shapes[1]};
+  auto meta = ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta");
+  return {meta.shape};
+}
+
+void AsStridedGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<int64_t>(src_ctx, "storage_offset");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
 }
 
 void AsStridedGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
-  outputs.at(0)->set_distributed_states(inputs.at(1)->get_distributed_states());
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inst_ctx.get<DistributedStates>("in_dstate"));
 }
 
 Tensor MakeAsStridedOp(Tensor input, const HTShape& outshape, const HTStride& stride,
@@ -120,11 +137,11 @@ Tensor MakeAsStridedOp(Tensor input, const HTShape& outshape, const HTStride& st
            std::move(op_meta))->output(0);
 }
 
-Tensor MakeAsStridedGradientOp(Tensor grad_output, Tensor input, const HTShape& outshape,
+Tensor MakeAsStridedGradientOp(Tensor grad_output, const HTShape& outshape,
                                const HTStride& stride, int64_t storage_offset, OpMeta op_meta) {
   return Graph::MakeOp(
            std::make_shared<AsStridedGradientOpImpl>(outshape, stride, storage_offset),
-           {std::move(grad_output), std::move(input)},
+           {std::move(grad_output)},
            std::move(op_meta))->output(0);
 }
 

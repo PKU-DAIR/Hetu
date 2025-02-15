@@ -9,6 +9,14 @@ namespace impl {
 template<typename spec_t, int vec_size>
 struct alignas(sizeof(spec_t) * vec_size) aligned_vector {
   spec_t val[vec_size];
+
+  __host__ __device__ spec_t& operator[](int idx) {
+    return val[idx];
+  }
+
+  __host__ __device__ const spec_t& operator[](int idx) const {
+    return val[idx];
+  }
 };
 
 inline size_t numel(const HTShape& shape) {
@@ -79,6 +87,26 @@ template <class F, class Tuple>
 __host__ __device__ constexpr decltype(auto) apply(F&& f, Tuple&& t) {
   return apply_impl(
       std::forward<F>(f),
+      std::forward<Tuple>(t),
+      std::make_index_sequence<
+          std::tuple_size<std::remove_reference_t<Tuple>>::value>{});
+}
+
+template <class F, class Tuple, std::size_t... INDEX>
+__host__ __device__ constexpr decltype(auto) apply_with_idx_impl(
+    F&& f,
+    int idx,
+    Tuple&& t,
+    std::index_sequence<INDEX...>)
+{
+  return std::forward<F>(f)(idx, std::get<INDEX>(std::forward<Tuple>(t))...);
+}
+
+template <class F, class Tuple>
+__host__ __device__ constexpr decltype(auto) apply_with_idx(F&& f, int idx, Tuple&& t) {
+  return apply_with_idx_impl(
+      std::forward<F>(f),
+      idx,
       std::forward<Tuple>(t),
       std::make_index_sequence<
           std::tuple_size<std::remove_reference_t<Tuple>>::value>{});

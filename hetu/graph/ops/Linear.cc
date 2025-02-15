@@ -77,7 +77,8 @@ HTShapeList LinearOpImpl::DoInferShape(Operator& op,
 }
 
 void LinearOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const Tensor& a = inputs.at(0);
   const Tensor& b = inputs.at(1);
   const DistributedStates& ds_a = a->get_distributed_states();
@@ -165,7 +166,8 @@ void LinearOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void LinearOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                     TensorList& outputs, const OpMeta& op_meta) const {
+                                     TensorList& outputs, const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   int32_t hetero_a = inputs_hetero_dim.at(0);
   int32_t hetero_b = inputs_hetero_dim.at(1);  
   if (trans_a() && (hetero_a == 0 || hetero_a == 1)) {
