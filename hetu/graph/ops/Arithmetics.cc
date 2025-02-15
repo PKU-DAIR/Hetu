@@ -449,8 +449,8 @@ HTShapeList AddElewiseGradientOpImpl::DoInferShape(Operator& op,
 void AddElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
   auto dstate_key = std::string("in_dstate_") + std::to_string(index());
-  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key);
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key);
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
 }
 
 void AddElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -492,8 +492,8 @@ HTShapeList SubElewiseGradientOpImpl::DoInferShape(Operator& op,
 void SubElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
   auto dstate_key = std::string("in_dstate_") + std::to_string(index());
-  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key);
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key);
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
 }
 
 void SubElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -525,8 +525,8 @@ HTShapeList MulElewiseGradientOpImpl::DoInferShape(Operator& op,
 void MulElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
   auto dstate_key = std::string("in_dstate_") + std::to_string(index());
-  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key);
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key);
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
+  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
 }
 
 void MulElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

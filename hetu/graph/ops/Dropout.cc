@@ -12,7 +12,7 @@ void DropoutOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   uint64_t seed = hetu::impl::GenNextRandomSeed();
   // record seed for recomputed dropout in original op
   if (op->op_meta().get_recompute(op->graph().COMPUTE_STRATEGY_ID, op->suggested_hetero_id())) {
-    ctx.get_or_create(op->id()).put<uint64_t>("seed", seed);
+    ctx.get_or_create(op->id()).put("seed", seed);
   }
   // get seed for recomputed dropout in recompute op
   if (op->op_meta().origin_op_id != -1) {

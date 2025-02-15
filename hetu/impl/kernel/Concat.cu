@@ -8,7 +8,37 @@
 namespace hetu {
 namespace impl {
 
-constexpr int CONCAT_BATCH_SIZE = 64;
+constexpr int CONCAT_BATCH_SIZE = 32;
+constexpr int MAX_CONCAT_NDIM = 4;
+
+struct ConcatSizeStride {
+  uint64_t shape[MAX_CONCAT_NDIM];
+  uint64_t stride[MAX_CONCAT_NDIM];
+};
+
+struct ConcatOffsetCalculator {
+  static inline __device__ uint64_t compute(
+      const uint64_t tensor_size[MAX_CONCAT_NDIM],
+      const uint64_t tensor_stride[MAX_CONCAT_NDIM],
+      const uint64_t dim_size,
+      const unsigned int concat_dim,
+      const unsigned int dim,
+      uint64_t linear_index) {
+    uint64_t offset = 0;
+
+    #pragma unroll
+    for (int i = dim - 1; i >= 1; --i) {
+      uint64_t cur_dim_size = i == concat_dim ? dim_size : tensor_size[i];
+      uint64_t next_dim_index = linear_index / cur_dim_size;
+      uint64_t cur_dim_index = linear_index - cur_dim_size * next_dim_index;
+      uint64_t cur_dim_offset = cur_dim_index * tensor_stride[i];
+      offset += cur_dim_offset;
+      linear_index = next_dim_index;
+    }
+
+    return offset + linear_index * tensor_stride[0];
+  }
+};
 
 template <typename spec_t, int batch_size>
 struct ConcatInputMeta {
@@ -19,11 +49,31 @@ struct ConcatInputMeta {
 };
 
 template <typename spec_t, int batch_size>
+struct ConcatInputMetaWithOffsetCalculator {
+  const spec_t* input[batch_size];
+  uint64_t offset[batch_size];
+  uint64_t dim_size[batch_size];
+  uint64_t numel[batch_size];
+  bool is_contiguous[batch_size];
+  ConcatSizeStride size_stride[batch_size];
+};
+
+template <typename spec_t, int batch_size>
 struct ConcatGradientInputMeta {
   spec_t* grad_input[batch_size];
   uint64_t offset[batch_size];
   uint64_t dim_size[batch_size];
   uint64_t numel[batch_size];
+};
+
+template <typename spec_t, int batch_size>
+struct ConcatGradientInputMetaWithOffsetCalculator {
+  spec_t* grad_input[batch_size];
+  uint64_t offset[batch_size];
+  uint64_t dim_size[batch_size];
+  uint64_t numel[batch_size];
+  bool is_contiguous[batch_size];
+  ConcatSizeStride size_stride[batch_size];
 };
 
 template <typename spec_t>
@@ -48,13 +98,13 @@ inline std::tuple<dim3, dim3> get_grid_config(
 }
 
 template <typename spec_t, int batch_size>
-__global__ void concat_batched_copy(
+__global__ void concat_batched_copy_contig(
   spec_t* __restrict__ output,
   const ConcatInputMeta<spec_t, batch_size> inputs,
+  const ConcatSizeStride output_size_stride,
   const int concat_dim,
-  const uint64_t dim_stride,
-  OffsetCalculator** __restrict__ input_offset_calculators,
-  const OffsetCalculator* __restrict__ output_offset_calculator) {
+  const int ndim,
+  const uint64_t dim_stride) {
 
   const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
   const uint64_t numel = inputs.numel[blockIdx.y];
@@ -65,25 +115,69 @@ __global__ void concat_batched_copy(
   const uint64_t data_offset = inputs.offset[blockIdx.y] * dim_stride;
   const uint64_t base_stride = blockDim.x * gridDim.x * 4;
 
-  const auto* __restrict__ in_calculator = input_offset_calculators[blockIdx.y];
-  const auto* __restrict__ out_calculator = output_offset_calculator;
-
   #pragma unroll 4
   for (int i = 0; i < 4; ++i) {
     const uint64_t tid = base_tid + i * blockDim.x;
     if (tid >= numel) continue;
-    
-    output[data_offset + out_calculator->get(tid, inputs.dim_size[blockIdx.y], concat_dim)] =
-      data[in_calculator->get(tid)];
+
+    uint64_t element_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+    output[data_offset + element_offset] = data[tid];
   }
 
   for (uint64_t tid = base_tid + base_stride; 
        tid < numel; 
        tid += base_stride) {
-    const uint64_t in_offset = in_calculator->get(tid);
-    const uint64_t element_offset = out_calculator->get(
-      tid, inputs.dim_size[blockIdx.y], concat_dim);
-    output[data_offset + element_offset] = data[in_offset];
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+    output[data_offset + element_offset] = data[tid];
+  }
+}
+
+template <typename spec_t, int batch_size>
+__global__ void concat_batched_copy(
+  spec_t* __restrict__ output,
+  const ConcatInputMetaWithOffsetCalculator<spec_t, batch_size> inputs,
+  const ConcatSizeStride output_size_stride,
+  const int concat_dim,
+  const int ndim,
+  const uint64_t dim_stride) {
+
+  const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
+  const uint64_t numel = inputs.numel[blockIdx.y];
+  const bool is_contig = inputs.is_contiguous[blockIdx.y];
+  
+  if (base_tid >= numel) return;
+
+  const spec_t* __restrict__ data = inputs.input[blockIdx.y];
+  const uint64_t data_offset = inputs.offset[blockIdx.y] * dim_stride;
+  const uint64_t base_stride = blockDim.x * gridDim.x * 4;
+
+  ConcatSizeStride in_size_stride = inputs.size_stride[blockIdx.y];
+
+  #pragma unroll 4
+  for (int i = 0; i < 4; ++i) {
+    const uint64_t tid = base_tid + i * blockDim.x;
+    if (tid >= numel) continue;
+
+    uint64_t element_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+
+    if (is_contig) {
+      output[data_offset + element_offset] = data[tid];
+    } else {
+      const uint64_t in_offset = ConcatOffsetCalculator::compute(in_size_stride.shape, in_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+      output[data_offset + element_offset] = data[in_offset];
+    }
+  }
+
+  for (uint64_t tid = base_tid + base_stride; 
+       tid < numel; 
+       tid += base_stride) {
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+    if (is_contig) {
+      output[data_offset + element_offset] = data[tid];
+    } else {
+      const uint64_t in_offset = ConcatOffsetCalculator::compute(in_size_stride.shape, in_size_stride.stride, inputs.dim_size[blockIdx.y], concat_dim, ndim, tid);
+      output[data_offset + element_offset] = data[in_offset];
+    }
   }
 }
 
@@ -91,10 +185,10 @@ template <typename spec_t, int batch_size, int vec_size>
 __global__ void concat_batched_copy_vectorized(
   spec_t* output,
   ConcatInputMeta<spec_t, batch_size> inputs,
+  const ConcatSizeStride output_size_stride,
   const int concat_dim,
-  uint64_t dim_stride,
-  OffsetCalculator** input_offset_calculators,
-  const OffsetCalculator* output_offset_calculator) {
+  const int ndim,
+  const uint64_t dim_stride) {
 
   const int bid = blockIdx.y;
   const spec_t* data = inputs.input[bid];
@@ -105,16 +199,13 @@ __global__ void concat_batched_copy_vectorized(
   uint64_t tid = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
   if (tid >= numel) return;
 
-  const auto* in_calculator = input_offset_calculators[bid];
-  const auto* out_calculator = output_offset_calculator;
-
   using vec_t = aligned_vector<spec_t, vec_size>;
   const vec_t* data_vec = reinterpret_cast<const vec_t*>(data);
   vec_t* out_vec = reinterpret_cast<vec_t*>(output + data_offset);
 
   while (tid < numel) {
     const uint64_t valid_count = min(static_cast<uint64_t>(vec_size), numel - tid);
-    const uint64_t base_out_offset = out_calculator->get(tid, dim_size, concat_dim);
+    const uint64_t base_out_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, dim_size, concat_dim, ndim, tid);
 
     if (valid_count == vec_size) {
       const vec_t val = data_vec[tid / vec_size];
@@ -123,7 +214,7 @@ __global__ void concat_batched_copy_vectorized(
       #pragma unroll(vec_size)
       for (int i = 0; i < vec_size; ++i) {
         if (i < valid_count) {
-          const uint64_t element_offset = out_calculator->get(tid + i, dim_size, concat_dim);
+          const uint64_t element_offset = ConcatOffsetCalculator::compute(output_size_stride.shape, output_size_stride.stride, dim_size, concat_dim, ndim, tid + i);
           output[data_offset + element_offset] = data[tid + i];
         }
       }
@@ -135,92 +226,134 @@ __global__ void concat_batched_copy_vectorized(
 template <typename spec_t, int batch_size>
 void parallel_concat(const NDArrayList& inputs, NDArray& output,
                      size_t dim, bool is_contig, const Stream& stream) {
-  ConcatInputMeta<spec_t, batch_size> inputs_meta;
-  uint64_t dim_stride = output->stride(dim);
-  uint64_t max_elements_per_tensor = 0;
+  int ndim = output->ndim();
+  HT_ASSERT(ndim <= MAX_CONCAT_NDIM)
+    << "Currently only support up to 4D concat, but got "
+    << ndim << "D concat";
 
-  int batch_counter = 0;
-  int64_t offset = 0;
-  auto [out_offset_arr, out_offset_calculator] = AllocOffsetCalculator(output, stream, true);
-  for (unsigned i = 0; i < inputs.size(); i += batch_size) {
-    NDArrayList data{};
-    for (batch_counter = 0;
-         batch_counter < batch_size && (i + batch_counter) < inputs.size();
-         ++batch_counter) {
-      int64_t dim_size = 0;
-      if (inputs[i + batch_counter]->numel() > 0) {
-        dim_size = inputs[i + batch_counter]->shape(dim);
+  ConcatSizeStride output_size_stride;
+  for (size_t i = 0; i < output->ndim(); ++i) {
+    output_size_stride.shape[i] = output->shape(i);
+    output_size_stride.stride[i] = output->stride(i);
+  }
+
+  if (is_contig) {
+    ConcatInputMeta<spec_t, batch_size> inputs_meta;
+    uint64_t dim_stride = output->stride(dim);
+    uint64_t max_elements_per_tensor = 0;
+    int batch_counter = 0;
+    int64_t offset = 0;
+
+    for (unsigned i = 0; i < inputs.size(); i += batch_size) {
+      NDArrayList data{};
+      for (batch_counter = 0;
+          batch_counter < batch_size && (i + batch_counter) < inputs.size();
+          ++batch_counter) {
+        int64_t dim_size = 0;
+        if (inputs[i + batch_counter]->numel() > 0) {
+          dim_size = inputs[i + batch_counter]->shape(dim);
+        }
+
+        inputs_meta.input[batch_counter] = inputs[i + batch_counter]->data_ptr<spec_t>();
+        inputs_meta.offset[batch_counter] = offset;
+        inputs_meta.dim_size[batch_counter] = dim_size;
+        inputs_meta.numel[batch_counter] = inputs[i + batch_counter]->numel();
+        data.push_back(inputs[i + batch_counter]);
+        offset += dim_size;
+        max_elements_per_tensor = std::max(
+          max_elements_per_tensor,
+          inputs_meta.numel[batch_counter]);
       }
 
-      inputs_meta.input[batch_counter] = inputs[i + batch_counter]->data_ptr<spec_t>();
-      inputs_meta.offset[batch_counter] = offset;
-      inputs_meta.dim_size[batch_counter] = dim_size;
-      inputs_meta.numel[batch_counter] = inputs[i + batch_counter]->numel();
-      data.push_back(inputs[i + batch_counter]);
-      offset += dim_size;
-      max_elements_per_tensor = std::max(max_elements_per_tensor, inputs_meta.numel[batch_counter]);
-    }
-
-    // Skip if the tensor is empty. Otherwise, the grid dim is invalid
-    if (max_elements_per_tensor == 0)
-      continue;
-    
-    CUDAStream cuda_stream(stream);
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
-    
-    dim3 block, grid;
-    int multiProcessorCount;
-    CudaDeviceGetAttribute(&multiProcessorCount,
-      cudaDevAttrMultiProcessorCount, cuda_stream.device_id());
-    if (is_contig && sizeof(spec_t) > 2) {
-      std::tie(grid, block) = get_grid_config<spec_t>(
-        max_elements_per_tensor, batch_counter, multiProcessorCount);
-    } else {
-      block = dim3(32 * 16);
-      grid = dim3(2LL * multiProcessorCount, (long long) batch_counter);
-    }
-
-    auto [in_offset_arrs, in_offset_ptrs] = AllocOffsetCalculator(data, stream);
-    NDArray in_offset_ptrs_arr = hetu::cuda::to_ptr_ndarray(in_offset_ptrs, cuda_stream.device_id());
-    auto** in_offset_calculators = in_offset_ptrs_arr->data_ptr<OffsetCalculator*>();
-
-    if (is_contig) {
+      // Skip if the tensor is empty. Otherwise, the grid dim is invalid
+      if (max_elements_per_tensor == 0)
+        continue;
+      
+      CUDAStream cuda_stream(stream);
+      hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+      
+      dim3 block, grid;
+      int multiProcessorCount;
+      CudaDeviceGetAttribute(&multiProcessorCount,
+        cudaDevAttrMultiProcessorCount, cuda_stream.device_id());
+      if (sizeof(spec_t) > 2) {
+        std::tie(grid, block) = get_grid_config<spec_t>(
+          max_elements_per_tensor, batch_counter, multiProcessorCount);
+      } else {
+        block = dim3(32 * 16);
+        grid = dim3(2LL * multiProcessorCount, (long long) batch_counter);
+      }
+      
       int vec_size = 4;
       for (int i = 0; i < batch_counter; i++) {
         vec_size = std::min(vec_size, get_vectorize_size(inputs_meta.input[i]));
       }
-      // std::tie(grid, block) = get_grid_config<spec_t>(
-      //   (max_elements_per_tensor + vec_size - 1) / vec_size, batch_counter, multiProcessorCount);
       switch (vec_size) {
         case 4:
           concat_batched_copy_vectorized<spec_t, batch_size, 4><<<grid, block, 0, cuda_stream>>>(
-            output->data_ptr<spec_t>(), inputs_meta, dim, dim_stride,
-            in_offset_calculators, out_offset_calculator);
+            output->data_ptr<spec_t>(), inputs_meta, output_size_stride, dim, ndim, dim_stride);
           break;
         case 2:
           concat_batched_copy_vectorized<spec_t, batch_size, 2><<<grid, block, 0, cuda_stream>>>(
-            output->data_ptr<spec_t>(), inputs_meta, dim, dim_stride,
-            in_offset_calculators, out_offset_calculator);
+            output->data_ptr<spec_t>(), inputs_meta, output_size_stride, dim, ndim, dim_stride);
           break;
         case 1:
-          concat_batched_copy<spec_t, batch_size><<<grid, block, 0, cuda_stream>>>(
-            output->data_ptr<spec_t>(), inputs_meta, dim, dim_stride,
-            in_offset_calculators, out_offset_calculator);
+          concat_batched_copy_contig<spec_t, batch_size><<<grid, block, 0, cuda_stream>>>(
+            output->data_ptr<spec_t>(), inputs_meta, output_size_stride, dim, ndim, dim_stride);
           break;
         default:
           HT_RUNTIME_ERROR << "Unexpected vectorization size";
           __builtin_unreachable();
       }
-    } else {
-      concat_batched_copy<spec_t, batch_size><<<grid, block, 0, cuda_stream>>>(
-        output->data_ptr<spec_t>(), inputs_meta, dim, dim_stride,
-        in_offset_calculators, out_offset_calculator);
     }
+  } else {
+    ConcatInputMetaWithOffsetCalculator<spec_t, batch_size> inputs_meta;
+    uint64_t dim_stride = output->stride(dim);
+    uint64_t max_elements_per_tensor = 0;
+    int batch_counter = 0;
+    int64_t offset = 0;
+    for (unsigned i = 0; i < inputs.size(); i += batch_size) {
+      NDArrayList data{};
+      for (batch_counter = 0;
+          batch_counter < batch_size && (i + batch_counter) < inputs.size();
+          ++batch_counter) {
+        int64_t dim_size = 0;
+        if (inputs[i + batch_counter]->numel() > 0) {
+          dim_size = inputs[i + batch_counter]->shape(dim);
+        }
 
-    in_offset_arrs.push_back(in_offset_ptrs_arr);
-    NDArray::MarkUsedBy(in_offset_arrs, stream);
+        inputs_meta.input[batch_counter] = inputs[i + batch_counter]->data_ptr<spec_t>();
+        inputs_meta.offset[batch_counter] = offset;
+        inputs_meta.dim_size[batch_counter] = dim_size;
+        inputs_meta.numel[batch_counter] = inputs[i + batch_counter]->numel();
+        inputs_meta.is_contiguous[batch_counter] = inputs[i + batch_counter]->is_contiguous();
+        for (size_t j = 0; j < inputs[i + batch_counter]->ndim(); ++j) {
+          inputs_meta.size_stride[batch_counter].shape[j] = inputs[i + batch_counter]->shape(j);
+          inputs_meta.size_stride[batch_counter].stride[j] = inputs[i + batch_counter]->stride(j);
+        }
+        data.push_back(inputs[i + batch_counter]);
+        offset += dim_size;
+        max_elements_per_tensor = std::max(max_elements_per_tensor, inputs_meta.numel[batch_counter]);
+      }
+
+      // Skip if the tensor is empty. Otherwise, the grid dim is invalid
+      if (max_elements_per_tensor == 0)
+        continue;
+      
+      CUDAStream cuda_stream(stream);
+      hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+      
+      dim3 block, grid;
+      int multiProcessorCount;
+      CudaDeviceGetAttribute(&multiProcessorCount,
+        cudaDevAttrMultiProcessorCount, cuda_stream.device_id());
+      block = dim3(32 * 16);
+      grid = dim3(2LL * multiProcessorCount, (long long) batch_counter);
+      
+      concat_batched_copy<spec_t, batch_size><<<grid, block, 0, cuda_stream>>>(
+        output->data_ptr<spec_t>(), inputs_meta, output_size_stride, dim, ndim, dim_stride);
+    }
   }
-  NDArray::MarkUsedBy({out_offset_arr}, stream);
 }
 
 void ConcatCuda(const NDArrayList& inputs, NDArray& output,
@@ -260,7 +393,7 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
           parallel_concat<spec_t, CONCAT_BATCH_SIZE>(
             inputs, output, dim, all_contiguous, stream);
         } else {
-          parallel_concat<spec_t, CONCAT_BATCH_SIZE>(
+          parallel_concat<spec_t, CONCAT_BATCH_SIZE / 2>(
             inputs, output, dim, all_contiguous, stream);
         }
       } else {
@@ -284,13 +417,13 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
 }
 
 template <typename spec_t, int batch_size>
-__global__ void concat_gradient_batched_copy(
+__global__ void concat_gradient_batched_copy_contig(
   const spec_t* output_grad,
   ConcatGradientInputMeta<spec_t, batch_size> grads,
+  const ConcatSizeStride out_grad_size_stride,
   const int concat_dim,
-  uint64_t dim_stride,
-  const OffsetCalculator* out_grad_offset_calculator,
-  OffsetCalculator** in_grad_offset_calculators) {
+  const int ndim,
+  uint64_t dim_stride) {
 
   const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
   const uint64_t numel = grads.numel[blockIdx.y];
@@ -301,24 +434,70 @@ __global__ void concat_gradient_batched_copy(
   const uint64_t data_offset = grads.offset[blockIdx.y] * dim_stride;
   const uint64_t base_stride = blockDim.x * gridDim.x * 4;
 
-  const auto* __restrict__ in_calculator = in_grad_offset_calculators[blockIdx.y];
-  const auto* __restrict__ out_calculator = out_grad_offset_calculator;
+  #pragma unroll 4
+  for (int i = 0; i < 4; ++i) {
+    const uint64_t tid = base_tid + i * blockDim.x;
+    if (tid >= numel) continue;
+    
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(out_grad_size_stride.shape, out_grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+    grad[tid] = output_grad[data_offset + element_offset];
+  }
+
+  for (uint64_t tid = base_tid + base_stride; 
+       tid < numel; 
+       tid += base_stride) {
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(out_grad_size_stride.shape, out_grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+    grad[tid] = output_grad[data_offset + element_offset];
+  }
+}
+
+template <typename spec_t, int batch_size>
+__global__ void concat_gradient_batched_copy(
+  const spec_t* output_grad,
+  ConcatGradientInputMetaWithOffsetCalculator<spec_t, batch_size> grads,
+  const ConcatSizeStride out_grad_size_stride,
+  const int concat_dim,
+  const int ndim,
+  uint64_t dim_stride) {
+
+  const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
+  const uint64_t numel = grads.numel[blockIdx.y];
+  const bool is_contig = grads.is_contiguous[blockIdx.y];
+  
+  if (base_tid >= numel) return;
+
+  spec_t* grad = grads.grad_input[blockIdx.y];
+  const uint64_t data_offset = grads.offset[blockIdx.y] * dim_stride;
+  const uint64_t base_stride = blockDim.x * gridDim.x * 4;
+
+  ConcatSizeStride grad_size_stride = grads.size_stride[blockIdx.y];
 
   #pragma unroll 4
   for (int i = 0; i < 4; ++i) {
     const uint64_t tid = base_tid + i * blockDim.x;
     if (tid >= numel) continue;
     
-    const uint64_t element_offset = out_calculator->get(tid, grads.dim_size[blockIdx.y], concat_dim);
-    grad[in_calculator->get(tid)] = output_grad[data_offset + element_offset];
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(grad_size_stride.shape, grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+
+    if (is_contig) {
+      grad[tid] = output_grad[data_offset + element_offset];
+    } else {
+      const uint64_t in_offset = ConcatOffsetCalculator::compute(grad_size_stride.shape, grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+      grad[in_offset] = output_grad[data_offset + element_offset];
+    }
   }
 
   for (uint64_t tid = base_tid + base_stride; 
        tid < numel; 
        tid += base_stride) {
-    const uint64_t element_offset = out_calculator->get(tid, grads.dim_size[blockIdx.y], concat_dim);
-    const uint64_t in_offset = in_calculator->get(tid);
-    grad[in_offset] = output_grad[data_offset + element_offset];
+    const uint64_t element_offset = ConcatOffsetCalculator::compute(grad_size_stride.shape, grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+
+    if (is_contig) {
+      grad[tid] = output_grad[data_offset + element_offset];
+    } else {
+      const uint64_t in_offset = ConcatOffsetCalculator::compute(grad_size_stride.shape, grad_size_stride.stride, grads.dim_size[blockIdx.y], concat_dim, ndim, tid);
+      grad[in_offset] = output_grad[data_offset + element_offset];
+    }
   }
 }
 
@@ -326,10 +505,10 @@ template <typename spec_t, int batch_size, int vec_size>
 __global__ void concat_gradient_batched_copy_vectorized(
     const spec_t* output_grad,
     ConcatGradientInputMeta<spec_t, batch_size> grads,
+    const ConcatSizeStride out_grad_size_stride,
     const int concat_dim,
-    uint64_t dim_stride,
-    const OffsetCalculator* out_grad_offset_calculator,
-    OffsetCalculator** in_grad_offset_calculators) {
+    const int ndim,
+    uint64_t dim_stride) {
 
   const int bid = blockIdx.y;
   spec_t* grad = grads.grad_input[bid];
@@ -340,27 +519,23 @@ __global__ void concat_gradient_batched_copy_vectorized(
   uint64_t tid = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
   if (tid >= numel) return;
 
-  const auto* in_calculator = in_grad_offset_calculators[bid];
-  const auto* out_calculator = out_grad_offset_calculator;
-
   using vec_t = aligned_vector<spec_t, vec_size>;
   vec_t* grad_vec = reinterpret_cast<vec_t*>(grad);
   const vec_t* out_grad_vec = reinterpret_cast<const vec_t*>(output_grad + data_offset);
 
   while (tid < numel) {
     const uint64_t valid_count = min(static_cast<uint64_t>(vec_size), numel - tid);
-    const uint64_t base_out_offset = out_calculator->get(tid, dim_size, concat_dim);
+    const uint64_t base_out_offset = ConcatOffsetCalculator::compute(out_grad_size_stride.shape, out_grad_size_stride.stride, dim_size, concat_dim, ndim, tid);
 
     if (valid_count == vec_size) {
       const vec_t val = out_grad_vec[base_out_offset / vec_size];
-      grad_vec[in_calculator->get(tid) / vec_size] = val;
+      grad_vec[tid / vec_size] = val;
     } else {
       #pragma unroll(vec_size)
       for (int i = 0; i < vec_size; ++i) {
         if (i < valid_count) {
-          const uint64_t element_offset = out_calculator->get(tid + i, dim_size, concat_dim);
-          const uint64_t in_offset = in_calculator->get(tid + i);
-          grad[in_offset] = output_grad[data_offset + element_offset];
+          const uint64_t element_offset = ConcatOffsetCalculator::compute(out_grad_size_stride.shape, out_grad_size_stride.stride, dim_size, concat_dim, ndim, tid + i);
+          grad[tid + i] = output_grad[data_offset + element_offset];
         }
       }
     }
@@ -376,74 +551,69 @@ void parallel_concat_gradient(
     bool is_contig,
     const Stream& stream) {
   
-  ConcatGradientInputMeta<spec_t, batch_size> grads_meta;
-  uint64_t dim_stride = output_grad->stride(dim);
-  uint64_t max_elements_per_tensor = 0;
-
-  int batch_counter = 0;
-  int64_t offset = 0;
+  int ndim = output_grad->ndim();
+  HT_ASSERT(ndim <= MAX_CONCAT_NDIM)
+    << "Currently only support up to 4D concat, but got "
+    << ndim << "D concat";
   
-  auto [out_grad_offset_arr, out_grad_offset_calculator] = 
-    AllocOffsetCalculator(output_grad, stream, true);
+  ConcatSizeStride out_grad_size_stride;
+  for (size_t i = 0; i < output_grad->ndim(); ++i) {
+    out_grad_size_stride.shape[i] = output_grad->shape(i);
+    out_grad_size_stride.stride[i] = output_grad->stride(i);
+  }
 
-  for (unsigned i = 0; i < input_grads.size(); i += batch_size) {
-    NDArrayList grad_batch{};
-    
-    for (batch_counter = 0;
-         batch_counter < batch_size && (i + batch_counter) < input_grads.size();
-         ++batch_counter) {
-      
-      int64_t dim_size = 0;
-      if (input_grads[i + batch_counter]->numel() > 0) {
-        dim_size = input_grads[i + batch_counter]->shape(dim);
+  if (is_contig) {
+    ConcatGradientInputMeta<spec_t, batch_size> grads_meta;
+    uint64_t dim_stride = output_grad->stride(dim);
+    uint64_t max_elements_per_tensor = 0;
+    int batch_counter = 0;
+    int64_t offset = 0;
+
+    for (unsigned i = 0; i < input_grads.size(); i += batch_size) {
+      NDArrayList grad_batch{};
+      for (batch_counter = 0;
+          batch_counter < batch_size && (i + batch_counter) < input_grads.size();
+          ++batch_counter) {
+        int64_t dim_size = 0;
+        if (input_grads[i + batch_counter]->numel() > 0) {
+          dim_size = input_grads[i + batch_counter]->shape(dim);
+        }
+
+        grads_meta.grad_input[batch_counter] = input_grads[i + batch_counter]->data_ptr<spec_t>();
+        grads_meta.offset[batch_counter] = offset;
+        grads_meta.dim_size[batch_counter] = dim_size;
+        grads_meta.numel[batch_counter] = input_grads[i + batch_counter]->numel();
+        grad_batch.push_back(input_grads[i + batch_counter]);
+        offset += dim_size;
+        max_elements_per_tensor = std::max(
+          max_elements_per_tensor, 
+          grads_meta.numel[batch_counter]);
       }
 
-      grads_meta.grad_input[batch_counter] = input_grads[i + batch_counter]->data_ptr<spec_t>();
-      grads_meta.offset[batch_counter] = offset;
-      grads_meta.dim_size[batch_counter] = dim_size;
-      grads_meta.numel[batch_counter] = input_grads[i + batch_counter]->numel();
-      grad_batch.push_back(input_grads[i + batch_counter]);
-      
-      offset += dim_size;
-      max_elements_per_tensor = std::max(
-        max_elements_per_tensor, 
-        grads_meta.numel[batch_counter]
-      );
-    }
+      if (max_elements_per_tensor == 0) {
+        continue;
+      }
 
-    if (max_elements_per_tensor == 0) {
-      continue;
-    }
+      CUDAStream cuda_stream(stream);
+      hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
 
-    dim3 block, grid;
-    int multiProcessorCount;
-    CUDAStream cuda_stream(stream);
-    hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
-    CudaDeviceGetAttribute(
-      &multiProcessorCount,
-      cudaDevAttrMultiProcessorCount,
-      cuda_stream.device_id()
-    );
+      dim3 block, grid;
+      int multiProcessorCount;
+      CudaDeviceGetAttribute(
+        &multiProcessorCount,
+        cudaDevAttrMultiProcessorCount,
+        cuda_stream.device_id());
 
-    if (is_contig && sizeof(spec_t) > 2) {
-      std::tie(grid, block) = get_grid_config<spec_t>(
-        max_elements_per_tensor,
-        batch_counter,
-        multiProcessorCount
-      );
-    } else {
-      block = dim3(32 * 16);
-      grid = dim3(2LL * multiProcessorCount, (long long)batch_counter);
-    }
+      if (sizeof(spec_t) > 2) {
+        std::tie(grid, block) = get_grid_config<spec_t>(
+          max_elements_per_tensor,
+          batch_counter,
+          multiProcessorCount);
+      } else {
+        block = dim3(32 * 16);
+        grid = dim3(2LL * multiProcessorCount, (long long)batch_counter);
+      }
 
-    auto [in_grad_offset_arrs, in_grad_offset_ptrs] = 
-      AllocOffsetCalculator(grad_batch, stream);
-    NDArray in_grad_offset_ptrs_arr = 
-      hetu::cuda::to_ptr_ndarray(in_grad_offset_ptrs, cuda_stream.device_id());
-    auto** in_grad_offset_calculators = 
-      in_grad_offset_ptrs_arr->data_ptr<OffsetCalculator*>();
-
-    if (is_contig) {
       int vec_size = 4;
       for (int i = 0; i < batch_counter; i++) {
         vec_size = std::min(vec_size, get_vectorize_size(grads_meta.grad_input[i]));
@@ -454,55 +624,96 @@ void parallel_concat_gradient(
             <<<grid, block, 0, cuda_stream>>>(
               output_grad->data_ptr<spec_t>(),
               grads_meta,
+              out_grad_size_stride,
               dim,
-              dim_stride,
-              out_grad_offset_calculator,
-              in_grad_offset_calculators
-            );
+              ndim,
+              dim_stride);
           break;
         case 2:
           concat_gradient_batched_copy_vectorized<spec_t, batch_size, 2>
             <<<grid, block, 0, cuda_stream>>>(
               output_grad->data_ptr<spec_t>(),
               grads_meta,
+              out_grad_size_stride,
               dim,
-              dim_stride,
-              out_grad_offset_calculator,
-              in_grad_offset_calculators
-            );
+              ndim,
+              dim_stride);
           break;
         case 1:
-          concat_gradient_batched_copy<spec_t, batch_size>
+          concat_gradient_batched_copy_contig<spec_t, batch_size>
             <<<grid, block, 0, cuda_stream>>>(
               output_grad->data_ptr<spec_t>(),
               grads_meta,
+              out_grad_size_stride,
               dim,
-              dim_stride,
-              out_grad_offset_calculator,
-              in_grad_offset_calculators
-            );
+              ndim,
+              dim_stride);
           break;
         default:
           HT_RUNTIME_ERROR << "Unexpected vectorization size";
           __builtin_unreachable();
       }
-    } else {
+    }
+  } else {
+    ConcatGradientInputMetaWithOffsetCalculator<spec_t, batch_size> grads_meta;
+    uint64_t dim_stride = output_grad->stride(dim);
+    uint64_t max_elements_per_tensor = 0;
+    int batch_counter = 0;
+    int64_t offset = 0;
+    
+    for (unsigned i = 0; i < input_grads.size(); i += batch_size) {
+      NDArrayList grad_batch{};
+      for (batch_counter = 0;
+          batch_counter < batch_size && (i + batch_counter) < input_grads.size();
+          ++batch_counter) {
+        int64_t dim_size = 0;
+        if (input_grads[i + batch_counter]->numel() > 0) {
+          dim_size = input_grads[i + batch_counter]->shape(dim);
+        }
+
+        grads_meta.grad_input[batch_counter] = input_grads[i + batch_counter]->data_ptr<spec_t>();
+        grads_meta.offset[batch_counter] = offset;
+        grads_meta.dim_size[batch_counter] = dim_size;
+        grads_meta.numel[batch_counter] = input_grads[i + batch_counter]->numel();
+        grads_meta.is_contiguous[batch_counter] = input_grads[i + batch_counter]->is_contiguous();
+        for (size_t j = 0; j < input_grads[i + batch_counter]->ndim(); ++j) {
+          grads_meta.size_stride[batch_counter].shape[j] = input_grads[i + batch_counter]->shape(j);
+          grads_meta.size_stride[batch_counter].stride[j] = input_grads[i + batch_counter]->stride(j);
+        }
+        grad_batch.push_back(input_grads[i + batch_counter]);
+        offset += dim_size;
+        max_elements_per_tensor = std::max(
+          max_elements_per_tensor, 
+          grads_meta.numel[batch_counter]);
+      }
+
+      if (max_elements_per_tensor == 0) {
+        continue;
+      }
+
+      CUDAStream cuda_stream(stream);
+      hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
+
+      dim3 block, grid;
+      int multiProcessorCount;
+      CudaDeviceGetAttribute(
+        &multiProcessorCount,
+        cudaDevAttrMultiProcessorCount,
+        cuda_stream.device_id());
+
+      block = dim3(32 * 16);
+      grid = dim3(2LL * multiProcessorCount, (long long)batch_counter);
+
       concat_gradient_batched_copy<spec_t, batch_size>
         <<<grid, block, 0, cuda_stream>>>(
           output_grad->data_ptr<spec_t>(),
           grads_meta,
+          out_grad_size_stride,
           dim,
-          dim_stride,
-          out_grad_offset_calculator,
-          in_grad_offset_calculators
-        );
+          ndim,
+          dim_stride);
     }
-
-    in_grad_offset_arrs.push_back(in_grad_offset_ptrs_arr);
-    NDArray::MarkUsedBy(in_grad_offset_arrs, stream);
   }
-
-  NDArray::MarkUsedBy({out_grad_offset_arr}, stream);
 }
 
 void ConcatGradientCuda(

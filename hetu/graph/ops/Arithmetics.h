@@ -616,7 +616,7 @@ class AddElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    return {inst_ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
  public:
@@ -646,7 +646,7 @@ class SubElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    return {inst_ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
  public:
@@ -676,7 +676,7 @@ class MulElewiseGradientOpImpl final : public BinaryGradientOpImpl {
   std::vector<NDArrayMeta> 
   DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     // HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    return {inst_ctx.get<NDArrayMeta>("in_meta_" + std::to_string(index()))};
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
  public:

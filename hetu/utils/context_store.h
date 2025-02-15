@@ -10,15 +10,20 @@ using json = nlohmann::json;
 using DistributedStates = hetu::graph::DistributedStates;
 
 template<typename T>
-std::string serialize(const T& obj) {
-    json j = obj;
-    return j.dump();
+std::string serialize(T&& obj) {
+  json j;
+  if constexpr (std::is_rvalue_reference_v<decltype(obj)>) {
+    j = std::move(obj);
+  } else {
+    j = obj;
+  }
+  return j.dump();
 }
 
 template<typename T>
-T deserialize(const std::string& str) {
+std::decay_t<T> deserialize(const std::string& str) {
     json j = json::parse(str);
-    return j.get<T>();
+    return j.get<std::decay_t<T>>();
 }
 
 template<typename T, typename = void>
@@ -34,19 +39,20 @@ class ContextStore {
   ContextStore() {}
 
   template <typename T>
-  void put(const std::string& key, const T& value) {
-    if constexpr (std::is_same_v<T, NDArray> ||
-                  std::is_same_v<T, NDArrayMeta> ||
-                  std::is_same_v<T, DistributedStates>) {
-      if constexpr (std::is_same_v<T, NDArray>) {
-        _ctx_ndarray.insert_or_assign(key, value);
-      } else if constexpr (std::is_same_v<T, NDArrayMeta>) {
-        _ctx_ndarray_meta.insert_or_assign(key, value);
-      } else if constexpr (std::is_same_v<T, DistributedStates>) {
-        _ctx_distributed_states.insert_or_assign(key, value);
+  void put(const std::string& key, T&& value) {
+    using DecayT = std::decay_t<T>;
+    if constexpr (std::is_same_v<DecayT, NDArray> ||
+                  std::is_same_v<DecayT, NDArrayMeta> ||
+                  std::is_same_v<DecayT, DistributedStates>) {
+      if constexpr (std::is_same_v<DecayT, NDArray>) {
+        _ctx_ndarray.insert_or_assign(key, std::forward<T>(value));
+      } else if constexpr (std::is_same_v<DecayT, NDArrayMeta>) {
+        _ctx_ndarray_meta.insert_or_assign(key, std::forward<T>(value));
+      } else if constexpr (std::is_same_v<DecayT, DistributedStates>) {
+        _ctx_distributed_states.insert_or_assign(key, std::forward<T>(value));
       }
-    } else if constexpr (is_json_serializable<T>::value) {
-      _ctx.insert_or_assign(key, serialize(value));
+    } else if constexpr (is_json_serializable<DecayT>::value) {
+      _ctx.insert_or_assign(key, serialize(std::forward<T>(value)));
     } else {
       HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
     }
@@ -73,7 +79,7 @@ class ContextStore {
     } else if constexpr (is_json_serializable<T>::value) {
       auto it = _ctx.find(key);
       HT_ASSERT(it != _ctx.end()) << "key-value pair " << key << " not found";
-      return deserialize<T>(it->second);
+      return deserialize<std::decay_t<T>>(it->second);
     } else {
       HT_ASSERT(false) << "Type " << typeid(T).name() << " is not serializable";
     }
@@ -122,9 +128,10 @@ class ContextStore {
   }
 
   template <typename T>
-  void migrate_from(ContextStore& src, const std::string& key) {
-    if (!this->contains<T>(key) || (this->contains<T>(key) && src.contains<T>(key))) {
-      this->put(key, src.pop<T>(key));
+  void migrate_from(ContextStore& src, const std::string& key, const std::string& new_key = "") {
+    std::string final_key = new_key.empty() ? key : new_key;
+    if (!this->contains<T>(final_key) || (this->contains<T>(final_key) && src.contains<T>(key))) {
+      this->put(final_key, src.get<T>(key));
     }
   }
 

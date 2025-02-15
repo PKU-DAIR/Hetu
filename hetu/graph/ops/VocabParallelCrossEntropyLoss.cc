@@ -82,7 +82,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     // NDArray softmax = exp_logits / sum_exp_logits;
     NDArray softmax = NDArray::div(exp_logits, sum_exp_logits, op->instantiation_ctx().stream_index, exp_logits); // inplace
     OpRuntimeContext& op_ctx = ctx.get_or_create(op->id());
-    op_ctx.put<NDArray>("softmax", softmax);
+    op_ctx.put("softmax", softmax);
     NDArray log_sum_exp_logits = NDArray::log(sum_exp_logits, op->instantiation_ctx().stream_index, sum_exp_logits); // inplace
     NDArray::MarkUsedBy({exp_logits, sum_exp_logits_partial, softmax}, op->instantiation_ctx().stream());
 
