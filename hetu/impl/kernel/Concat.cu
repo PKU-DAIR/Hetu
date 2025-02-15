@@ -49,29 +49,41 @@ inline std::tuple<dim3, dim3> get_grid_config(
 
 template <typename spec_t, int batch_size>
 __global__ void concat_batched_copy(
-  spec_t* output,
-  ConcatInputMeta<spec_t, batch_size> inputs,
+  spec_t* __restrict__ output,
+  const ConcatInputMeta<spec_t, batch_size> inputs,
   const int concat_dim,
-  uint64_t dim_stride,
-  OffsetCalculator** input_offset_calculators,
-  const OffsetCalculator* output_offset_calculator) {
+  const uint64_t dim_stride,
+  OffsetCalculator** __restrict__ input_offset_calculators,
+  const OffsetCalculator* __restrict__ output_offset_calculator) {
 
-  uint64_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-  uint64_t numel = inputs.numel[blockIdx.y];
-  if (tid >= numel)
-    return;
+  const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
+  const uint64_t numel = inputs.numel[blockIdx.y];
   
-  const spec_t* data = inputs.input[blockIdx.y];
-  uint64_t offset = inputs.offset[blockIdx.y];
-  uint64_t dim_size = inputs.dim_size[blockIdx.y];
-  uint64_t data_offset = offset * dim_stride;
-  uint64_t stride = gridDim.x * blockDim.x;
+  if (base_tid >= numel) return;
 
-  while (tid < numel) {
-    uint64_t element_offset = output_offset_calculator->get(tid, dim_size, concat_dim);
-    uint64_t in_offset = input_offset_calculators[blockIdx.y]->get(tid);
+  const spec_t* __restrict__ data = inputs.input[blockIdx.y];
+  const uint64_t data_offset = inputs.offset[blockIdx.y] * dim_stride;
+  const uint64_t base_stride = blockDim.x * gridDim.x * 4;
+
+  const auto* __restrict__ in_calculator = input_offset_calculators[blockIdx.y];
+  const auto* __restrict__ out_calculator = output_offset_calculator;
+
+  #pragma unroll 4
+  for (int i = 0; i < 4; ++i) {
+    const uint64_t tid = base_tid + i * blockDim.x;
+    if (tid >= numel) continue;
+    
+    output[data_offset + out_calculator->get(tid, inputs.dim_size[blockIdx.y], concat_dim)] =
+      data[in_calculator->get(tid)];
+  }
+
+  for (uint64_t tid = base_tid + base_stride; 
+       tid < numel; 
+       tid += base_stride) {
+    const uint64_t in_offset = in_calculator->get(tid);
+    const uint64_t element_offset = out_calculator->get(
+      tid, inputs.dim_size[blockIdx.y], concat_dim);
     output[data_offset + element_offset] = data[in_offset];
-    tid += stride;
   }
 }
 
@@ -84,41 +96,39 @@ __global__ void concat_batched_copy_vectorized(
   OffsetCalculator** input_offset_calculators,
   const OffsetCalculator* output_offset_calculator) {
 
-  uint64_t in_offset = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
-  uint64_t in_stride = gridDim.x * blockDim.x * vec_size;
-  uint64_t numel = inputs.numel[blockIdx.y];
-  if (in_offset >= numel) {
-    return;
-  }
+  const int bid = blockIdx.y;
+  const spec_t* data = inputs.input[bid];
+  const uint64_t data_offset = inputs.offset[bid] * dim_stride;
+  const uint64_t numel = inputs.numel[bid];
+  const uint64_t dim_size = inputs.dim_size[bid];
+  
+  uint64_t tid = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
+  if (tid >= numel) return;
 
-  const spec_t* data = inputs.input[blockIdx.y];
-  uint64_t offset = inputs.offset[blockIdx.y];
-  uint64_t dim_size = inputs.dim_size[blockIdx.y];
-  uint64_t data_offset = offset * dim_stride;
+  const auto* in_calculator = input_offset_calculators[bid];
+  const auto* out_calculator = output_offset_calculator;
 
-  uint64_t vec_element_offsets[vec_size];
-  spec_t results[vec_size];
+  using vec_t = aligned_vector<spec_t, vec_size>;
+  const vec_t* data_vec = reinterpret_cast<const vec_t*>(data);
+  vec_t* out_vec = reinterpret_cast<vec_t*>(output + data_offset);
 
-  while (in_offset + vec_size <= numel) {
-    #pragma unroll
-    for (int i = 0; i < vec_size; ++i) {
-      vec_element_offsets[i] = output_offset_calculator->get(in_offset + i, dim_size, concat_dim);
+  while (tid < numel) {
+    const uint64_t valid_count = min(static_cast<uint64_t>(vec_size), numel - tid);
+    const uint64_t base_out_offset = out_calculator->get(tid, dim_size, concat_dim);
+
+    if (valid_count == vec_size) {
+      const vec_t val = data_vec[tid / vec_size];
+      *reinterpret_cast<vec_t*>(&output[data_offset + base_out_offset]) = val;
+    } else {
+      #pragma unroll(vec_size)
+      for (int i = 0; i < vec_size; ++i) {
+        if (i < valid_count) {
+          const uint64_t element_offset = out_calculator->get(tid + i, dim_size, concat_dim);
+          output[data_offset + element_offset] = data[tid + i];
+        }
+      }
     }
-
-    using vec_spec_t = aligned_vector<spec_t, vec_size>;
-    ((vec_spec_t*)results)[0] = const_cast<vec_spec_t*>((vec_spec_t*)(data + in_offset))[0];
-
-    #pragma unroll
-    for (int i = 0; i < vec_size; ++i) {
-      output[data_offset + vec_element_offsets[i]] = results[i];
-    }
-    in_offset += in_stride;
-  }
-
-  while (in_offset < numel) {
-    vec_element_offsets[0] = output_offset_calculator->get(in_offset, dim_size, concat_dim);
-    output[data_offset + vec_element_offsets[0]] = data[in_offset];
-    in_offset++;
+    tid += blockDim.x * gridDim.x * vec_size;
   }
 }
 
@@ -179,6 +189,8 @@ void parallel_concat(const NDArrayList& inputs, NDArray& output,
       for (int i = 0; i < batch_counter; i++) {
         vec_size = std::min(vec_size, get_vectorize_size(inputs_meta.input[i]));
       }
+      // std::tie(grid, block) = get_grid_config<spec_t>(
+      //   (max_elements_per_tensor + vec_size - 1) / vec_size, batch_counter, multiProcessorCount);
       switch (vec_size) {
         case 4:
           concat_batched_copy_vectorized<spec_t, batch_size, 4><<<grid, block, 0, cuda_stream>>>(
@@ -248,7 +260,7 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
           parallel_concat<spec_t, CONCAT_BATCH_SIZE>(
             inputs, output, dim, all_contiguous, stream);
         } else {
-          parallel_concat<spec_t, CONCAT_BATCH_SIZE/2>(
+          parallel_concat<spec_t, CONCAT_BATCH_SIZE>(
             inputs, output, dim, all_contiguous, stream);
         }
       } else {
@@ -280,22 +292,33 @@ __global__ void concat_gradient_batched_copy(
   const OffsetCalculator* out_grad_offset_calculator,
   OffsetCalculator** in_grad_offset_calculators) {
 
-  uint64_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-  uint64_t numel = grads.numel[blockIdx.y];
-  if (tid >= numel)
-    return;
+  const uint64_t base_tid = blockIdx.x * blockDim.x * 4 + threadIdx.x;
+  const uint64_t numel = grads.numel[blockIdx.y];
   
-  spec_t* grad = grads.grad_input[blockIdx.y];
-  uint64_t offset = grads.offset[blockIdx.y];
-  uint64_t dim_size = grads.dim_size[blockIdx.y];
-  uint64_t data_offset = offset * dim_stride;
-  uint64_t stride = gridDim.x * blockDim.x;
+  if (base_tid >= numel) return;
 
-  while (tid < numel) {
-    uint64_t element_offset = out_grad_offset_calculator->get(tid, dim_size, concat_dim);
-    uint64_t in_offset = in_grad_offset_calculators[blockIdx.y]->get(tid);
+  spec_t* grad = grads.grad_input[blockIdx.y];
+  const uint64_t data_offset = grads.offset[blockIdx.y] * dim_stride;
+  const uint64_t base_stride = blockDim.x * gridDim.x * 4;
+
+  const auto* __restrict__ in_calculator = in_grad_offset_calculators[blockIdx.y];
+  const auto* __restrict__ out_calculator = out_grad_offset_calculator;
+
+  #pragma unroll 4
+  for (int i = 0; i < 4; ++i) {
+    const uint64_t tid = base_tid + i * blockDim.x;
+    if (tid >= numel) continue;
+    
+    const uint64_t element_offset = out_calculator->get(tid, grads.dim_size[blockIdx.y], concat_dim);
+    grad[in_calculator->get(tid)] = output_grad[data_offset + element_offset];
+  }
+
+  for (uint64_t tid = base_tid + base_stride; 
+       tid < numel; 
+       tid += base_stride) {
+    const uint64_t element_offset = out_calculator->get(tid, grads.dim_size[blockIdx.y], concat_dim);
+    const uint64_t in_offset = in_calculator->get(tid);
     grad[in_offset] = output_grad[data_offset + element_offset];
-    tid += stride;
   }
 }
 
@@ -308,46 +331,40 @@ __global__ void concat_gradient_batched_copy_vectorized(
     const OffsetCalculator* out_grad_offset_calculator,
     OffsetCalculator** in_grad_offset_calculators) {
 
-  uint64_t in_offset = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
-  uint64_t in_stride = gridDim.x * blockDim.x * vec_size;
-  uint64_t numel = grads.numel[blockIdx.y];
-  if (in_offset >= numel) {
-    return;
-  }
+  const int bid = blockIdx.y;
+  spec_t* grad = grads.grad_input[bid];
+  const uint64_t data_offset = grads.offset[bid] * dim_stride;
+  const uint64_t numel = grads.numel[bid];
+  const uint64_t dim_size = grads.dim_size[bid];
+  
+  uint64_t tid = (blockIdx.x * blockDim.x + threadIdx.x) * vec_size;
+  if (tid >= numel) return;
 
-  spec_t* grad = grads.grad_input[blockIdx.y];
-  uint64_t offset = grads.offset[blockIdx.y];
-  uint64_t dim_size = grads.dim_size[blockIdx.y];
-  uint64_t data_offset = offset * dim_stride;
+  const auto* in_calculator = in_grad_offset_calculators[bid];
+  const auto* out_calculator = out_grad_offset_calculator;
 
-  uint64_t out_element_offsets[vec_size];
-  spec_t values[vec_size];
+  using vec_t = aligned_vector<spec_t, vec_size>;
+  vec_t* grad_vec = reinterpret_cast<vec_t*>(grad);
+  const vec_t* out_grad_vec = reinterpret_cast<const vec_t*>(output_grad + data_offset);
 
-  while (in_offset + vec_size <= numel) {
-    #pragma unroll
-    for (int i = 0; i < vec_size; ++i) {
-      out_element_offsets[i] = data_offset + out_grad_offset_calculator->get(
-        in_offset + i, dim_size, concat_dim);
+  while (tid < numel) {
+    const uint64_t valid_count = min(static_cast<uint64_t>(vec_size), numel - tid);
+    const uint64_t base_out_offset = out_calculator->get(tid, dim_size, concat_dim);
+
+    if (valid_count == vec_size) {
+      const vec_t val = out_grad_vec[base_out_offset / vec_size];
+      grad_vec[in_calculator->get(tid) / vec_size] = val;
+    } else {
+      #pragma unroll(vec_size)
+      for (int i = 0; i < vec_size; ++i) {
+        if (i < valid_count) {
+          const uint64_t element_offset = out_calculator->get(tid + i, dim_size, concat_dim);
+          const uint64_t in_offset = in_calculator->get(tid + i);
+          grad[in_offset] = output_grad[data_offset + element_offset];
+        }
+      }
     }
-
-    #pragma unroll
-    for (int i = 0; i < vec_size; ++i) {
-      values[i] = output_grad[out_element_offsets[i]];
-    }
-
-    using vec_spec_t = aligned_vector<spec_t, vec_size>;
-    auto in_grad_offset = in_grad_offset_calculators[blockIdx.y]->get(in_offset);
-    ((vec_spec_t*)(grad + in_grad_offset))[0] = ((vec_spec_t*)values)[0];
-
-    in_offset += in_stride;
-  }
-
-  while (in_offset < numel) {
-    auto out_offset = data_offset + out_grad_offset_calculator->get(
-      in_offset, dim_size, concat_dim);
-    auto in_grad_offset = in_grad_offset_calculators[blockIdx.y]->get(in_offset);
-    grad[in_grad_offset] = output_grad[out_offset];
-    in_offset++;
+    tid += blockDim.x * gridDim.x * vec_size;
   }
 }
 

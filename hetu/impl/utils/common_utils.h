@@ -9,6 +9,14 @@ namespace impl {
 template<typename spec_t, int vec_size>
 struct alignas(sizeof(spec_t) * vec_size) aligned_vector {
   spec_t val[vec_size];
+
+  __host__ __device__ spec_t& operator[](int idx) {
+    return val[idx];
+  }
+
+  __host__ __device__ const spec_t& operator[](int idx) const {
+    return val[idx];
+  }
 };
 
 inline size_t numel(const HTShape& shape) {
