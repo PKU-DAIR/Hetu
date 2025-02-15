@@ -25,6 +25,7 @@ class HtMultiParallelRMSNorm(Module):
         self.sequence_parallel = sequence_parallel
         self.recompute_allgather = recompute_allgather
         self.name = name
+        self.layer_idx = int(name.split('Block')[1]) if 'Block' in name else -1
         self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
@@ -64,8 +65,16 @@ class HtMultiParallelRMSNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0'])
-            output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
-                                                   device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
+            with hetu.recompute(multi_recompute = [
+                [False] if ds_parallel_config['recompute_granularity'] is None else
+                [
+                    True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                    for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+                ]
+                for ds_parallel_config in self.ds_parallel_configs
+            ]):
+                output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
+                                                    device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
             # handle allgather recompute manually
             if output_rms_split0.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
                 output_rms = output_rms_split0
@@ -80,8 +89,16 @@ class HtMultiParallelRMSNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0_dup'])
-            output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
-                                            device_group_hierarchy=self.device_group_unions, name=self.name)[0]
+            with hetu.recompute(multi_recompute = [
+                [False] if ds_parallel_config['recompute_granularity'] is None else
+                [
+                    True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                    for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+                ]
+                for ds_parallel_config in self.ds_parallel_configs
+            ]):
+                output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
+                                                device_group_hierarchy=self.device_group_unions, name=self.name)[0]
         return output_rms
 
 class HtMultiParallelLayerNorm(Module):
@@ -96,6 +113,7 @@ class HtMultiParallelLayerNorm(Module):
         self.recompute_allgather = recompute_allgather
         self.eps = eps
         self.name = name
+        self.layer_idx = int(name.split('Block')[1]) if 'Block' in name else -1
         self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
@@ -139,14 +157,22 @@ class HtMultiParallelLayerNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0'])
-            output_ln_split0 = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
-                                                     device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
+            with hetu.recompute(multi_recompute = [
+                [False] if ds_parallel_config['recompute_granularity'] is None else
+                [
+                    True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                    for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+                ]
+                for ds_parallel_config in self.ds_parallel_configs
+            ]):
+                output_ln_split0 = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
+                                                        device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
             # handle allgather recompute manually
             if output_ln_split0.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
                 output_ln = output_ln_split0
             else:
                 if self.recompute_allgather:
-                    with hetu.recompute():
+                    with hetu.recompute(multi_recompute=[[True] * len(self.ds_parallel_configs)]):
                         output_ln = hetu.comm(output_ln_split0, self.ds_union_map['split0_dup'])
                 else:
                     output_ln = hetu.comm(output_ln_split0, self.ds_union_map['split0_dup'])
@@ -155,8 +181,16 @@ class HtMultiParallelLayerNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0_dup'])
-            output_ln = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
-                                             device_group_hierarchy=self.device_group_unions, name=self.name)[0]
+            with hetu.recompute(multi_recompute = [
+                [False] if ds_parallel_config['recompute_granularity'] is None else
+                [
+                    True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                    for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+                ]
+                for ds_parallel_config in self.ds_parallel_configs
+            ]):
+                output_ln = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
+                                                device_group_hierarchy=self.device_group_unions, name=self.name)[0]
         return output_ln
 
 class HtMultiParallelEmbedding(Module):

@@ -29,7 +29,15 @@ class LLamaAttention(ht.nn.Module):
 
         self.embed_dim = config.hidden_size
         self.num_heads = config.num_attention_heads
+        self.num_groups = config.num_query_groups
+        if self.num_heads % self.num_groups != 0:
+            raise ValueError(
+                f"num_heads must be divisible by num_groups (got {self.num_heads} vs. {self.num_groups})"
+            )
         self.head_dim = self.embed_dim // self.num_heads
+        self.query_projection_size = self.embed_dim
+        self.kv_projection_size = self.num_groups * self.head_dim
+        self.num_heads_per_group = self.num_heads // self.num_groups
         self.split_size = self.embed_dim
         if self.head_dim * self.num_heads != self.embed_dim:
             raise ValueError(
@@ -45,7 +53,7 @@ class LLamaAttention(ht.nn.Module):
 
         self.qkv_proj = ht.nn.HtMultiColumnParallelLinear(
             self.embed_dim,
-            3 * self.embed_dim,
+            self.query_projection_size + 2 * self.kv_projection_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
             bias=self.add_bias,
             gather_output=False,
@@ -74,8 +82,9 @@ class LLamaAttention(ht.nn.Module):
         # print(f'hidden_states.global_shape={hidden_states.global_shape}, hidden_states.shape={hidden_states.shape}, hidden_states.distributed_states={hidden_states.distributed_states}')        
         # column parallel, [micro_batch_size*seq_len, 3*embed_dim]
         qkv = self.qkv_proj(hidden_states)
-        qkv = qkv.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_heads), ht.IntSymbol(3 * self.head_dim)], name=f'reshape_qkv_{self.name}')
-        query, key, value = ht.split(qkv, 3, qkv.ndim - 1)
+        qkv = qkv.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_groups),
+                           ht.IntSymbol((self.num_heads_per_group + 2) * self.head_dim)], name=f'reshape_qkv_{self.name}')
+        query, key, value = ht.split(qkv, [self.num_heads_per_group * self.head_dim, self.head_dim, self.head_dim], dim=qkv.ndim - 1)
 
         # apply relative positional encoding (rotary embedding)
         def apply_rotary_pos_emb(x, _name='q'):

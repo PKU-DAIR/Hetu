@@ -202,7 +202,11 @@ def generate_lora_ds_parallel_config(
     ngpus,
     layers_tp_groups,
     ds_parallel_config_path,
-    zero=False
+    zero=False,
+    recompute_granularity=None,
+    recompute_method=None,
+    recompute_num_layers=None,
+    recompute_layer_idxs_list=None
 ):
     dp = len(layers_tp_groups[0])
     dp_union = [dp for _ in range(dp)]
@@ -217,13 +221,91 @@ def generate_lora_ds_parallel_config(
     for layer_tp_groups in layers_tp_groups:
         for i, layer_tp_group in enumerate(layer_tp_groups):
             strategy_groups[i] = strategy_groups[i].union(set(layer_tp_group))
+
+    unique_layer_tp_groups = [set() for _ in range(dp)]
+    pp_union = [0] * dp
+    for layer_tp_groups in layers_tp_groups:
+        for i, layer_tp_group in enumerate(layer_tp_groups):
+            if tuple(layer_tp_group) not in unique_layer_tp_groups[i]:
+                unique_layer_tp_groups[i].add(tuple(layer_tp_group))
+                pp_union[i] += 1
+
     strategy_groups = [list(strategy_group) for strategy_group in strategy_groups]
     tp_pp_union_list = [len(strategy_group) * len(strategy_groups) for strategy_group in strategy_groups]
     # tp_pp_union_list = [sum([len(strategy_group) for strategy_group in strategy_groups])] * len(strategy_groups)
+    
+    if recompute_granularity is not None:
+        if type(recompute_granularity) == list:
+            if len(recompute_granularity) == 1:
+                recompute_granularity = [recompute_granularity[0] for _ in range(dp)]
+            else:
+                assert len(recompute_granularity) == dp, \
+                    f"recompute_granularity should have the same length as dp, but got {len(recompute_granularity)} vs. {dp}"
+        elif type(recompute_granularity) == str:
+            recompute_granularity = [recompute_granularity for _ in range(dp)]
+        else:
+            raise ValueError(f"recompute_granularity should be a string or a list of strings, but got {recompute_granularity}")
+    else:
+        recompute_granularity = [None for _ in range(dp)]
+    
+    for i, granularity in enumerate(recompute_granularity):
+        if granularity == 'selective':
+            assert recompute_method[i] is None, \
+                f"recompute_method should be None for dp {i} when recompute_granularity is 'selective'"
+
+    if recompute_method is not None:
+        if type(recompute_method) == list:
+            if len(recompute_method) == 1:
+                recompute_method = [recompute_method[0] for _ in range(dp)]
+            else:
+                assert len(recompute_method) == dp, \
+                    f"recompute_method should have the same length as dp, but got {len(recompute_method)} vs. {dp}"
+        elif type(recompute_method) == str:
+            recompute_method = [recompute_method for _ in range(dp)]
+        else:
+            raise ValueError(f"recompute_method should be a string or a list of strings, but got {recompute_method}")
+    else:
+        recompute_method = [None for _ in range(dp)]
+
+    if recompute_num_layers is None:
+        recompute_num_layers = [1 for _ in range(dp)]
+    
+    if type(recompute_num_layers) == list:
+        if len(recompute_num_layers) == 1:
+            recompute_num_layers = [recompute_num_layers[0] for _ in range(dp)]
+        else:
+            assert len(recompute_num_layers) == dp, \
+                f"recompute_num_layers should have the same length as dp, but got {len(recompute_num_layers)} vs. {dp}"
+    elif type(recompute_num_layers) == int:
+        recompute_num_layers = [recompute_num_layers for _ in range(dp)]
+    
+    for i, recompute_num_layer in enumerate(recompute_num_layers):
+        assert recompute_method[i] != 'block' or recompute_num_layer <= pp_union[i], \
+            f"recompute_num_layer {recompute_num_layer} should be less than or equal to pp_union {pp_union[i]} for dp {i}"
+
+    if recompute_layer_idxs_list is not None:
+        if type(recompute_layer_idxs_list) == list:
+            if len(recompute_layer_idxs_list) == 1:
+                recompute_layer_idxs_list = [recompute_layer_idxs_list[0] for _ in range(dp)]
+            else:
+                assert len(recompute_layer_idxs_list) == dp, \
+                    f"recompute_layer_idxs_list should have the same length as dp, but got {len(recompute_layer_idxs_list)} vs. {dp}"
+            for i, recompute_layer_idxs in enumerate(recompute_layer_idxs_list):
+                if len(recompute_layer_idxs) > 0:
+                    if recompute_method[i] is None:
+                        print(f"[WARNING] recompute_method will be ignored when recompute_layer_idxs is set for dp {i}, got method {recompute_method[i]} and layer_idxs {recompute_layer_idxs}")
+        elif type(recompute_layer_idxs_list) == int:
+            recompute_layer_idxs_list = [[recompute_layer_idxs_list] for _ in range(dp)]
+        else:
+            raise ValueError(f"recompute_layer_idxs_list should be an integer or a list of integers, but got {recompute_layer_idxs_list}")
+    else:
+        recompute_layer_idxs_list = [[] for _ in range(dp)]
 
     ds_parallel_config = {
         'zero': zero,
         'devices': list(range(ngpus)),
+        'recompute_granularity': recompute_granularity,
+        'recompute_layer_idxs_list': recompute_layer_idxs_list,
         'task_batch_idxs': {
             'split': {},
             'dup': tp_pp_union_list,
@@ -275,9 +357,45 @@ def generate_lora_ds_parallel_config(
     
     for block_id in range(num_layers):
         blocks_json = ds_parallel_config['gpt']['blocks']
+        block_recompute = []
+        block_output_recompute = []
+        for i in range(dp):
+            if recompute_layer_idxs_list[i] == []:
+                num_layers = recompute_num_layers[i]
+                if recompute_method[i] == 'uniform':
+                    block_recompute.append(True)
+                    if (block_id + 1) % num_layers == 0:
+                        block_output_recompute.append(False)
+                    else:
+                        block_output_recompute.append(True)
+                elif recompute_method[i] == 'block':
+                    pp_block_id = block_id % pp_union[i]
+                    if pp_block_id < num_layers:
+                        block_recompute.append(True)
+                        if pp_block_id < num_layers - 1:
+                            block_output_recompute.append(False)
+                        else:
+                            block_output_recompute.append(True)
+                    else:
+                        block_recompute.append(False)
+                        block_output_recompute.append(False)
+                elif recompute_method[i] is None:
+                    recompute_layer_idxs_list[i] = range(num_layers)
+                else:
+                    raise ValueError(f"recompute_method should be 'uniform' or 'block', but got {recompute_method[i]}")
+            else:
+                if block_id in recompute_layer_idxs_list[i]:
+                    block_recompute.append(True)
+                    block_output_recompute.append(False)
+                else:
+                    block_recompute.append(False)
+                    block_output_recompute.append(False)
+
         blocks_json[f'blocks{block_id}'] = {
             'range': [block_id,],
-            'recompute': [False for _ in range(dp)],
+            'recompute': block_recompute,
+            'cpu_offload': [False for _ in range(dp)],
+            'output_recompute': block_output_recompute,
             'layernorm1': {
                 'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},
                 'dup': dp_union,

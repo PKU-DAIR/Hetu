@@ -30,7 +30,10 @@ class LLamaAttention(ht.nn.Module):
 
         self.embed_dim = config.hidden_size
         self.num_heads = config.num_attention_heads
+        self.num_groups = config.num_query_groups
         self.head_dim = self.embed_dim // self.num_heads
+        self.query_projection_size = self.embed_dim
+        self.kv_projection_size = self.num_groups * self.head_dim
         self.split_size = self.embed_dim
         if self.head_dim * self.num_heads != self.embed_dim:
             raise ValueError(
@@ -46,7 +49,7 @@ class LLamaAttention(ht.nn.Module):
 
         self.q_proj = ht.nn.HtMultiColumnParallelLinear(
             self.embed_dim,
-            self.embed_dim,
+            self.query_projection_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
             bias=self.add_bias,
             gather_output=False,
@@ -55,7 +58,7 @@ class LLamaAttention(ht.nn.Module):
 
         self.k_proj = ht.nn.HtMultiColumnParallelLinear(
             self.embed_dim,
-            self.embed_dim,
+            self.kv_projection_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
             bias=self.add_bias,
             gather_output=False,
@@ -64,7 +67,7 @@ class LLamaAttention(ht.nn.Module):
         
         self.v_proj = ht.nn.HtMultiColumnParallelLinear(
             self.embed_dim,
-            self.embed_dim,
+            self.kv_projection_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
             bias=self.add_bias,
             gather_output=False,
@@ -98,8 +101,8 @@ class LLamaAttention(ht.nn.Module):
         v = self.v_proj(hidden_states)
         
         query = q.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_heads), ht.IntSymbol(self.head_dim)], name=f'reshape_q_{self.name}')
-        key = k.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_heads), ht.IntSymbol(self.head_dim)], name=f'reshape_k_{self.name}')
-        value = v.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_heads), ht.IntSymbol(self.head_dim)], name=f'reshape_v_{self.name}')
+        key = k.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_groups), ht.IntSymbol(self.head_dim)], name=f'reshape_k_{self.name}')
+        value = v.reshape([mbs_times_dp_symbol, seq_len_symbol, ht.IntSymbol(self.num_groups), ht.IntSymbol(self.head_dim)], name=f'reshape_v_{self.name}')
 
         # apply relative positional encoding (rotary embedding)
         def apply_rotary_pos_emb(x, _name='q'):
@@ -172,7 +175,15 @@ class ParallelMLP(ht.nn.Module):
         # [b*seq_len, h] -> [b*seq_len, 2* 2.7* h]
         intermediate_parallel = self.dense_h_to_4h(hidden_states)
         # fused kernel: x1*sigmoid(x1)*x2
-        intermediate_parallel = ht.swiglu(intermediate_parallel, name=f'swiglu_{self.name}')
+        with ht.recompute(multi_recompute = [
+            [False] if ds_parallel_config['recompute_granularity'] is None else
+            [
+                True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+            ]
+            for ds_parallel_config in self.ds_parallel_configs
+        ]):
+            intermediate_parallel = ht.swiglu(intermediate_parallel, name=f'swiglu_{self.name}')
 
         # [b*seq_len, 4h] -> [b*seq_len, h]
         output = self.dense_4h_to_h(intermediate_parallel)

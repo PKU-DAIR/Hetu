@@ -28,7 +28,15 @@ class LLamaAttention(ht.nn.Module):
 
         self.embed_dim = config.hidden_size
         self.num_heads = config.num_attention_heads
+        self.num_groups = config.num_query_groups
+        if self.num_heads % self.num_groups != 0:
+            raise ValueError(
+                f"num_heads must be divisible by num_groups (got {self.num_heads} vs. {self.num_groups})"
+            )
         self.head_dim = self.embed_dim // self.num_heads
+        self.query_projection_size = self.embed_dim
+        self.kv_projection_size = self.num_groups * self.head_dim
+        self.num_heads_per_group = self.num_heads // self.num_groups
         self.split_size = self.embed_dim
         if self.head_dim * self.num_heads != self.embed_dim:
             raise ValueError(
@@ -44,7 +52,7 @@ class LLamaAttention(ht.nn.Module):
 
         self.qkv_dense = ht.nn.HtMultiColumnParallelLinear(
             self.embed_dim,
-            3 * self.embed_dim,
+            self.query_projection_size + 2 * self.kv_projection_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
             bias=self.add_bias,
             gather_output=False,
@@ -203,7 +211,15 @@ class ParallelMLP(ht.nn.Module):
         # [b*seq_len, h] -> [b*seq_len, 4h]
         intermediate_parallel = self.dense_h_to_4h(hidden_states)
         # intermediate_parallel = self.activation_func(intermediate_parallel)
-        intermediate_parallel = ht.swiglu(intermediate_parallel)
+        with ht.recompute(multi_recompute = [
+            [False] if ds_parallel_config['recompute_granularity'] is None else
+            [
+                True if dp_recompute_granularity == 'selective' and self.layer_idx in recompute_layer_idxs else False
+                for dp_recompute_granularity, recompute_layer_idxs in zip(ds_parallel_config['recompute_granularity'], ds_parallel_config['recompute_layer_idxs_list'])
+            ]
+            for ds_parallel_config in self.ds_parallel_configs
+        ]):
+            intermediate_parallel = ht.swiglu(intermediate_parallel)
 
         # [b*seq_len, 4h] -> [b*seq_len, h]
         output = self.dense_4h_to_h(intermediate_parallel)

@@ -362,7 +362,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
       auto& comm_op = op;
       // 获取其所在的subgraph使得后续替换的op都出现在同样的subgraph中
       // 有如下几种可能
-      // 1、在optimize-compute bridge或compute-oprimize bridge的subgraph中
+      // 1、在optimize-compute bridge或compute-optimize bridge的subgraph中
       // 例如zero与grad相关的(split)-all-gather/-all-reduce/-reduce-scatter或batched-send-recv
       // 2、在pipeline layer的subgraph中
       // 例如pp相关的(batched)-send-recv
@@ -1679,7 +1679,6 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       Instantiate(fetches, local_device);
       HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate end...";
 
-      /*
       // init instantiated topo
       OpRefList topo_before_recompute = Graph::TopoSort(fetches, num_ops(), is_op_computed);
       HT_LOG_DEBUG << local_device << ": global topo before recompute pass: " << topo_before_recompute;
@@ -1701,8 +1700,7 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       Graph::push_graph_ctx(id());
       ActivationCPUOffload::OffloadToCPU(topo_before_activation_offload);
       Graph::pop_graph_ctx();
-      HT_LOG_INFO << local_device << ": [Execution Plan] activation offload pass end...";
-      */
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] activation offload pass end...";
 
       // init topo contains comm_op
       OpRefList topo_before_substitute_comm = Graph::TopoSort(fetches, num_ops(), is_op_computed);
