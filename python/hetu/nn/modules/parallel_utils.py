@@ -22,6 +22,23 @@ def get_multi_ds_parallel_config(ds_parallel_configs, module_name, _range=-1):
         f'ds_parallel_configs parse error, cannot find {module_name} with range id {_range}'   
     return multi_ds_parallel_config
 
+def get_multi_recompute_from(ds_parallel_configs, layer_idx):
+    multi_recompute_configs = []
+    for ds_parallel_config in ds_parallel_configs:
+        if ds_parallel_config['recompute_granularity'] is None:
+            multi_recompute_configs.append([False])
+        else:
+            dp_recompute_configs = []
+            for dp_recompute_granularity, recompute_layer_idxs in \
+                zip(ds_parallel_config['recompute_granularity'], \
+                    ds_parallel_config['recompute_layer_idxs_list']):
+                if dp_recompute_granularity == 'selective' and layer_idx in recompute_layer_idxs:
+                    dp_recompute_configs.append(True)
+                else:
+                    dp_recompute_configs.append(False)
+            multi_recompute_configs.append(dp_recompute_configs)
+    return multi_recompute_configs
+
 def parallel_data_provider(global_data, ds_union, device_group_index, device_index):
     ds = ds_union.get_local(device_group_index)
     order, states = ds.order, ds.states
