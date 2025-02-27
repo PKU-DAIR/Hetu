@@ -29,7 +29,7 @@ class DefineByRunGraph : public Graph {
                   const FeedDict& feed_dict = {}) {}
 
   NDArrayList Run(const Tensor& loss, const TensorList& fetches, 
-                  const FeedDict& feed_dict = {}, const int num_micro_batches = 1,
+                  const FeedDict& feed_dict = {}, const IntSymbolDict& int_symbol_dict = {}, const int num_micro_batches = 1,
                   const int compute_strategy_id = 0, const int optimize_strategy_id = 0, RunLevel run_level = RunLevel::UPDATE, 
                   bool save_checkpoint = false, const double grad_scale = 1);
 

@@ -15,7 +15,7 @@ void SqrtOpImpl::DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList&
 NDArrayList SqrtOpImpl::DoCompute(Operator& op,
                                   const NDArrayList& inputs,
                                   RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }
@@ -40,7 +40,7 @@ void ReciprocalSqrtOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
 NDArrayList ReciprocalSqrtOpImpl::DoCompute(Operator& op,
                                             const NDArrayList& inputs,
                                             RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }

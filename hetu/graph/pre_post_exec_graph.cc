@@ -217,6 +217,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
                                           _transfer_param_buffer_map[transfer_param->dtype()]->AsStorage(), 
                                           _transfer_param_buffer_map[transfer_param->dtype()]->GetElementOffset(transfer_param));
       // 添加runtime allocation
+      // HT_LOG_INFO << transfer_param << " id is " << transfer_param->id() << ", add runtime allocation";
       for (auto& runtime_ctx : runtime_ctx_list) {
         runtime_ctx.add_runtime_allocation(transfer_param->id(), transfer_param_data);
       }

@@ -46,6 +46,7 @@ HTShapeList BroadcastOpImpl::DoInferShape(Operator& op,
 
 void BroadcastOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", inputs.at(0)->meta());
+  dst_ctx.put("in_tensor", inputs.at(0));
 }
 
 void BroadcastOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -67,11 +68,12 @@ HTShapeList
 BroadcastGradientOpImpl::DoInferShape(Operator& op,
                                       const HTShapeList& input_shapes,
                                       RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void BroadcastGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor");
 }
 
 void BroadcastGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

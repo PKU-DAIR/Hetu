@@ -587,6 +587,14 @@ class NDArray : public shared_ptr_wrapper<NDArrayDef> {
                       StreamIndex stream_id = DEFAULT_STREAM,
                       NDArray& output = EMPTY);
 
+  static NDArray copy_multi_slices(const NDArray& input, const std::vector<std::pair<int32_t, int32_t>> indices,
+                                   int64_t axis = 0, StreamIndex stream_id = DEFAULT_STREAM,
+                                   NDArray& output = EMPTY);
+
+  static NDArray revert_copy_multi_slices(const NDArray& input, const std::vector<std::pair<int32_t, int32_t>> indices,
+                                          int64_t axis = 0, StreamIndex stream_id = DEFAULT_STREAM, 
+                                          NDArray& output = EMPTY);
+
   static NDArray contiguous(const NDArray& input,
                             StreamIndex stream_id = DEFAULT_STREAM,
                             NDArray& output = EMPTY);
@@ -767,7 +775,12 @@ class NDArrayDef : public shared_ptr_target {
     return _meta.shape;
   }
 
-  int64_t shape(size_t axis) const {
+  int64_t shape(int64_t axis) const {
+    int64_t ndim_ = ndim();
+    HT_ASSERT(axis >= -ndim_ && axis < ndim_)
+      << "shape axis should in range [" << -ndim_ << ", "
+      << ndim_ << "), but it's " << axis;
+    axis = axis < 0 ? axis + ndim_ : axis;
     return _meta.shape[axis];
   }
 
@@ -778,7 +791,7 @@ class NDArrayDef : public shared_ptr_target {
   int64_t stride(int64_t axis) const {
     int64_t ndim_ = ndim();
     HT_ASSERT(axis >= -ndim_ && axis < ndim_)
-      << "stride should in range [" << -ndim_ << ","
+      << "stride axis should in range [" << -ndim_ << ", "
       << ndim_ << "), but it's " << axis;
     axis = axis < 0 ? axis + ndim_ : axis;
     return _meta.stride[axis];

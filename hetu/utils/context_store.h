@@ -2,12 +2,12 @@
 
 #include "hetu/common/macros.h"
 #include "hetu/utils/json/json.hpp"
-#include "hetu/graph/distributed_states.h"
+#include "hetu/graph/tensor.h"
 
 namespace hetu {
 
 using json = nlohmann::json;
-using DistributedStates = hetu::graph::DistributedStates;
+using Tensor = hetu::graph::Tensor;
 
 template<typename T>
 std::string serialize(T&& obj) {
@@ -43,13 +43,13 @@ class ContextStore {
     using DecayT = std::decay_t<T>;
     if constexpr (std::is_same_v<DecayT, NDArray> ||
                   std::is_same_v<DecayT, NDArrayMeta> ||
-                  std::is_same_v<DecayT, DistributedStates>) {
+                  std::is_same_v<DecayT, Tensor>) {
       if constexpr (std::is_same_v<DecayT, NDArray>) {
         _ctx_ndarray.insert_or_assign(key, std::forward<T>(value));
       } else if constexpr (std::is_same_v<DecayT, NDArrayMeta>) {
         _ctx_ndarray_meta.insert_or_assign(key, std::forward<T>(value));
-      } else if constexpr (std::is_same_v<DecayT, DistributedStates>) {
-        _ctx_distributed_states.insert_or_assign(key, std::forward<T>(value));
+      } else if constexpr (std::is_same_v<DecayT, Tensor>) {
+        _ctx_tensor.insert_or_assign(key, std::forward<T>(value));
       }
     } else if constexpr (is_json_serializable<DecayT>::value) {
       _ctx.insert_or_assign(key, serialize(std::forward<T>(value)));
@@ -62,7 +62,7 @@ class ContextStore {
   T get(const std::string& key) const {
     if constexpr (std::is_same_v<T, NDArray> ||
                   std::is_same_v<T, NDArrayMeta> ||
-                  std::is_same_v<T, DistributedStates>) {
+                  std::is_same_v<T, Tensor>) {
       if constexpr (std::is_same_v<T, NDArray>) {
         auto it = _ctx_ndarray.find(key);
         HT_ASSERT(it != _ctx_ndarray.end()) << "NDArray " << key << " not found";
@@ -71,9 +71,9 @@ class ContextStore {
         auto it = _ctx_ndarray_meta.find(key);
         HT_ASSERT(it != _ctx_ndarray_meta.end()) << "NDArrayMeta " << key << " not found";
         return it->second;
-      } else if constexpr (std::is_same_v<T, DistributedStates>) {
-        auto it = _ctx_distributed_states.find(key);
-        HT_ASSERT(it != _ctx_distributed_states.end()) << "DistributedStates " << key << " not found";
+      } else if constexpr (std::is_same_v<T, Tensor>) {
+        auto it = _ctx_tensor.find(key);
+        HT_ASSERT(it != _ctx_tensor.end()) << "Tensor " << key << " not found";
         return it->second;
       }
     } else if constexpr (is_json_serializable<T>::value) {
@@ -89,7 +89,7 @@ class ContextStore {
   T pop(const std::string& key) {
     if constexpr (std::is_same_v<T, NDArray> ||
                   std::is_same_v<T, NDArrayMeta> ||
-                  std::is_same_v<T, DistributedStates>) {
+                  std::is_same_v<T, Tensor>) {
       if constexpr (std::is_same_v<T, NDArray>) {
         auto node_handle = _ctx_ndarray.extract(key);
         HT_ASSERT(!node_handle.empty()) << "NDArray " << key << " not found";
@@ -98,9 +98,9 @@ class ContextStore {
         auto node_handle = _ctx_ndarray_meta.extract(key);
         HT_ASSERT(!node_handle.empty()) << "NDArrayMeta " << key << " not found";
         return std::move(node_handle.mapped());
-      } else if constexpr (std::is_same_v<T, DistributedStates>) {
-        auto node_handle = _ctx_distributed_states.extract(key);
-        HT_ASSERT(!node_handle.empty()) << "DistributedStates " << key << " not found";
+      } else if constexpr (std::is_same_v<T, Tensor>) {
+        auto node_handle = _ctx_tensor.extract(key);
+        HT_ASSERT(!node_handle.empty()) << "Tensor " << key << " not found";
         return std::move(node_handle.mapped());
       }
     } else if constexpr (is_json_serializable<T>::value) {
@@ -116,10 +116,10 @@ class ContextStore {
   bool contains(const std::string& key) const {
     if constexpr (std::is_same_v<T, NDArray> ||
                   std::is_same_v<T, NDArrayMeta> ||
-                  std::is_same_v<T, DistributedStates>) {
+                  std::is_same_v<T, Tensor>) {
       return _ctx_ndarray.find(key) != _ctx_ndarray.end() ||
              _ctx_ndarray_meta.find(key) != _ctx_ndarray_meta.end() ||
-             _ctx_distributed_states.find(key) != _ctx_distributed_states.end();
+             _ctx_tensor.find(key) != _ctx_tensor.end();
     } else if constexpr (is_json_serializable<T>::value) {
       return _ctx.find(key) != _ctx.end();
     } else {
@@ -139,7 +139,7 @@ class ContextStore {
   std::unordered_map<std::string, std::string> _ctx;
   std::unordered_map<std::string, NDArray> _ctx_ndarray;
   std::unordered_map<std::string, NDArrayMeta> _ctx_ndarray_meta;
-  std::unordered_map<std::string, DistributedStates> _ctx_distributed_states;
+  std::unordered_map<std::string, Tensor> _ctx_tensor;
 };
 
 } // namespace hetu

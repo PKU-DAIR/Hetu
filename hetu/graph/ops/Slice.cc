@@ -104,7 +104,7 @@ void SliceGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
 HTShapeList SliceGradientOpImpl::DoInferShape(Operator& op, 
                                               const HTShapeList& input_shapes, 
                                               RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void SliceGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {

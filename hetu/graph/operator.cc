@@ -119,8 +119,9 @@ void OpInterface::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& 
     DeduceStates(inputs, outputs, op_meta, inst_ctx);
   }
   /*
+  HT_LOG_INFO << "deduce states for " << op_meta.name << " with inputs " << inputs;
   for (auto& output : outputs) {
-    HT_LOG_WARN << output << " ds union is " << output->cur_ds_union().ds_union_info();
+    HT_LOG_INFO << output << " ds union is " << output->cur_ds_union().ds_union_info();
   }
   */
   graph.CUR_HETERO_ID = 0;
@@ -208,6 +209,9 @@ void OpInterface::LoadAndSaveCtxForBackward(Operator& op, RuntimeContext& runtim
 HTShapeList OpInterface::InferShape(Operator& op,
                                     const HTShapeList& shapes,
                                     RuntimeContext& runtime_ctx) const {
+  for (size_t i = 0; i < op->num_inputs(); i++) {
+    op->input(i)->set_temp_shape(shapes.at(i));
+  }
   LoadAndSaveCtxForBackward(op, runtime_ctx);
   return DoInferShape(op, shapes, runtime_ctx);
 }
@@ -259,7 +263,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
         HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << ": exec op " << op
           << " output " << i << " shape = " << output_shape << " ds = " << op->output(i)->get_distributed_states().ds_info();
         if (runtime_ctx.has_runtime_allocation(output_id)) {
-          // HT_LOG_INFO << op->output(i) << " has runtime allocation";
+          // HT_LOG_INFO << op->output(i) << " id is " << output_id << ", has runtime allocation";
           outputs.push_back(runtime_ctx.get_runtime_allocation(output_id));
         } 
         // alloc on-the-fly
@@ -436,6 +440,7 @@ OpDef::OpDef(const constructor_access_key&, OpIdentifier ids,
   }
   // Outputs of this op
   if (_op_meta.fw_op_id != -1) {
+    // HT_LOG_INFO << graph << " op " << _op_meta.name << " fwd op id is " << _op_meta.fw_op_id << ", fwd op is " << graph.GetOp(_op_meta.fw_op_id);
     auto& src_ctx = graph.GetOp(_op_meta.fw_op_id)->instantiation_ctx().ctx;
     _body->LoadCtxForBackward(src_ctx, instantiation_ctx().ctx);
   }

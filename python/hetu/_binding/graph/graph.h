@@ -3,6 +3,7 @@
 #include <Python.h>
 #include "hetu/graph/graph.h"
 #include "hetu/_binding/core/ndarray.h"
+#include "hetu/_binding/core/symbol.h"
 #include "hetu/_binding/graph/tensor.h"
 #include "hetu/_binding/utils/numpy.h"
 #include "hetu/_binding/utils/python_primitives.h"
@@ -59,6 +60,23 @@ inline bool CheckPyFeedDict(PyObject* obj) {
   return false;
 }
 
+inline bool CheckPyIntSymbolDict(PyObject* obj) {
+  if (PyDict_Check(obj)) {
+    PyObject* key;
+    PyObject* value;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(obj, &pos, &key, &value)) {
+      if (!CheckPyIntSymbol(key))
+        return false;
+      // Only support python list now
+      if (!PyList_Check(value))
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 inline bool CheckPyParameterDict(PyObject* obj) {
   if (PyDict_Check(obj)) {
     PyObject* key;
@@ -98,7 +116,6 @@ inline FeedDict FeedDict_FromPyObject(PyObject* obj) {
   Py_ssize_t pos = 0;
   int64_t cnt = 0;
   while (PyDict_Next(obj, &pos, &key, &value)) {
-    HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << ": processing element " << cnt++ << " in FeedDict...";
     TensorId k = Tensor_FromPyObject(key)->id();
     NDArrayList v;
     if (PyList_Check(value)) {
@@ -111,6 +128,25 @@ inline FeedDict FeedDict_FromPyObject(PyObject* obj) {
     feed_dict.insert({k, v});
   }
   return feed_dict;
+}
+
+inline IntSymbolDict IntSymbolDict_FromPyObject(PyObject* obj) {
+  IntSymbolDict int_symbol_dict;
+  PyObject* key;
+  PyObject* value;
+  Py_ssize_t pos = 0;
+  int64_t cnt = 0;
+  while (PyDict_Next(obj, &pos, &key, &value)) {
+    IntSymbol k = IntSymbol_FromPyObject(key);
+    size_t size = PyList_GET_SIZE(value);
+    std::vector<int64_t> v(size);
+    for (size_t i = 0; i < size; i++) {
+      auto* item = PyList_GET_ITEM(value, i);
+      v[i] = Int64_FromPyLong(item);
+    }
+    int_symbol_dict.insert({k, v});
+  }
+  return int_symbol_dict;
 }
 
 inline ParameterDict ParameterDict_FromPyObject(PyObject* obj) {

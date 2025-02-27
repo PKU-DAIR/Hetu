@@ -49,7 +49,7 @@ AsStridedOpImpl::DoInferShape(Operator& op,
 void AsStridedOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", inputs.at(0)->meta());
   dst_ctx.put("storage_offset", storage_offset());
-  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor", inputs.at(0));
 }
 
 void AsStridedOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -113,20 +113,19 @@ HTShapeList
 AsStridedGradientOpImpl::DoInferShape(Operator& op, 
                                       const HTShapeList& input_shapes,
                                       RuntimeContext& ctx) const {
-  auto meta = ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta");
-  return {meta.shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void AsStridedGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
   dst_ctx.migrate_from<int64_t>(src_ctx, "storage_offset");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor");
 }
 
 void AsStridedGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                              const OpMeta& op_meta,
                                              const InstantiationContext& inst_ctx) const {
-  outputs.at(0)->set_distributed_states(inst_ctx.get<DistributedStates>("in_dstate"));
+  outputs.at(0)->set_distributed_states(inst_ctx.get<Tensor>("in_tensor")->get_distributed_states());
 }
 
 Tensor MakeAsStridedOp(Tensor input, const HTShape& outshape, const HTStride& stride,

@@ -1,15 +1,15 @@
+import hetu
+
 class LLaMAConfig(object):
     def __init__(
         self,
         vocab_size=50257,
-        n_positions=1024,
-        n_ctx=1024,
         n_embd=768,
         ffn_hidden_size=-1,
         n_layer=12,
         n_head=12,
         n_inner=None,
-        seq_len=128,
+        n_query_groups=-1,
         activation_function="relu",
         resid_pdrop=0.1,
         embd_pdrop=0.1,
@@ -28,15 +28,14 @@ class LLaMAConfig(object):
         scale_attn_by_inverse_layer_idx=False,
         reorder_and_upcast_attn=False,
         use_flash_attn = False,
+        lora_dtype="fp32",
+        dqtype="fp32",
     ):
         self.vocab_size = vocab_size
-        self.n_ctx = n_ctx
-        self.n_positions = n_positions
         self.n_embd = n_embd
         self.n_layer = n_layer
         self.n_head = n_head
         self.n_inner = n_inner
-        self.seq_len = seq_len
         self.activation_function = activation_function
         self.resid_pdrop = resid_pdrop
         self.embd_pdrop = embd_pdrop
@@ -52,21 +51,37 @@ class LLaMAConfig(object):
         self.use_cache = use_cache
         self.scale_attn_by_inverse_layer_idx = scale_attn_by_inverse_layer_idx
         self.reorder_and_upcast_attn = reorder_and_upcast_attn
-
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
-
         self.hidden_size = self.n_embd
         if ffn_hidden_size == -1:
-            self.ffn_hidden_size = 4*self.n_embd
+            self.ffn_hidden_size = 4 * self.n_embd
         else:
             self.ffn_hidden_size = ffn_hidden_size
-        self.max_position_embeddings = self.n_positions
+        if n_query_groups == -1:
+            self.num_query_groups = self.n_head
+        else:
+            self.num_query_groups = n_query_groups
         self.num_attention_heads = self.n_head
         self.num_hidden_layers = self.n_layer
-
         self.add_cross_attention = False
         self.use_return_dict = False
         self.output_attentions = False
         self.output_hidden_states= False
         self.use_flash_attn = use_flash_attn
+        if lora_dtype == "fp16":
+            self.lora_dtype = hetu.float16
+        elif lora_dtype == "bf16":
+            self.lora_dtype = hetu.bfloat16
+        elif lora_dtype == "fp4":
+            self.lora_dtype = hetu.float4
+        elif lora_dtype == "nf4":
+            self.lora_dtype = hetu.nfloat4
+        else:
+            self.lora_dtype = hetu.float32
+        if dqtype == "fp16":
+            self.dqtype = hetu.float16
+        elif dqtype == "bf16":
+            self.dqtype = hetu.bfloat16
+        else:
+            self.dqtype = hetu.float32

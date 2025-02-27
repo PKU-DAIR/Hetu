@@ -9,7 +9,7 @@ namespace graph {
 NDArrayList ExpOpImpl::DoCompute(Operator& op,
                                  const NDArrayList& inputs,
                                  RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   NDArray::exp(inputs.at(0), op->instantiation_ctx().stream_index, outputs.at(0));
   return outputs;
 }

@@ -2,6 +2,7 @@
 
 #include "hetu/common/macros.h"
 #include "hetu/core/ndarray.h"
+#include "hetu/core/symbol.h"
 #include <vector>
 #include <queue>
 #include <deque>
@@ -73,6 +74,7 @@ struct is_tensor_list<TensorList> : std::true_type {};
 using GraphId = uint64_t;
 using GraphName = std::string;
 using FeedDict = Tensor2NDArrayListMap;
+using IntSymbolDict = std::unordered_map<IntSymbol, std::vector<int64_t>>;
 using ParameterDict = std::unordered_map<std::string, int64_t>;
 using MemoryBlock = std::pair<size_t, size_t>;
 using MemoryBlockList = std::vector<MemoryBlock>;

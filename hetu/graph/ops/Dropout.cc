@@ -27,7 +27,7 @@ NDArrayList DropoutOpImpl::DoCompute(Operator& op,
                                      const NDArrayList& inputs,
                                      RuntimeContext& ctx) const {
   NDArrayList outputs;
-  if (inplace()) {
+  if (inplace() && !ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = inputs;
     outputs.push_back(DoAllocOutput(op, inputs, 1, ctx));
   } else {

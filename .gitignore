@@ -14,9 +14,9 @@ CIFAR_100/
 update.sh
 cmake/config.cmake
 .hypothesis/
-examples/gpt/_cache.pkl
-examples/gpt/experiments/
-examples/gpt/data/
+examples/hetero/_cache.pkl
+examples/hetero/experiments/
+examples/hetero/data/
 examples/malleus/data/
 examples/efficiency/exp
 examples/efficiency/draw

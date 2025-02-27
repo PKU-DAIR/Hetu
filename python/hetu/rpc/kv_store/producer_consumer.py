@@ -7,8 +7,6 @@ import hetu as ht
 from concurrent.futures import ProcessPoolExecutor
 from .client import KeyValueStoreClient
 
-ht.setup_logging()
-
 # Set the start method to 'spawn' at the very beginning
 multiprocessing.set_start_method('spawn', force=True)
 
@@ -57,6 +55,7 @@ class ProducerConsumer:
         )
         self.data_store = client.register_dict(dict_name)
         self.futures = []
+        ht.setup_logging()
         logging.info("ProducerConsumer initialized.")
 
     def produce(self, key, func, *args, **kwargs):
@@ -90,9 +89,11 @@ class ProducerConsumer:
         self.executor.shutdown(wait=True)
         logging.info("ProducerConsumer shutdown.")
 
+    '''
     def __del__(self):
         """Ensure that the executor is shut down when the object is deleted."""
         self.shutdown()
+    '''
 
 # ------------------------------------------------------------
 # Example usage

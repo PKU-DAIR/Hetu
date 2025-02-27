@@ -14,7 +14,6 @@ from .sparse import *
 from .parallel import *
 from .parallel_ds import *
 from .parallel_multi_ds import *
-from .parallel_utils import *
 
 __all__ = [
     'Module', 

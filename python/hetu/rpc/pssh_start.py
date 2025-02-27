@@ -1,6 +1,7 @@
 import os
 import argparse
 import yaml
+import time
 from pssh.clients import ParallelSSHClient
 from pssh.utils import enable_host_logger
 # from heturpc_polling_server import server_launch
@@ -102,5 +103,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     p = multiprocessing.Process(target=server_launch, args=(args.server_port,))
     p.start()
+    # workaround: clients may start earlier than the server
+    # need to use retry-until-connect approach
+    # now simply wait 3 seconds to ensure the server is lauched before clients
+    time.sleep(3)
     pssh(args)
     p.join()

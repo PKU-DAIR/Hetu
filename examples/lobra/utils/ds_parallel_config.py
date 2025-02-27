@@ -5,7 +5,7 @@ import socket
 import yaml
 import hetu as ht
 from queue import Queue
-from hetu.nn.modules.parallel_utils import get_multi_ds_parallel_config, config2ds
+from hetu.utils.parallel import get_multi_ds_parallel_config, config2ds
 
 GPUS_PER_NODE = 8
 

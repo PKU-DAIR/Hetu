@@ -5,7 +5,7 @@ from queue import Queue
 from typing import Dict, Optional, Tuple, List
 from hetu.nn.modules.module import Module
 import hetu.nn.modules.parallel_multi_ds as parallel_multi_ds
-from hetu.nn.modules.parallel_utils import get_multi_ds_parallel_config
+from hetu.utils.parallel import get_multi_ds_parallel_config
 
 class HtMultiRowParallelLinear(parallel_multi_ds.HtMultiRowParallelLinear):
     def forward(self, input_p):

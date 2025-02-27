@@ -406,7 +406,7 @@ void ConcatCuda(const NDArrayList& inputs, NDArray& output,
           begin_pos[dim] = offset;
           auto slice_shape = output->shape();
           slice_shape[dim] = dim_size;
-          NDArray slice_out = NDArray::slice(input, begin_pos, slice_shape, stream.stream_index());
+          NDArray slice_out = NDArray::slice(output, begin_pos, slice_shape, stream.stream_index());
           NDArray::copy(input, stream.stream_index(), slice_out);
           offset += dim_size;
         }

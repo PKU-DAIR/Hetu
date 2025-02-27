@@ -3,7 +3,7 @@ import numpy as np
 from queue import Queue
 from .module import Module
 import numbers
-from .parallel_utils import get_local_index, config2ds, get_multi_recompute_from
+from hetu.utils.parallel import get_local_index, config2ds, get_multi_recompute_from
 
 __all__ = [
     'HtMultiColumnParallelLinear', 

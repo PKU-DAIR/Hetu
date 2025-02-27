@@ -40,7 +40,7 @@ InterpolateOpImpl::DoInferShape(Operator& op,
 
 void InterpolateOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor", inputs.at(0));
 }
 
 void InterpolateOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -68,18 +68,18 @@ HTShapeList
 InterpolateGradientOpImpl::DoInferShape(Operator& op, 
                                         const HTShapeList& input_shapes, 
                                         RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void InterpolateGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor");
 }
 
 void InterpolateGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                                const OpMeta& op_meta,
                                                const InstantiationContext& inst_ctx) const {
-  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
+  const DistributedStates& ds_input = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   outputs.at(0)->set_distributed_states(ds_input);
 }
 

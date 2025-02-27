@@ -65,7 +65,7 @@ class ExecutableGraph : public Graph {
                   const FeedDict& feed_dict = {});
 
   NDArrayList Run(const Tensor& loss, const TensorList& fetches, 
-                  const FeedDict& feed_dict = {}, const int num_micro_batches = 1,
+                  const FeedDict& feed_dict = {}, const IntSymbolDict& int_symbol_dict = {}, const int num_micro_batches = 1,
                   RunLevel run_level = RunLevel::UPDATE, const double grad_scale = 1);
 
   GraphType type() const {
@@ -277,6 +277,7 @@ class ExecutableGraph : public Graph {
 
   NDArrayList CrucialRun(const TensorList& fetches, 
                          const FeedDict& feed_dict, 
+                         const IntSymbolDict& int_symbol_dict,
                          const int num_micro_batches);
 
   void GetExecEnvs();

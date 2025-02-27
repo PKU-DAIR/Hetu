@@ -1,5 +1,5 @@
 import hetu
-class LLamaConfig(object):
+class LLaMAConfig(object):
     def __init__(
         self,
         vocab_size=50257,

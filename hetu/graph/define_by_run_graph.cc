@@ -190,7 +190,7 @@ void DefineByRunGraph::PruneTensor(const Tensor& tensor) {
 }
 
 NDArrayList DefineByRunGraph::Run(const Tensor& loss, const TensorList& fetches,
-                                  const FeedDict& feed_dict, const int num_micro_batches,
+                                  const FeedDict& feed_dict, const IntSymbolDict& int_symbol_dict, const int num_micro_batches,
                                   const int compute_strategy_id, const int optimize_strategy_id, RunLevel run_level, 
                                   bool save_checkpoint, const double grad_scale) {
   TensorList referred_tensors, exec_referred_tensors;
@@ -198,7 +198,7 @@ NDArrayList DefineByRunGraph::Run(const Tensor& loss, const TensorList& fetches,
   std::tie(referred_tensors, exec_referred_tensors, exec_feed_dict) =
     GenerateExecutionTargets(fetches, feed_dict);
   NDArrayList exec_results =
-    _exec_graph->Run(loss, exec_referred_tensors, exec_feed_dict, num_micro_batches);
+    _exec_graph->Run(loss, exec_referred_tensors, exec_feed_dict, int_symbol_dict, num_micro_batches);
 
   // For all referred tensors, store their values for future use
   for (size_t i = 0; i < exec_results.size(); i++) {

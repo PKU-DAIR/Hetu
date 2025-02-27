@@ -58,6 +58,8 @@ std::string ArgType2Str(ArgType type) {
       return "List[hetu.Operator]";
     case ArgType::FEED_DICT:
       return "FeedDict";
+    case ArgType::INT_SYMBOL_DICT:
+      return "IntSymbolDict";
     case ArgType::PARAMETER_DICT:
       return "ParameterDict";
     case ArgType::STATE_DICT:
@@ -160,6 +162,8 @@ ArgType Str2ArgType(const std::string& type) {
     return ArgType::OPERATOR_LIST;
   if (type == "FeedDict" || type == "feed_dict")
     return ArgType::FEED_DICT;
+  if (type == "IntSymbolDict" || type == "int_symbol_dict")
+    return ArgType::INT_SYMBOL_DICT;
   if (type == "ParameterDict" || type == "parameter_dict")
     return ArgType::PARAMETER_DICT;
   if (type == "StateDict" || type == "state_dict")
@@ -316,6 +320,7 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
       case ArgType::OPERATOR:
       case ArgType::OPERATOR_LIST:
       case ArgType::FEED_DICT:
+      case ArgType::INT_SYMBOL_DICT:
       case ArgType::PARAMETER_DICT:
       case ArgType::DISTRIBUTED_STATES:
       case ArgType::DISTRIBUTED_STATES_LIST:
@@ -391,6 +396,8 @@ bool FnArg::check_arg(PyObject* obj) const {
       return CheckPyOperatorList(obj);
     case ArgType::FEED_DICT:
       return CheckPyFeedDict(obj);
+    case ArgType::INT_SYMBOL_DICT:
+      return CheckPyIntSymbolDict(obj);
     case ArgType::PARAMETER_DICT:
       return CheckPyParameterDict(obj);
     case ArgType::SGDOPTIMIZER:

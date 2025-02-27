@@ -16,6 +16,8 @@ namespace graph {
  ---------------------- Parallel Attn Impl ----------------------
 *****************************************************************/
 
+std::ostream& operator<<(std::ostream& os, const std::vector<std::pair<int32_t, int32_t>>& vec);
+
 enum class AttnSplitPattern {
   NORMAL = 0,
   STRIPE,
@@ -32,29 +34,76 @@ enum class AttnMask {
 
 class AttnInfo {
  public:
-  AttnInfo(AttnMask attn_mask, int64_t valid_len, 
-           int64_t q_len, int64_t kv_len)
-  : _attn_mask(attn_mask), _valid_len(valid_len),
-    _q_len(q_len), _kv_len(kv_len) {
+  AttnInfo(const Device& local_device, AttnMask attn_mask, int32_t valid_len)
+  : _local_device(local_device), _attn_mask_list({attn_mask}), _valid_len_list({valid_len}) {
   }
 
-  bool is_causal() const {
-    return _attn_mask == AttnMask::CAUSAL;
+  AttnInfo(const Device& local_device, const std::vector<AttnMask>& attn_mask_list, const std::vector<int32_t>& valid_len_list, 
+           const std::vector<int32_t>& cu_seqlens_q_vec, const std::vector<int32_t>& cu_seqlens_k_vec)
+  : _local_device(local_device), _attn_mask_list(attn_mask_list), _valid_len_list(valid_len_list),
+    _cu_seqlens_q_vec(cu_seqlens_q_vec), _cu_seqlens_k_vec(cu_seqlens_k_vec) {
+    HT_ASSERT(_cu_seqlens_q_vec.size() == _cu_seqlens_k_vec.size()
+              && _cu_seqlens_q_vec.size() == _valid_len_list.size() + 1)
+      << "sizes mismatch";
+    /*
+    if (valid_cu_seqlens_q == nullptr || valid_cu_seqlens_k == nullptr) {
+      // TODO: support build valid_cu_seqlens from attn_mask_list + valid_len_list + cu_seqlens_vec,
+      HT_NOT_IMPLEMENTED << "valid_cu_seqlens can be simply obtained by /2 from cu_seqlens"
+        << ", no need to support more complicated settings for now";
+    }
+    */
+    generate_valid_cu_seqlens_and_indices();
   }
 
-  const AttnMask get_mask() const {
-    return _attn_mask;
+  bool is_causal(size_t i = 0) const {
+    return _attn_mask_list.at(i) == AttnMask::CAUSAL;
   }
 
-  int64_t get_valid_len() const {
-    return _valid_len;
+  const AttnMask get_mask(size_t i = 0) const {
+    return _attn_mask_list.at(i);
+  }
+
+  int32_t get_valid_len(size_t i = 0) const {
+    return _valid_len_list.at(i);
+  }
+
+  const std::vector<int32_t>& get_cu_seqlens_q_vec() const {
+    return _cu_seqlens_q_vec;
+  }
+
+  const std::vector<int32_t>& get_cu_seqlens_k_vec() const {
+    return _cu_seqlens_k_vec;
+  }
+
+  const NDArray& get_valid_cu_seqlens_q() const {
+    return _valid_cu_seqlens_q;
+  }
+
+  const NDArray& get_valid_cu_seqlens_k() const {
+    return _valid_cu_seqlens_k;
+  }
+
+  const std::vector<std::pair<int32_t, int32_t>>& get_valid_indices_q() const {
+    return _valid_indices_q;
+  }
+
+  const std::vector<std::pair<int32_t, int32_t>>& get_valid_indices_k() const {
+    return _valid_indices_k;
   }
 
  protected:
-  AttnMask _attn_mask;
-  int64_t _valid_len;
-  int64_t _q_len;
-  int64_t _kv_len;
+
+  // valid_cu_seqlens is on GPU, valid_indices is on CPU
+  // valid_cu_seqlens用于flash attn中的运算
+  // valid_indices用于flash attn运算前对qkv去slice
+  void generate_valid_cu_seqlens_and_indices();
+
+  Device _local_device;
+  std::vector<AttnMask> _attn_mask_list;
+  std::vector<int32_t> _valid_len_list;
+  std::vector<int32_t> _cu_seqlens_q_vec, _cu_seqlens_k_vec;
+  NDArray _valid_cu_seqlens_q, _valid_cu_seqlens_k;
+  std::vector<std::pair<int32_t, int32_t>> _valid_indices_q, _valid_indices_k;
 };
 
 // NDarrayStorage + comm & comp event
@@ -343,8 +392,9 @@ class AttnCommRing {
  public:
   AttnCommRing(const Operator& op, const hetu::impl::comm::NCCLCommunicationGroup& nccl_comm_group, StreamIndex stream_idx, 
                int64_t ring_idx, const DeviceGroupList& tp_group_list, const std::vector<int64_t>& seq_len_list,
-               int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim,
-               double softmax_scale, double p_dropout, size_t kv_storage_size = 2);
+               int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim, double softmax_scale, double p_dropout, 
+               bool packing, int64_t packing_num, const NDArray& cu_seqlens_q, const NDArray& cu_seqlens_k, int64_t max_seqlen_q, int64_t max_seqlen_k,
+               size_t kv_storage_size = 2);
 
   void GenerateAttnInfo();
 
@@ -390,6 +440,12 @@ class AttnCommRing {
   int64_t _head_dim;
   double _softmax_scale;
   double _p_dropout;
+
+  // packing settings
+  bool _packing;
+  int64_t _packing_num;
+  NDArray _cu_seqlens_q, _cu_seqlens_k; 
+  int64_t _max_seqlen_q, _max_seqlen_k;
 
   // alg-related settings
   AttnSplitPattern _attn_split_pattern;
@@ -447,19 +503,19 @@ class ParallelAttentionOpImpl final : public OpInterface {
     return PARALLEL_ATTN_OP;
   } 
 
-  inline void set_attn_ctx_num(size_t attn_ctx_num) {
-    _attn_ctx_num = attn_ctx_num;
-  }
-
   inline const std::shared_ptr<AttnCtx>& attn_ctx() const {
     return _attn_ctx_list.at(_attn_ctx_num);
   }
   
-  inline int64_t max_seqlen_q() const {
+  inline int64_t get_max_seqlen_q() const {
+    HT_ASSERT(_max_seqlen_q)
+      << "get_max_seqlen_q() can only be called when packing";
     return _max_seqlen_q->get_val();
   }
 
-  inline int64_t max_seqlen_k() const {
+  inline int64_t get_max_seqlen_k() const {
+    HT_ASSERT(_max_seqlen_k)
+      << "get_max_seqlen_k() can only be called when packing";
     return _max_seqlen_k->get_val();
   }
 
@@ -502,7 +558,7 @@ class ParallelAttentionOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  size_t _attn_ctx_num{0};
+  mutable size_t _attn_ctx_num{0};
   std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list;
   int64_t _head_dim;
   int64_t _group_query_ratio;
@@ -560,19 +616,19 @@ class ParallelAttentionGradientOpImpl final : public OpInterface {
     return PARALLEL_ATTN_GRAD_OP;
   } 
 
-  inline void set_attn_ctx_num(size_t attn_ctx_num) {
-    _attn_ctx_num = attn_ctx_num;
-  }
-
   inline const std::shared_ptr<AttnCtx>& attn_ctx() const {
     return _attn_ctx_list.at(_attn_ctx_num);
   }
 
-  inline int64_t max_seqlen_q() const {
+  inline int64_t get_max_seqlen_q() const {
+    HT_ASSERT(_max_seqlen_q)
+      << "get_max_seqlen_q() can only be called when packing";
     return _max_seqlen_q->get_val();
   }
 
-  inline int64_t max_seqlen_k() const {
+  inline int64_t get_max_seqlen_k() const {
+    HT_ASSERT(_max_seqlen_k)
+      << "get_max_seqlen_k() can only be called when packing";
     return _max_seqlen_k->get_val();
   }
 
@@ -609,7 +665,7 @@ class ParallelAttentionGradientOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  size_t _attn_ctx_num{0};
+  mutable size_t _attn_ctx_num{0};
   std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list; // for different micro batches
   int64_t _head_dim;
   int64_t _group_query_ratio;

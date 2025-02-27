@@ -1,88 +1,118 @@
-import hetu
-from . import Dataset, IterableDataset
-import functools
-from typing import (
-    Callable,
-    Dict,
-    Generic,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    TypeVar,
-)
-class DataLoader():
-    # dataset: Dataset
-    batch_size: Optional[int]
-    num_workers: int
-    drop_last: bool
-    __initialized = False
+import torch
+import numpy as np
+from typing import List
 
-    def __init__(self, dataset, batch_size: Optional[int] = 1,
-                 shuffle: bool = False, num_workers: int = 0, 
-                 pin_memory: bool = False, drop_last: bool = False):
-        if num_workers < 0:
-            raise ValueError('num_workers option should be non-negative; '
-                             'use num_workers=0 to disable multiprocessing.')
+def truncate_fn(batch: List[np.ndarray], pad_id: int, global_token_num: int):
+    valid_token_num = sum([np.sum(seq != pad_id) for seq in batch])
+    last_seq_valid_token = np.sum(batch[-1] != pad_id)
+    assert valid_token_num >= global_token_num and valid_token_num - global_token_num < last_seq_valid_token, "cannot truncate the last seq"
+    batch[-1][last_seq_valid_token - (valid_token_num - global_token_num):] = pad_id
+    return batch
 
-        self.dataset = dataset
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
-        self.dataloader_c = hetu.Dataloader(dataset, batch_size, num_workers,
-                                            "default", shuffle, drop_last)
-        print(self.dataloader_c.batch_num)
+def build_data_loader(dataset, consumed_samples, global_batch_size=None, global_token_num=None):
+    if dataset is None:
+        return None
+    assert (global_batch_size is None and global_token_num is not None) \
+        or (global_batch_size is not None and global_token_num is None), "should only use one of the args: global_batch_size & global_token_num"
+    if global_batch_size != None:
+        batch_sampler = HetuNormalSampler(
+            total_samples=len(dataset),
+            consumed_samples=consumed_samples,
+            global_batch_size=global_batch_size
+        )
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_sampler=batch_sampler,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False
+        )
+    if global_token_num != None:
+        batch_sampler = HetuFixedTokenSampler(
+            dataset=dataset,
+            total_samples=len(dataset),
+            consumed_samples=consumed_samples,
+            global_token_num=global_token_num
+        )
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_sampler=batch_sampler,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False,
+            collate_fn=lambda batch: truncate_fn(batch, dataset.pad_id(), global_token_num)
+        )
 
-        # Arg-check dataset related before checking samplers because we want to
-        # tell users that iterable-style datasets are incompatible with custom
-        # samplers first, so that they don't learn that this combo doesn't work
-        # after spending time fixing the custom sampler errors.
-        if isinstance(dataset, IterableDataset):
-            # self._dataset_kind = _DatasetKind.Iterable
-            if shuffle is not False:
-                raise ValueError(
-                    "DataLoader with IterableDataset: expected unspecified "
-                    "shuffle option, but got shuffle={}".format(shuffle))
+# directly return the whole global batch, will be split into chunks later
+class HetuNormalSampler:
 
-            batch_size = None
-            drop_last = False
-        elif batch_size is None:
-            # no auto_collation
-            if drop_last:
-                raise ValueError('batch_size=None option disables auto-batching '
-                                 'and is mutually exclusive with drop_last')
-
-
-        self.batch_size = batch_size
+    def __init__(self, total_samples, consumed_samples, global_batch_size, drop_last=True):
+        # Keep a copy of input params for later use.
+        self.total_samples = total_samples
+        self.consumed_samples = consumed_samples
+        self.global_batch_size = global_batch_size
         self.drop_last = drop_last
 
+        # Sanity checks.
+        assert self.total_samples > 0, \
+            'no sample to consume: {}'.format(self.total_samples)
+        assert self.consumed_samples < self.total_samples, \
+            'no samples left to consume: {}, {}'.format(self.consumed_samples,
+                                                        self.total_samples)
 
+    def __len__(self):
+        return self.total_samples
 
-        self.__initialized = True
-        self._IterableDataset_len_called = None 
-
-        self._iterator = None
-
-    # def _get_iterator(self):
-    #     if self.num_workers == 0:
-    #         return _SingleProcessDataLoaderIter(self)
-    #     else:
-    #         self.check_worker_number_rationality()
-    #         return _MultiProcessingDataLoaderIter(self)
-
-    def __setattr__(self, attr, val):
-        if self.__initialized and attr in (
-                'batch_size', 'batch_sampler', 'sampler', 'drop_last', 'dataset', 'persistent_workers'):
-            raise ValueError('{} attribute should not be set after {} is '
-                             'initialized'.format(attr, self.__class__.__name__))
-
-        super(DataLoader, self).__setattr__(attr, val)
-
-    # We quote '_BaseDataLoaderIter' since it isn't defined yet and the definition can't be moved up
-    # since '_BaseDataLoaderIter' references 'DataLoader'.
     def __iter__(self):
-        return self.dataloader_c
+        batch = []
+        # Last batch will be dropped if drop_last is not set False
+        for idx in range(self.consumed_samples, self.total_samples):
+            batch.append(idx)
+            if len(batch) == self.global_batch_size:
+                yield batch
+                batch = []
 
-    def __len__(self) -> int:
-        return self.dataloader_c.sample_num
+        # Check the last partial batch and see drop_last is set
+        if len(batch) > 0 and not self.drop_last:
+            yield batch
+            
+class HetuFixedTokenSampler:
+
+    def __init__(self, dataset, total_samples, consumed_samples, global_token_num, drop_last=True):
+        assert hasattr(dataset, 'data'), "dataset does not have 'data' attribute"
+        assert hasattr(dataset, 'pad_id'), "dataset does not have 'pad_id' method"
+        assert callable(getattr(dataset, 'pad_id')), "dataset 'pad_id' method is not callable"
+        self.dataset = dataset
+        self.total_samples = total_samples
+        self.consumed_samples = consumed_samples
+        self.global_token_num = global_token_num
+        self.drop_last = drop_last
+        self.total_samples = len(dataset)
+
+        # Sanity checks
+        assert self.total_samples > 0, \
+            'No samples to consume: {}'.format(self.total_samples)
+        assert self.consumed_samples < self.total_samples, \
+            'No samples left to consume: {}, {}'.format(self.consumed_samples, self.total_samples)
+
+    def __len__(self):
+        return self.total_samples
+
+    def __iter__(self):
+        batch = []
+        current_token_count = 0
+        for idx in range(self.consumed_samples, self.total_samples):
+            sample = self.dataset.data[idx]
+            sample_token_count = np.sum(np.array(sample) != self.dataset.pad_id()) # 获取当前样本的token数
+            batch.append(idx)
+            # print(idx, sample_token_count, sample != self.dataset.pad_id())
+            if current_token_count + sample_token_count >= self.global_token_num:
+                yield batch
+                batch = []
+                current_token_count = 0
+            else:
+                current_token_count += sample_token_count
+
+        # Check the last partial batch and see drop_last is set
+        if len(batch) > 0 and not self.drop_last:
+            yield batch

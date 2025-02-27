@@ -370,13 +370,13 @@ class ParamSlice {
     const Tensor& OwnedSliceInst(size_t idx) const {
       HT_ASSERT(idx < _owned_slice_instances.size())
         << "idx out of range";
-      return _owned_slice_instances[0];
+      return _owned_slice_instances[idx];
     }
 
     const Tensor& NeededSliceInst(size_t idx) const {
       HT_ASSERT(idx < _needed_slice_instances.size())
         << "idx out of range";
-      return _needed_slice_instances[0];
+      return _needed_slice_instances[idx];
     }
 
     void AddOwnedSliceInst(const Device& device, const Tensor& tensor);

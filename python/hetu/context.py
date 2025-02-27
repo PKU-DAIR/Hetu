@@ -260,8 +260,9 @@ class _CPUOffloadContext(object):
     def __exit__(self, e_type, e_value, e_trace):
         ht_core._internal_context.pop_cpu_offload_ctx()
         _cur_cpu_offload_contexts.remove(self)
-def cpu_offload():
-    return _CPUOffloadContext()
+        
+def cpu_offload(multi_cpu_offload):
+    return _CPUOffloadContext(multi_cpu_offload)
 
 class _ProfileContex(object):
     def __init__(self, enabled : bool = True, use_cpu : bool = False, use_cuda : bool = False,

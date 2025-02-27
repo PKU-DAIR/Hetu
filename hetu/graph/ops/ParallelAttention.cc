@@ -10,7 +10,42 @@ namespace graph {
  ---------------------- Parallel Attn Impl ----------------------
 *****************************************************************/
 
+std::ostream& operator<<(std::ostream& os, const std::vector<std::pair<int32_t, int32_t>>& vec) {
+  os << "[";
+  for (size_t i = 0; i < vec.size(); ++i) {
+    os << "(" << vec[i].first << ", " << vec[i].second << ")";
+    if (i != vec.size() - 1) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+static int64_t get_local_dcp_idx(const Tensor& input) {
+  auto local_device = hetu::impl::comm::GetLocalDevice();
+  if (input->cur_ds_union().is_hetero()) {
+    HT_ASSERT(input->cur_ds_union().hetero_dim() == 0)
+      << "hetero dcp should only hetero on dim 0 (token dim)";
+    HT_ASSERT(input->placement_group_union().has(local_device))
+      << "ParallelAttnOp input " << input << " should already deduced the pg union and be local";
+    return input->placement_group_union().get_index(local_device);
+  } 
+  const auto& ds = input->cur_ds_union().get(0);
+  const auto& pg = input->placement_group_union().get(0);
+  auto it = std::find(pg.devices().begin(), pg.devices().end(), local_device);
+  HT_ASSERT(it != pg.devices().end())
+    << "get_local_dcp_idx should ensure local device is in the placement group";
+  auto device_idx = std::distance(pg.devices().begin(), it);
+  // 查找device idx对应到ds中是第几个split 0
+  auto state = ds.map_device_to_state_index(device_idx);
+  return state[0];
+}
+
+// 这个东西会用在infer meta和shape里头
+// 因此不能保证是在exec graph中
 static int64_t get_local_seq_len(const Tensor& input, const SyShapeList& multi_seq_lens_symbol) {
+  auto local_device = hetu::impl::comm::GetLocalDevice();
   auto& graph = input->producer()->graph();
   if (graph.type() == GraphType::EAGER) {
     HT_ASSERT(multi_seq_lens_symbol.size() == 1 && multi_seq_lens_symbol.at(0).size() == 1)
@@ -28,35 +63,16 @@ static int64_t get_local_seq_len(const Tensor& input, const SyShapeList& multi_s
   if (graph.USE_HETERO_ID) {
     return seq_lens_symbol.at(graph.CUR_HETERO_ID)->get_val();
   } else {
-    if (input->cur_ds_union().is_hetero()) {
-      auto idx = input->inferred_local_placement_group_idx();
-      return seq_lens_symbol.at(idx)->get_val();
-    } else {
-      for (auto& symbol : seq_lens_symbol) {
-        HT_ASSERT(symbol->get_val() == seq_lens_symbol.at(0)->get_val())
-          << "all seq lens should be equal in homo setting";
-      }
-      return seq_lens_symbol.at(0)->get_val();
+    HT_ASSERT(input->has_placement_group())
+      << "should guarantee " << input << " has deduced placement group union";
+    if (input->placement_group_union().has(local_device)) {
+      auto cur_dcp_idx = get_local_dcp_idx(input);
+      return seq_lens_symbol.at(cur_dcp_idx)->get_val();
     }
+    // 说明是非本地的deduce
+    // 返回对应pipeline id的即可
+    return seq_lens_symbol.at(input->producer()->suggested_hetero_id())->get_val();
   }
-}
-
-static int64_t get_local_dcp_idx(const Tensor& input) {
-  auto local_device = hetu::impl::comm::GetLocalDevice();
-  if (input->cur_ds_union().is_hetero()) {
-    HT_ASSERT(input->placement_group_union().has(local_device))
-      << "ParallelAttnOp input " << input << " should already deduced the pg union and be local";
-    return input->placement_group_union().get_index(local_device);
-  } 
-  const auto& ds = input->cur_ds_union().get(0);
-  const auto& pg = input->placement_group_union().get(0);
-  auto it = std::find(pg.devices().begin(), pg.devices().end(), local_device);
-  HT_ASSERT(it != pg.devices().end())
-    << "get_local_dcp_idx should ensure local device is in the placement group";
-  auto device_idx = std::distance(pg.devices().begin(), it);
-  // 查找device idx对应到ds中是第几个split 0
-  auto state = ds.map_device_to_state_index(device_idx);
-  return state[0];
 }
 
 static std::tuple<int64_t, DeviceGroupList, std::vector<int64_t>> get_local_ring(const Tensor& input, const SyShapeList& multi_seq_lens_symbol, const SyShapeList& multi_cp_group_symbol) {
@@ -103,13 +119,56 @@ static std::tuple<int64_t, DeviceGroupList, std::vector<int64_t>> get_local_ring
   return std::make_tuple(ring_idx, tp_group_list, seq_len_list);
 }
 
+// 通过attn_mask_list + valid_len_list + cu_seqlens_vec构造新的valid cu_seqlens和indices用于实际调用slice以及varlen attn
+void AttnInfo::generate_valid_cu_seqlens_and_indices() {
+  std::vector<int32_t> valid_cu_seqlens_q_vec(_cu_seqlens_q_vec), valid_cu_seqlens_k_vec(_cu_seqlens_k_vec);
+  size_t packing_num = _valid_len_list.size();
+  for (size_t cu_seqlens_idx = 1; cu_seqlens_idx <= packing_num; cu_seqlens_idx++) {
+    // COL意味着要对kv的最左边valid_len进行slice
+    // q则不需要动
+    if (_attn_mask_list.at(cu_seqlens_idx - 1) == AttnMask::COL) {
+      valid_cu_seqlens_q_vec.at(cu_seqlens_idx) = valid_cu_seqlens_q_vec.at(cu_seqlens_idx - 1) + (_cu_seqlens_q_vec.at(cu_seqlens_idx) - _cu_seqlens_q_vec.at(cu_seqlens_idx - 1));
+      valid_cu_seqlens_k_vec.at(cu_seqlens_idx) = valid_cu_seqlens_k_vec.at(cu_seqlens_idx - 1) + _valid_len_list.at(cu_seqlens_idx - 1);
+      _valid_indices_q.emplace_back(std::make_pair(_cu_seqlens_q_vec.at(cu_seqlens_idx - 1), _cu_seqlens_q_vec.at(cu_seqlens_idx)));
+      _valid_indices_k.emplace_back(std::make_pair(_cu_seqlens_k_vec.at(cu_seqlens_idx - 1), _cu_seqlens_k_vec.at(cu_seqlens_idx - 1) + _valid_len_list.at(cu_seqlens_idx - 1)));
+    } 
+    // ROW意味着要对q的最下边valid_len进行slice
+    // kv则不需要动
+    else if (_attn_mask_list.at(cu_seqlens_idx - 1) == AttnMask::ROW) {
+      valid_cu_seqlens_q_vec.at(cu_seqlens_idx) = valid_cu_seqlens_q_vec.at(cu_seqlens_idx - 1) + _valid_len_list.at(cu_seqlens_idx - 1);
+      valid_cu_seqlens_k_vec.at(cu_seqlens_idx) = valid_cu_seqlens_k_vec.at(cu_seqlens_idx - 1) + (_cu_seqlens_k_vec.at(cu_seqlens_idx) - _cu_seqlens_k_vec.at(cu_seqlens_idx - 1));
+      _valid_indices_q.emplace_back(std::make_pair(_cu_seqlens_q_vec.at(cu_seqlens_idx) - _valid_len_list.at(cu_seqlens_idx - 1), _cu_seqlens_q_vec.at(cu_seqlens_idx)));
+      _valid_indices_k.emplace_back(std::make_pair(_cu_seqlens_k_vec.at(cu_seqlens_idx - 1), _cu_seqlens_k_vec.at(cu_seqlens_idx)));
+    }
+    // qkv都不需要slice
+    else if (_attn_mask_list.at(cu_seqlens_idx - 1) == AttnMask::CAUSAL 
+             || _attn_mask_list.at(cu_seqlens_idx - 1) == AttnMask::FULL) {
+      valid_cu_seqlens_q_vec.at(cu_seqlens_idx) = valid_cu_seqlens_q_vec.at(cu_seqlens_idx - 1) + (_cu_seqlens_q_vec.at(cu_seqlens_idx) - _cu_seqlens_q_vec.at(cu_seqlens_idx - 1));
+      valid_cu_seqlens_k_vec.at(cu_seqlens_idx) = valid_cu_seqlens_k_vec.at(cu_seqlens_idx - 1) + (_cu_seqlens_k_vec.at(cu_seqlens_idx) - _cu_seqlens_k_vec.at(cu_seqlens_idx - 1));
+      _valid_indices_q.emplace_back(std::make_pair(_cu_seqlens_q_vec.at(cu_seqlens_idx - 1), _cu_seqlens_q_vec.at(cu_seqlens_idx)));
+      _valid_indices_k.emplace_back(std::make_pair(_cu_seqlens_k_vec.at(cu_seqlens_idx - 1), _cu_seqlens_k_vec.at(cu_seqlens_idx)));
+    } 
+    else {
+      HT_RUNTIME_ERROR << "NotImplementedError";
+    }
+  }
+  // 直接将两个vector转化成device上的NDArray
+  _valid_cu_seqlens_q = NDArray::empty({packing_num + 1}, _local_device, DataType::INT32);
+  _valid_cu_seqlens_k = NDArray::empty({packing_num + 1}, _local_device, DataType::INT32);
+  size_t vec_size = (packing_num + 1) * DataType2Size(DataType::INT32);
+  CudaMemcpyAsync(_valid_cu_seqlens_q->raw_data_ptr(), valid_cu_seqlens_q_vec.data(), vec_size, cudaMemcpyHostToDevice, hetu::impl::CUDAStream(Stream(_local_device, kH2DStream)));
+  CudaMemcpyAsync(_valid_cu_seqlens_k->raw_data_ptr(), valid_cu_seqlens_k_vec.data(), vec_size, cudaMemcpyHostToDevice, hetu::impl::CUDAStream(Stream(_local_device, kH2DStream)));
+}
+
 AttnCommRing::AttnCommRing(const Operator& op, const hetu::impl::comm::NCCLCommunicationGroup& nccl_comm_group, StreamIndex stream_idx, 
                            int64_t ring_idx, const DeviceGroupList& tp_group_list, const std::vector<int64_t>& seq_len_list,
-                           int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim,
-                           double softmax_scale, double p_dropout, size_t kv_storage_size)
+                           int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim, double softmax_scale, double p_dropout, 
+                           bool packing, int64_t packing_num, const NDArray& cu_seqlens_q, const NDArray& cu_seqlens_k, int64_t max_seqlen_q, int64_t max_seqlen_k,
+                           size_t kv_storage_size)
   : _nccl_comm_group(nccl_comm_group), _stream_idx(stream_idx), _ring_idx(ring_idx), _tp_group_list(tp_group_list), _seq_len_list(seq_len_list),
-    _batch_size(batch_size), _q_num_heads(q_num_heads), _kv_num_heads(kv_num_heads), _head_dim(head_dim),
-    _softmax_scale(softmax_scale), _p_dropout(p_dropout), _kv_storage_size(kv_storage_size) {
+    _batch_size(batch_size), _q_num_heads(q_num_heads), _kv_num_heads(kv_num_heads), _head_dim(head_dim), _softmax_scale(softmax_scale), _p_dropout(p_dropout), 
+    _packing(packing), _packing_num(packing_num), _cu_seqlens_q(cu_seqlens_q), _cu_seqlens_k(cu_seqlens_k), _max_seqlen_q(max_seqlen_q), _max_seqlen_k(max_seqlen_k),
+    _kv_storage_size(kv_storage_size) {
   _ring_size = _tp_group_list.size();
   HT_ASSERT(_ring_size == _seq_len_list.size() && _ring_idx < _ring_size)
     << "ring size should be aligned";
@@ -151,51 +210,119 @@ AttnCommRing::AttnCommRing(const Operator& op, const hetu::impl::comm::NCCLCommu
 void AttnCommRing::GenerateAttnInfo() {
   HT_ASSERT(_attn_info_list.empty())
     << "GenerateAttnInfo can only run once";
+  // packing情形先把所有cu_seqlens的东西转化好
+  // 注意cu_seqlens是每个rank视角下的
+  // python端需要思考怎么设置以及分配token并保证恰好完美分割
+  // C++端则相对无脑
+  std::vector<std::vector<int32_t>> cu_seqlens_q_vecs, cu_seqlens_k_vecs;
+  if (_packing) {
+    // 保证cu_seqlens的H2D的搬运已完成
+    auto event = std::make_unique<hetu::impl::CUDAEvent>(_local_device);
+    event->Record(Stream(_local_device, kH2DStream));
+    event->Block(Stream(_local_device, kD2HStream));
+    HT_ASSERT(_cu_seqlens_q->shape() == _cu_seqlens_k->shape()
+              && _cu_seqlens_q->shape(0) == _ring_size
+              && _cu_seqlens_q->shape(1) == _packing_num + 1
+              && _cu_seqlens_q->dtype() == DataType::INT32)
+      << "cu_seqlens shape or type is wrong";
+    hetu::cuda::CUDADeviceGuard guard(_local_device.index());
+    const void* q_dev_ptr = _cu_seqlens_q->raw_data_ptr();
+    const void* k_dev_ptr = _cu_seqlens_k->raw_data_ptr(); 
+    size_t vec_size = (_packing_num + 1) * DataType2Size(DataType::INT32);
+    for (size_t i = 0; i < _ring_size; i++) {
+      cu_seqlens_q_vecs.emplace_back(std::vector<int32_t>(_packing_num + 1));
+      cu_seqlens_k_vecs.emplace_back(std::vector<int32_t>(_packing_num + 1));
+      CudaMemcpyAsync(cu_seqlens_q_vecs[i].data(), q_dev_ptr + vec_size * i, vec_size, cudaMemcpyDeviceToHost, hetu::impl::CUDAStream(Stream(_local_device, kD2HStream)));
+      CudaMemcpyAsync(cu_seqlens_k_vecs[i].data(), k_dev_ptr + vec_size * i, vec_size, cudaMemcpyDeviceToHost, hetu::impl::CUDAStream(Stream(_local_device, kD2HStream)));
+    }
+    // 保证将所有cu_seqlens转化为CPU上的vecs后再去构造valid_cu_seqlens和valid_indices
+    /*
+    auto event = std::make_unique<hetu::impl::CUDAEvent>(_local_device);
+    event->Record(Stream(_local_device, kD2HStream));
+    event->Block(Stream(_local_device, kH2DStream));
+    */
+    CudaStreamSynchronize(hetu::impl::CUDAStream(Stream(_local_device, kD2HStream)));
+  }
   // q所在的rank是i
   for (size_t i = 0; i < _ring_size; i++) {
     // k和v所在的rank是j
     for (size_t j = 0; j < _ring_size; j++) {
-      AttnMask attn_mask = AttnMask::EMPTY;
-      int64_t valid_len = -1;
-      // 自己rank上的qkv
-      // 直接使用causal mask即可
-      if (i == j) {
-        // 什么都不用做
-        attn_mask = AttnMask::CAUSAL;
-      } 
-      else {
-        if (_attn_split_pattern == AttnSplitPattern::NORMAL) {
-          if (i < j) {
-            attn_mask = AttnMask::EMPTY;
-          } else {
-            attn_mask = AttnMask::FULL;
+      if (!_packing) {
+        AttnMask attn_mask = AttnMask::EMPTY;
+        int64_t valid_len = -1;
+        // 自己rank上的qkv
+        // 直接使用causal mask即可
+        if (i == j) {
+          // 什么都不用做
+          attn_mask = AttnMask::CAUSAL;
+        } 
+        else {
+          if (_attn_split_pattern == AttnSplitPattern::NORMAL) {
+            if (i < j) {
+              attn_mask = AttnMask::EMPTY;
+            } else {
+              attn_mask = AttnMask::FULL;
+            }
+          } else if (_attn_split_pattern == AttnSplitPattern::SYM) {
+            // 即前一半后一半均匀切
+            // 无法整除2的情况下后一半比前一半多1个token
+            if (i < j) {
+              // mask -> valid len row at bottom
+              attn_mask = AttnMask::ROW; 
+              valid_len = _seq_len_list[i] - _seq_len_list[i] / 2; 
+            } else {
+              // mask -> valid len col at left
+              attn_mask = AttnMask::COL;
+              valid_len = _seq_len_list[j] / 2; 
+            }
+          } 
+          // 其余baseline有待实现
+          else {
+            HT_RUNTIME_ERROR << "NotImplementedError";
           }
-        } else if (_attn_split_pattern == AttnSplitPattern::SYM) {
-          // TODO: 目前默认前一半后一半均匀切
-          // 后一半的q才是valid的
-          auto determine_rank = std::min(i, j);
-          // 这里的alg需要保证所有视角下的valid len一致
-          // 除2具有这个性质
-          valid_len = _seq_len_list[determine_rank] / 2; 
-          if (i < j) {
+        }
+        // 建立rank-i上q与rank-j上的k和v之间的info
+        _attn_info_list.emplace_back(std::make_shared<AttnInfo>(_local_device, attn_mask, valid_len));
+      }
+      // packing 
+      else {
+        HT_ASSERT(_attn_split_pattern == AttnSplitPattern::SYM)
+          << "packing now only support AttnSplitPattern::SYM";
+        std::vector<AttnMask> attn_mask_list;
+        std::vector<int32_t> valid_len_list;
+        for (size_t cu_seqlens_idx = 1; cu_seqlens_idx <= _packing_num; cu_seqlens_idx++) {
+          if (i == j) {
+            attn_mask_list.emplace_back(AttnMask::CAUSAL);
+            valid_len_list.emplace_back(-1);
+          } else if (i < j) {
             // mask -> valid len row at bottom
-            attn_mask = AttnMask::ROW; 
+            attn_mask_list.emplace_back(AttnMask::ROW); 
+            auto chunk_len = cu_seqlens_q_vecs.at(i).at(cu_seqlens_idx) - cu_seqlens_q_vecs.at(i).at(cu_seqlens_idx - 1);
+            valid_len_list.emplace_back(chunk_len - chunk_len / 2);
           } else {
             // mask -> valid len col at left
-            attn_mask = AttnMask::COL;
+            attn_mask_list.emplace_back(AttnMask::COL); 
+            auto chunk_len = cu_seqlens_k_vecs.at(j).at(cu_seqlens_idx) - cu_seqlens_k_vecs.at(j).at(cu_seqlens_idx - 1);
+            valid_len_list.emplace_back(chunk_len / 2);
           }
-        } 
-        // 其余baseline有待实现
-        else {
-          HT_RUNTIME_ERROR << "NotImplementedError";
         }
+        // 建立rank-i上q与rank-j上的k和v之间的info
+        _attn_info_list.emplace_back(std::make_shared<AttnInfo>(_local_device,
+                                                                attn_mask_list, 
+                                                                valid_len_list,
+                                                                cu_seqlens_q_vecs.at(i),
+                                                                cu_seqlens_k_vecs.at(j)));
+        HT_LOG_DEBUG << _local_device << ": " << i << "-th q and " << j << "-th k(v)"
+          << ", cu_seqlens_q_vec is " << cu_seqlens_q_vecs.at(i) << " and cu_seqlens_k_vec is " << cu_seqlens_k_vecs.at(j)
+          << ", valid_indices_q is " << _attn_info_list.back()->get_valid_indices_q() << " and valid_indices_k is " << _attn_info_list.back()->get_valid_indices_k();
       }
-      // 建立rank-i上q与rank-j上的k和v之间的info
-      _attn_info_list.emplace_back(std::make_shared<AttnInfo>(attn_mask, 
-                                                              valid_len,
-                                                              _seq_len_list[i],
-                                                              _seq_len_list[j]));
     }
+  }
+  if (_packing) {
+    // 保证构造完所有的valid_cu_seqlens后再去执行flash attn运算
+    auto event = std::make_unique<hetu::impl::CUDAEvent>(_local_device);
+    event->Record(Stream(_local_device, kH2DStream));
+    event->Block(Stream(_local_device, _stream_idx));
   }
 }
 
@@ -231,6 +358,7 @@ void AttnCommRing::PrepareKVBlocks(const NDArray& local_k, const NDArray& local_
   // 最一开始拥有的local的kv映射到0号storage上
   // 下一轮即将获得的映射到1号storage上
   // 依次类推
+  // 因此需要注意每个rank的视角下同一个编号的storage并不一定对应同一群block
   int64_t cur_storage_idx = 0;
   int64_t cur_block_idx = _ring_idx;
   HT_ASSERT(_kv_block_to_storage_map.empty())
@@ -323,7 +451,19 @@ void AttnCommRing::PrepareKVBlocks(const NDArray& local_k, const NDArray& local_
                                                        HTShape{_batch_size * 2, _seq_len_list.at(_ring_idx), _kv_num_heads, _head_dim});
     _final_next_kv_block->bind_attn_storage(_kv_storage_list.at(final_next_storage_idx));
   }
-  // 将初始时的local kv放入到对应的ring buffer中
+  // 初始化ring buffer的数值
+  // 首先如果含有acc_dk和acc_dv需要全部置0
+  if (piggyback_grad) {
+    for (size_t i = 0; i < _ring_size; i++) {
+      auto acc_dkv = _kv_block_list[(_ring_idx + i) % _ring_size]->get_4d_acc_dkv();
+      NDArray::full_(acc_dkv, 0, _stream_idx);
+    }
+    auto final_acc_dkv = _final_kv_block->get_4d_acc_dkv();
+    auto final_next_dkv = _final_next_kv_block->get_4d_acc_dkv();
+    NDArray::full_(final_acc_dkv, 0, _stream_idx);
+    NDArray::full_(final_next_dkv, 0, _stream_idx);
+  }
+  // 其次要将初始时的local kv放入到对应的ring buffer中
   auto block_local_k = _kv_block_list[_ring_idx]->get_4d_k();
   auto block_local_v = _kv_block_list[_ring_idx]->get_4d_v();
   NDArray::contiguous(local_k, _stream_idx, block_local_k);
@@ -362,22 +502,44 @@ void AttnCommRing::PrepareStorageFwd(const NDArray& local_q, const NDArray& loca
   }
   // 4、分配临时的_softmax_lse和_out以及最终累积的_acc_softmax_lse_transposed和_acc_out
   // 注意lse强制要求是fp32的
-  _softmax_lse = NDArray::empty(HTShape{_batch_size, _q_num_heads, _seq_len_list[_ring_idx]},
-                                _local_device, 
-                                kFloat, 
-                                _stream_idx);
+  if (!_packing) {
+    _softmax_lse = NDArray::empty(HTShape{_batch_size, _q_num_heads, _seq_len_list[_ring_idx]},
+                                  _local_device, 
+                                  kFloat, 
+                                  _stream_idx);
+  } else {
+    // 使用upadded lse后packing和不packing可以统一表示
+    _softmax_lse = NDArray::empty(/*HTShape{_packing_num, _q_num_heads, _max_seqlen_q}*/
+                                  HTShape{_batch_size, _q_num_heads, _seq_len_list[_ring_idx]},
+                                  _local_device, 
+                                  kFloat, 
+                                  _stream_idx);
+  }
+  // NDArray::full_(_softmax_lse, -std::numeric_limits<float>::infinity(), _stream_idx); // 每次调用会置-inf
   _out = NDArray::empty(HTShape{_batch_size, _seq_len_list[_ring_idx], _q_num_heads, _head_dim},
                         _local_device, 
                         dtype, 
                         _stream_idx);
+  // NDArray::full_(_out, 0, _stream_idx); // 每次调用会置0
   // 只有fwd需要ExecCorr
   // 使用transpose好的
   // 在SaveCtx时再transpose回来
-  _acc_softmax_lse_transposed = NDArray::empty(HTShape{_batch_size, _seq_len_list[_ring_idx], _q_num_heads, 1},
-                                               _local_device,
-                                               kFloat,
-                                               _stream_idx);
+  if (!_packing) {
+    _acc_softmax_lse_transposed = NDArray::empty(HTShape{_batch_size, _seq_len_list[_ring_idx], _q_num_heads, 1},
+                                                 _local_device,
+                                                 kFloat,
+                                                 _stream_idx);
+  } else {
+    // 使用upadded lse后packing和不packing可以统一表示
+    _acc_softmax_lse_transposed = NDArray::empty(/*HTShape{_packing_num, _q_num_heads, _max_seqlen_q}*/
+                                                 HTShape{_batch_size, _seq_len_list[_ring_idx], _q_num_heads, 1},
+                                                 _local_device,
+                                                 kFloat,
+                                                 _stream_idx);
+  }  
+  NDArray::full_(_acc_softmax_lse_transposed, -std::numeric_limits<float>::infinity(), _stream_idx);                                       
   _acc_out = local_out;
+  NDArray::full_(_acc_out, 0, _stream_idx);
   // 结束
   _is_storage_prepared = true;
   // HT_LOG_DEBUG << "[ParallelAttn]: PrepareStorageFwd end";
@@ -401,8 +563,10 @@ void AttnCommRing::PrepareStorageBwd(const std::shared_ptr<AttnCtx>& attn_ctx, c
   // 同时piggyback下一轮的acc_dk与acc_dv
   PrepareKVBlocks(local_k, local_v, false, true);
   // 3、分配grad_output和_acc_dq
+  // _acc_dq需要置零
   _grad_output = grad_output;
   _acc_dq = local_dq;
+  NDArray::full_(_acc_dq, 0, _stream_idx);
   // 4、分配临时的dq、dk和dv的storage
   // 这里按最长的seq_len去分配
   // 目前走mempool临时去分配
@@ -473,7 +637,10 @@ void AttnCommRing::ExecCorr(const NDArray& out, const NDArray& softmax_lse,
   // intermediate = softmax_lse_transposed - acc_softmax_lse_transposed
   // [batch_size, seq_len, num_heads, 1]
   NDArray::sub(intermediate, acc_softmax_lse_transposed, _stream_idx, intermediate);
-  // HT_LOG_DEBUG << "[ParallelAttn]: intermediate = " << intermediate;
+  HT_LOG_TRACE << "[ParallelAttn]: softmax_lse sum = " << NDArray::sum(softmax_lse) 
+    << ", intermediate sum = " << NDArray::sum(intermediate) 
+    << ", sigmoid intermediate sum = " << NDArray::sum(NDArray::sigmoid(intermediate))
+    << ", logsigmoid -intermediate sum = " << NDArray::sum(NDArray::logsigmoid(intermediate, true));
   // acc_out = acc_out - sigmoid(intermediate) * (acc_out - out)
   // [batch_size, seq_len, num_heads, head_dim]
   // here NDArray::mul is a broadcast mul
@@ -485,6 +652,9 @@ void AttnCommRing::ExecCorr(const NDArray& out, const NDArray& softmax_lse,
   // HT_LOG_DEBUG << "[ParallelAttn]: ExecCorr end";
 }
 
+// TODO: support transformer engine fused attn
+// which sopports cu_seqlens_q(k)_padded and can avoid many copy
+// https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/api/c/fused_attn.html
 void AttnCommRing::ExecFlashAttn(int64_t q_idx, int64_t kv_idx, 
                                  const NDArray& q, const NDArray& k, const NDArray& v,
                                  NDArray& out, NDArray& softmax_lse, NDArray& rng_state,
@@ -499,45 +669,177 @@ void AttnCommRing::ExecFlashAttn(int64_t q_idx, int64_t kv_idx,
   }
   HT_ASSERT(q->shape().size() == 4
             && k->shape().size() == 4
-            && k->shape() == v->shape())
-    << "q, k and v should be [batch_size, seq_len, num_heads, head_dim] format"
-    << ", and shapes of k and v should be equal";
+            && k->shape() == v->shape()
+            && out->shape().size() == 4
+            && softmax_lse->shape().size() == 3)
+    << "q, k, v and out should be [batch_size, seq_len, num_heads, head_dim] format"
+    << ", and shapes of k, v should be equal"
+    << ", softmax_lse should be [batch_size, num_heads, seq_len] format";
+  if (is_bwd) {
+    HT_ASSERT(grad_output->shape().size() == 4
+              && dq->shape().size() == 4
+              && dk->shape().size() == 4
+              && dk->shape() == dv->shape()
+              && grad_output->shape() == dq->shape())
+    << "dq, dk, dv and grad_output should be [batch_size, seq_len, num_heads, head_dim] format"
+    << ", and shapes of dk, dv and dq, grad_output should be equal";
+  }
   auto& attn_info = _attn_info_list.at(q_idx * _ring_size + kv_idx);
   bool is_causal = attn_info->is_causal();
-  NDArray q_slice = q, k_slice = k, v_slice = v;
-  HT_ASSERT(attn_info->get_mask() != AttnMask::EMPTY)
-    << "currently empty attn is handled outside this func";
-  if (attn_info->get_mask() == AttnMask::ROW) {
-    HTShape begin_pos = {0, q->shape(1) - attn_info->get_valid_len(), 0, 0};
-    HTShape slice_shape = q->shape();
-    slice_shape[1] = attn_info->get_valid_len();
-    q_slice = NDArray::slice(q, begin_pos, slice_shape, _stream_idx);
-  } 
-  if (attn_info->get_mask() == AttnMask::COL) {
-    HTShape begin_pos = {0, 0, 0, 0};
-    HTShape slice_shape = k->shape();
-    slice_shape[1] = attn_info->get_valid_len();
-    k_slice = NDArray::slice(k, begin_pos, slice_shape, _stream_idx);
-    v_slice = NDArray::slice(v, begin_pos, slice_shape, _stream_idx);
+  NDArray q_slice = q, k_slice = k, v_slice = v, out_slice = out, softmax_lse_slice = softmax_lse;
+  NDArray grad_output_slice = grad_output, dq_slice = dq, dk_slice = dk, dv_slice = dv;
+  NDArray q_3d, k_3d, v_3d, out_3d, softmax_lse_2d, grad_output_3d, dq_3d, dk_3d, dv_3d;
+  if (!_packing) {
+    HT_ASSERT(attn_info->get_mask() != AttnMask::EMPTY)
+      << "currently empty attn is handled outside this func";
+    if (attn_info->get_mask() == AttnMask::ROW) {
+      HTShape begin_pos = {0, q->shape(1) - attn_info->get_valid_len(), 0, 0};
+      HTShape slice_shape = q->shape();
+      slice_shape[1] = attn_info->get_valid_len();
+      q_slice = NDArray::slice(q, begin_pos, slice_shape, _stream_idx);
+      out_slice = NDArray::slice(out, begin_pos, slice_shape, _stream_idx);
+      if (!is_bwd) {
+        softmax_lse_slice = NDArray::empty({softmax_lse->shape(0), softmax_lse->shape(1), attn_info->get_valid_len()}, 
+                                           softmax_lse->device(), softmax_lse->dtype(), _stream_idx);
+      } else {
+        softmax_lse_slice = NDArray::contiguous(NDArray::slice(softmax_lse, {0, 0, q->shape(1) - attn_info->get_valid_len()},
+                                                               {softmax_lse->shape(0), softmax_lse->shape(1), attn_info->get_valid_len()}, _stream_idx), _stream_idx);
+        grad_output_slice = NDArray::slice(grad_output, begin_pos, slice_shape, _stream_idx);
+        dq_slice = NDArray::slice(dq, begin_pos, slice_shape, _stream_idx);
+      }
+      NDArray::full_(out, 0, _stream_idx);
+      NDArray::full_(softmax_lse, -std::numeric_limits<float>::infinity(), _stream_idx);
+    } 
+    if (attn_info->get_mask() == AttnMask::COL) {
+      HTShape begin_pos = {0, 0, 0, 0};
+      HTShape slice_shape = k->shape();
+      slice_shape[1] = attn_info->get_valid_len();
+      k_slice = NDArray::slice(k, begin_pos, slice_shape, _stream_idx);
+      v_slice = NDArray::slice(v, begin_pos, slice_shape, _stream_idx);
+      if (is_bwd) {
+        dk_slice = NDArray::slice(dk, begin_pos, slice_shape, _stream_idx);
+        dv_slice = NDArray::slice(dv, begin_pos, slice_shape, _stream_idx);
+      }
+    }
   }
+  // packing需要拿attn info的valid indices来获取qkv的slice
+  else {
+    for (size_t i = 1; i < _packing_num; i++) {
+      HT_ASSERT (attn_info->is_causal(i) == is_causal)
+        << "all packing sequences should be causal or not causal"
+        << ", shouldn't have mixed situation";
+    }
+    HT_ASSERT(q->shape(0) == 1 && k->shape(0) == 1 && v->shape(0) == 1)
+      << "batch dim should be 1 if packing";
+    q_3d = NDArray::view(q, {q->shape(1), q->shape(2), q->shape(3)});
+    k_3d = NDArray::view(k, {k->shape(1), k->shape(2), k->shape(3)});
+    v_3d = NDArray::view(v, {v->shape(1), v->shape(2), v->shape(3)});
+    out_3d = NDArray::view(out, {out->shape(1), out->shape(2), out->shape(3)});
+    softmax_lse_2d = NDArray::view(softmax_lse, {softmax_lse->shape(1), softmax_lse->shape(2)});
+    if (is_bwd) {
+      grad_output_3d = NDArray::view(grad_output, {grad_output->shape(1), grad_output->shape(2), grad_output->shape(3)});
+      dq_3d = NDArray::view(dq, {dq->shape(1), dq->shape(2), dq->shape(3)});
+      dk_3d = NDArray::view(dk, {dk->shape(1), dk->shape(2), dk->shape(3)});
+      dv_3d = NDArray::view(dv, {dv->shape(1), dv->shape(2), dv->shape(3)});
+    }
+    if (!is_causal) {
+      // TODO: 可能有的不需要copy
+      // 另外q_slice可以复用
+      q_slice = NDArray::copy_multi_slices(q_3d, attn_info->get_valid_indices_q(), 0, _stream_idx);
+      k_slice = NDArray::copy_multi_slices(k_3d, attn_info->get_valid_indices_k(), 0, _stream_idx);
+      v_slice = NDArray::copy_multi_slices(v_3d, attn_info->get_valid_indices_k(), 0 ,_stream_idx);
+      auto total_valid_len_q = q_slice->shape(0), total_valid_len_k = k_slice->shape(0);
+      if (!is_bwd) {
+        out_slice = NDArray::empty({total_valid_len_q, out_3d->shape(1), out_3d->shape(2)},
+                                   out_3d->device(), out_3d->dtype(), _stream_idx);      
+        softmax_lse_slice = NDArray::empty({softmax_lse_2d->shape(0), total_valid_len_q},
+                                           softmax_lse_2d->device(), softmax_lse_2d->dtype(), _stream_idx);
+      } else {
+        out_slice = NDArray::copy_multi_slices(out_3d, attn_info->get_valid_indices_q(), 0, _stream_idx);
+        softmax_lse_slice = NDArray::copy_multi_slices(softmax_lse_2d, attn_info->get_valid_indices_q(), 1, _stream_idx);
+        grad_output_slice = NDArray::copy_multi_slices(grad_output_3d, attn_info->get_valid_indices_q(), 0, _stream_idx);
+        dq_slice = NDArray::empty_like(q_slice, _stream_idx);
+        dk_slice = NDArray::empty_like(k_slice, _stream_idx);
+        dv_slice = NDArray::empty_like(v_slice, _stream_idx);
+      }
+    }
+    // is_causal情形可以节省一些copy开销 
+    else {
+      q_slice = q_3d;
+      k_slice = k_3d;
+      v_slice = v_3d;
+      out_slice = out_3d;
+      softmax_lse_slice = softmax_lse_2d;
+      if (is_bwd) {
+        grad_output_slice = grad_output_3d;
+        dq_slice = dq_3d;
+        dk_slice = dk_3d;
+        dv_slice = dv_3d;
+      }
+    }
+  }
+
   NDArray empty_ndarray = NDArray();
-  if (!is_bwd) {
-    // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnCuda begin, q idx = " << q_idx << " and kv idx = " << kv_idx << ", q_slice is " << q_slice << " and k_slice (similar to v_slice) is " << k_slice;
-    // 这里的softmax_lse与out都是一个block的局部的输出
-    HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttn", hetu::impl::FlashAttn,
-                                 q_slice, k_slice, v_slice, out, empty_ndarray,
-                                 empty_ndarray, empty_ndarray, empty_ndarray, softmax_lse,
-                                 empty_ndarray, rng_state, _p_dropout, _softmax_scale,
-                                 is_causal, false, Stream(_local_device, _stream_idx));
-    // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnCuda end, out is " << out;
-  } else {
-    // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnGradientCuda begin";
-    // 这里的softmax_lse与out则是全部block累积的
-    HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttnGradient", hetu::impl::FlashAttnGradient,
-                                 grad_output, q_slice, k_slice, v_slice, out, softmax_lse, rng_state, 
-                                 dq, dk, dv, _p_dropout, _softmax_scale,
-                                 is_causal, Stream(_local_device, _stream_idx));
-    // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnGradientCuda end";
+  if (!_packing) {
+    if (!is_bwd) {
+      // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnCuda begin, q idx = " << q_idx << " and kv idx = " << kv_idx << ", q_slice is " << q_slice << " and k_slice (similar to v_slice) is " << k_slice;
+      // 这里的softmax_lse与out都是一个block的局部的输出
+      HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttn", hetu::impl::FlashAttn,
+                                   q_slice, k_slice, v_slice, out, q_slice,
+                                   k_slice, v_slice, out_slice, softmax_lse_slice,
+                                   empty_ndarray, rng_state, _p_dropout, _softmax_scale,
+                                   is_causal, false, Stream(_local_device, _stream_idx));
+      // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnCuda end, out is " << out;
+      // ROW情形需要把softmax_lse_slice放回到对应的靠后的位置上
+      if (attn_info->get_mask() == AttnMask::ROW) {
+        auto original_softmax_lse_slice = NDArray::slice(softmax_lse, {0, 0, q->shape(1) - attn_info->get_valid_len()},
+                                                         {softmax_lse->shape(0), softmax_lse->shape(1), attn_info->get_valid_len()}, _stream_idx);
+        NDArray::copy(softmax_lse_slice, _stream_idx, original_softmax_lse_slice);
+      }
+    } else {
+      // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnGradientCuda begin";
+      // 这里的softmax_lse与out则是全部block累积的
+      HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttnGradient", hetu::impl::FlashAttnGradient,
+                                   grad_output_slice, q_slice, k_slice, v_slice, out_slice, softmax_lse_slice, rng_state, 
+                                   dq_slice, dk_slice, dv_slice, _p_dropout, _softmax_scale,
+                                   is_causal, Stream(_local_device, _stream_idx));
+      // HT_LOG_DEBUG << "[ParallelAttn]: FlashAttnGradientCuda end";
+    }
+  }
+  // packing调用varlen接口
+  // 且需要把batch维度给去掉 
+  else {
+    if (!is_bwd) {
+      HT_LOG_TRACE << _local_device << ": before attn " << q_idx << "-th q slice sum is " << NDArray::sum(q_slice) << " and " << kv_idx << "-th k(v) slice sum is " << NDArray::sum(k_slice)
+        << ", q slice shape is " << q_slice->shape() << ", k slice shape is " << k_slice->shape()
+        << ", valid cu_seqlens_q is " << attn_info->get_valid_cu_seqlens_q() << ", valid cu_seqlens_k is " << attn_info->get_valid_cu_seqlens_k();
+      HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttnVarlen", hetu::impl::FlashAttnVarlen, 
+                                   q_slice, k_slice, v_slice, attn_info->get_valid_cu_seqlens_q(), attn_info->get_valid_cu_seqlens_k(), 
+                                   out_slice, q_slice, k_slice, v_slice, out_slice, softmax_lse_slice,
+                                   empty_ndarray, rng_state, _max_seqlen_q, _max_seqlen_k, 
+                                   _p_dropout, _softmax_scale, false,
+                                   is_causal, false, Stream(_local_device, _stream_idx));
+      NDArray::revert_copy_multi_slices(out_slice, attn_info->get_valid_indices_q(), 0, _stream_idx, out_3d);
+      NDArray::revert_copy_multi_slices(softmax_lse_slice, attn_info->get_valid_indices_q(), 1, _stream_idx, softmax_lse_2d);
+      HT_LOG_TRACE << _local_device << ": after attn " << q_idx << "-th q slice sum is " << NDArray::sum(q_slice) << " and " << kv_idx << "-th k(v) slice sum is " << NDArray::sum(k_slice)
+        << ", out slice shape is " << out_slice->shape() << ", softmax_lse slice shape is " << softmax_lse_slice->shape()
+        << ", out slice sum is " << NDArray::sum(out_slice) << ", softmax_lse slice sum is " << NDArray::sum(softmax_lse_slice)
+        << ", softmax_lse slice axis 0 sum is " << NDArray::sum(softmax_lse_slice, {0});
+    } else {
+      HT_LOG_TRACE << _local_device << ": before attn " << q_idx << "-th q slice sum is " << NDArray::sum(q_slice) << " and " << kv_idx << "-th k(v) slice sum is " << NDArray::sum(k_slice)
+        << ", valid cu_seqlens_q is " << attn_info->get_valid_cu_seqlens_q() << ", valid cu_seqlens_k is " << attn_info->get_valid_cu_seqlens_k();
+      HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "FlashAttnVarlenGradient", hetu::impl::FlashAttnVarlenGradient, 
+                                   grad_output_slice, q_slice, k_slice, v_slice, attn_info->get_valid_cu_seqlens_q(), attn_info->get_valid_cu_seqlens_k(), 
+                                   out_slice, softmax_lse_slice, rng_state, 
+                                   dq_slice, dk_slice, dv_slice, _max_seqlen_q, _max_seqlen_k,
+                                   _p_dropout, _softmax_scale, false,
+                                   is_causal, Stream(_local_device, _stream_idx));
+      NDArray::revert_copy_multi_slices(dq_slice, attn_info->get_valid_indices_q(), 0, _stream_idx, dq_3d);
+      NDArray::revert_copy_multi_slices(dk_slice, attn_info->get_valid_indices_k(), 0, _stream_idx, dk_3d);
+      NDArray::revert_copy_multi_slices(dv_slice, attn_info->get_valid_indices_k(), 0, _stream_idx, dv_3d);
+      HT_LOG_TRACE << _local_device << ": after attn " << q_idx << "-th q slice sum is " << NDArray::sum(q_slice) << " and " << kv_idx << "-th k(v) slice sum is " << NDArray::sum(k_slice)
+        << ", dq sum is " << NDArray::sum(dq_3d) << ", dk sum is " << NDArray::sum(dk_3d) << ", dv sum is " << NDArray::sum(dv_3d);
+    }
   }
   // HT_LOG_DEBUG << "[ParallelAttn]: ExecFlashAttn end";
 }
@@ -595,6 +897,7 @@ void AttnCommRing::ExecComm(const NDArray& send_data, const NDArray& recv_data,
     }
     ring_send_recv_tasks.push_back(_nccl_comm_group->ISend(send_data_slice, hetu::impl::comm::DeviceToWorldRank(dst_devices[i])));
     send_data_begin_pos[num_heads_dim] += send_data_slice_shape[num_heads_dim];
+    // HT_LOG_INFO << _local_device << ": send data slice " << i << " to " << dst_devices[i] << ", sum is " << NDArray::sum(send_data_slice);
   }
   NDArrayList recv_data_slices;
   for (size_t i = 0; i < src_split_num; i++) {
@@ -620,9 +923,20 @@ void AttnCommRing::ExecComm(const NDArray& send_data, const NDArray& recv_data,
     return;
   }
   // 拼接起来
-  HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
-                               hetu::impl::Concat, recv_data_slices,
-                               const_cast<NDArray&>(recv_data), num_heads_dim, comm_stream);
+  /*
+  int64_t num_heads_offset = 0;
+  for (size_t i = 0; i < src_split_num; i++) {
+    HT_DISPATCH_KERNEL_CUDA_ONLY(DeviceType::CUDA, "AttnCommConcatRecvSlices",
+                                 hetu::impl::Concatenate, recv_data_slices[i],
+                                 const_cast<NDArray&>(recv_data), num_heads_dim, num_heads_offset, 
+                                 comm_stream);
+    num_heads_offset += recv_data_slice_shape[num_heads_dim];
+    // HT_LOG_INFO << _local_device << ": recv data slice " << i << " from " << src_devices[i] << ", sum is " << NDArray::sum(recv_data_slices[i]);
+  }
+  */
+  // 使用最新的concat算子
+  NDArray::cat(recv_data_slices, num_heads_dim, comm_stream.stream_index(), const_cast<NDArray&>(recv_data));
+  // HT_LOG_INFO <<  _local_device << ": recv data sum is " << NDArray::sum(recv_data);
   // HT_LOG_DEBUG << "[ParallelAttn]: ExecComm end";
 }
 
@@ -722,7 +1036,10 @@ void AttnCommRing::Run(bool is_bwd) {
         if (_need_profile) _corr_profile_start_event_list.at(round)->Record(comp_stream);
         // 如果当前block attn是空的
         // 那么不需要进行block的累积修正
+        HT_LOG_TRACE << _local_device << ": " << q_idx << "-th q and " << cur_kv_idx << "-th k(v) before corr: out sum is " << NDArray::sum(_out) << ", acc out sum is " << NDArray::sum(_acc_out)
+          << ", softmax_lse sum is " << NDArray::sum(_softmax_lse) << ", acc softmax_lse sum is " << NDArray::sum(_acc_softmax_lse_transposed);
         if (!empty_round) ExecCorr(_out, _softmax_lse, _acc_out, _acc_softmax_lse_transposed, round == 0 ? true : false);
+        HT_LOG_TRACE << _local_device << ": " << q_idx << "-th q and " << cur_kv_idx << "-th k(v) after corr: acc out sum is " << NDArray::sum(_acc_out) << ", acc softmax_lse sum is " << NDArray::sum(_acc_softmax_lse_transposed);
         if (_need_profile) _corr_profile_end_event_list.at(round)->Record(comp_stream);
       }
       // HT_LOG_DEBUG << "[ParallelAttn]: run fwd round " << round << " end";
@@ -741,6 +1058,10 @@ void AttnCommRing::Run(bool is_bwd) {
       next_kv_block->wait_until_attn_done(comm_stream);
       cur_kv_block->wait_until_grad_done(comm_stream);
       {
+        HT_LOG_TRACE << _local_device << ": " << q_idx << "-th q and " << cur_kv_idx << "-th k(v) before comm: cur block acc_dk sum is " 
+          << NDArray::sum(cur_kv_block->get_4d_acc_dk()) << ", cur block acc_dv sum is " << NDArray::sum(cur_kv_block->get_4d_acc_dv())
+          << ", cur block k sum is " << NDArray::sum(cur_kv_block->get_4d_k()) << ", cur block v sum is " << NDArray::sum(cur_kv_block->get_4d_v())
+          << ", _acc_out sum is " << NDArray::sum(_acc_out) << ", _grad_output sum is " << NDArray::sum(_grad_output) << ", _acc_softmax_lse is " << NDArray::sum(_acc_softmax_lse);
         if (_need_profile) _comm_profile_start_event_list.at(round)->Record(comm_stream);
         // 第一次无grad可以捎带
         if (round == 0) {
@@ -768,6 +1089,9 @@ void AttnCommRing::Run(bool is_bwd) {
         dq = NDArray::empty_like(_local_q, _stream_idx);
         dk = NDArray::empty_like(cur_kv_block->get_4d_k(), _stream_idx);
         dv = NDArray::empty_like(cur_kv_block->get_4d_v(), _stream_idx);
+        NDArray::full_(dq, 0, _stream_idx);
+        NDArray::full_(dk, 0, _stream_idx);
+        NDArray::full_(dv, 0, _stream_idx);
       }
       // 计算时当前的cur_kv_block所在的storage必须已经完成了通信
       if (!empty_round) cur_kv_block->wait_until_comm_done(comp_stream);
@@ -786,9 +1110,14 @@ void AttnCommRing::Run(bool is_bwd) {
         // 如果当前block attn是空的
         // 那么不需要进行grad的累积
         if (!empty_round) {
+          HT_LOG_TRACE << _local_device << ": " << q_idx << "-th q and " << cur_kv_idx << "-th k(v) before next kv block accumulate grad: acc_dk sum is " << NDArray::sum(acc_dk)
+            << ", acc_dv sum is " << NDArray::sum(acc_dv) << ", acc_dq sum is " << NDArray::sum(_acc_dq)
+            << ", dq sum is " << NDArray::sum(dq) << ", dk sum is " << NDArray::sum(dk) << ", dv sum is " << NDArray::sum(dv);
           NDArray::add(_acc_dq, dq, _stream_idx, _acc_dq);
           NDArray::add(acc_dk, dk, _stream_idx, acc_dk);
           NDArray::add(acc_dv, dv, _stream_idx, acc_dv);
+          HT_LOG_TRACE << _local_device << ": " << q_idx << "-th q and " << cur_kv_idx << "-th k(v) after next kv block accumulate grad: acc_dk sum is " << NDArray::sum(acc_dk)
+            << ", acc_dv sum is " << NDArray::sum(acc_dv) << ", acc_dq sum is " << NDArray::sum(_acc_dq);
         }
         if (_need_profile) _grad_profile_end_event_list.at(round)->Record(comp_stream);
       }
@@ -937,6 +1266,7 @@ void ParallelAttentionOpImpl::DoDeduceStates(const TensorList& inputs, TensorLis
 void ParallelAttentionOpImpl::DoCompute(Operator& op, 
                                         const NDArrayList& inputs, NDArrayList& outputs,
                                         RuntimeContext& ctx) const {
+  _attn_ctx_num = op->graph().CUR_MICRO_BATCH_ID;
   /*
   // deprecated version: output splitted q, k, v as well
   HT_ASSERT(op->input(0)->num_consumers() == 1)
@@ -969,6 +1299,7 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
     << "ParallelFlashAttention forward only supports head dimension at most 256 and must be divided by 8";
   auto stream_idx = op->instantiation_ctx().stream_index;
   auto reshaped_qkv = NDArray::view(qkv, {batch_size, seq_len, total_num_heads, _head_dim});
+  // HT_LOG_WARN << op << " reshaped_qkv shape is " << reshaped_qkv->shape() << ", sum is " << NDArray::sum(reshaped_qkv) << ", data is " << reshaped_qkv;
   auto reshaped_output = NDArray::view(output, {batch_size, seq_len, q_num_heads, _head_dim});
   // self-attn
   HTShape q_shape = {batch_size, seq_len, q_num_heads, _head_dim};
@@ -982,15 +1313,36 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
   auto v = NDArray::contiguous(NDArray::slice(reshaped_qkv, v_begin_pos, v_shape, stream_idx));
   // HT_LOG_DEBUG << "[ParallelAttn]: q shape is " << q->shape() << " and k (same as v) shape is " << k->shape();
   double softmax_scale_ = softmax_scale() >= 0 ? softmax_scale() : std::pow(_head_dim, -0.5);
+  // packing相关
+  NDArray cu_seqlens_q = NDArray(), cu_seqlens_k = NDArray();
+  int64_t packing_num = 1, max_seqlen_q = -1, max_seqlen_k = -1;
+  if (_packing) {
+    HT_ASSERT(batch_size == 1)
+      << "packing should not have batch size";
+    HT_ASSERT(inputs.size() == 3)
+      << "packing should have 3 inputs: qkv, cu_seqlens_q and cu_seqlens_k";
+    cu_seqlens_q = inputs.at(1);
+    cu_seqlens_k = inputs.at(2);
+    packing_num = cu_seqlens_q->shape(-1) - 1;
+    HT_ASSERT(packing_num == cu_seqlens_k->shape(-1) - 1 && packing_num >= 1)
+      << "packing num (>= 1) mismatches";
+    max_seqlen_q = get_max_seqlen_q();
+    max_seqlen_k = get_max_seqlen_k();
+  }
+  // cp相关
   int64_t ring_idx;
   DeviceGroupList tp_group_list;
   std::vector<int64_t> seq_len_list;
   std::tie(ring_idx, tp_group_list, seq_len_list) = get_local_ring(op->input(0), _multi_seq_lens_symbol, _multi_cp_group_symbol);
-  // HT_LOG_DEBUG << "[ParallelAttn]: the tp group list is " << tp_group_list << " and seq len list is " << seq_len_list;
+  HT_LOG_DEBUG << "[ParallelAttn]: the tp group list is " << tp_group_list << " and seq len list is " << seq_len_list;
+  
+  // 实际运行
   // 开cp
   if (tp_group_list.size() >= 2) {
+    /*
     HT_ASSERT(!_packing)
       << "currently not support Ring-Attn w/ Packing";
+    */
     auto used_ranks = dynamic_cast<ExecutableGraph&>(op->graph()).GetUsedRanks();
     auto local_device = hetu::impl::comm::GetLocalDevice();
     auto& nccl_comm_group = hetu::impl::comm::NCCLCommunicationGroup::GetOrCreate(used_ranks, local_device);
@@ -1006,7 +1358,13 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
                                        kv_num_heads, 
                                        _head_dim,
                                        softmax_scale_,
-                                       p_dropout());
+                                       p_dropout(),
+                                       _packing,
+                                       packing_num,
+                                       cu_seqlens_q,
+                                       cu_seqlens_k,
+                                       max_seqlen_q,
+                                       max_seqlen_k);
     attn_comm_ring.PrepareStorageFwd(q, k, v, reshaped_output);
     attn_comm_ring.GenerateAttnInfo();
     attn_comm_ring.Run();
@@ -1016,7 +1374,7 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
   // 不开cp
   else {
     // no ring-attn
-    // HT_LOG_DEBUG << "[ParallelAttn]: no fwd comm ring needed for " << local_device;
+    HT_LOG_DEBUG << "[ParallelAttn]: no fwd comm ring needed";
     attn_ctx()->rng_state_list = {NDArray::empty(HTShape{2},
                                                  Device(kCPU),
                                                  kInt64,
@@ -1039,30 +1397,37 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
                                    empty_ndarray, attn_ctx()->rng_state_list.at(0), p_dropout(), softmax_scale_,
                                    true, return_softmax(), op->instantiation_ctx().stream());
     } else {
-      HT_ASSERT(inputs.size() == 3)
-        << "packing should have 3 inputs: qkv, cu_seqlens_q and cu_seqlens_k";
-      auto cu_seqlens_q = inputs.at(1);
-      auto cu_seqlens_k = inputs.at(2);
-      int64_t packing_num = cu_seqlens_q->numel() - 1;
-      HT_ASSERT(packing_num == cu_seqlens_k->numel() - 1 && packing_num >= 1)
-        << "packing num (>= 1) mismatches";
+      if (cu_seqlens_q->shape().size() == 2) {
+        HT_ASSERT(cu_seqlens_q->shape(0) == 1)
+          << "packing w/o CP shouldn't have multi-dimension cu_seqlens_q";
+        cu_seqlens_q = NDArray::view(cu_seqlens_q, {cu_seqlens_q->shape(1)});
+      }
+      if (cu_seqlens_k->shape().size() == 2) {
+        HT_ASSERT(cu_seqlens_k->shape(0) == 1)
+          << "packing w/o CP shouldn't have multi-dimension cu_seqlens_k";
+        cu_seqlens_k = NDArray::view(cu_seqlens_k, {cu_seqlens_k->shape(1)});
+      }
       attn_ctx()->q = NDArray::view(q, {batch_size_mul_seq_len, q_num_heads, _head_dim});
       attn_ctx()->k = NDArray::view(k, {batch_size_mul_seq_len, kv_num_heads, _head_dim});
       attn_ctx()->v = NDArray::view(v, {batch_size_mul_seq_len, kv_num_heads, _head_dim});
       // *注意softmax_lse是fp32的
-      attn_ctx()->acc_softmax_lse = NDArray::empty(HTShape{packing_num, q_num_heads, max_seqlen_q()},
+      attn_ctx()->acc_softmax_lse = NDArray::empty(/*HTShape{packing_num, q_num_heads, max_seqlen_q},*/
+                                                   HTShape{q_num_heads, seq_len_list[ring_idx]},
                                                    q->device(),
                                                    kFloat,
                                                    stream_idx);
       attn_ctx()->acc_out = NDArray::view(reshaped_output, {batch_size_mul_seq_len, q_num_heads, _head_dim});
+      HT_LOG_TRACE << "varlen attn fwd inputs: cu_seqlens_q is " << cu_seqlens_q << " cu_seqlens_k is " << cu_seqlens_k
+        << ", q shape is " << attn_ctx()->q->shape() << ", q sum is " << NDArray::sum(attn_ctx()->q);
       HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(), hetu::impl::FlashAttnVarlen, 
                                    attn_ctx()->q, attn_ctx()->k, attn_ctx()->v, cu_seqlens_q, cu_seqlens_k, attn_ctx()->acc_out, attn_ctx()->q,
                                    attn_ctx()->k, attn_ctx()->v, attn_ctx()->acc_out, attn_ctx()->acc_softmax_lse,
                                    empty_ndarray, attn_ctx()->rng_state_list.at(0), 
-                                   max_seqlen_q(), max_seqlen_k(), 
+                                   max_seqlen_q, max_seqlen_k, 
                                    p_dropout(), softmax_scale_, false,
                                    true, return_softmax(), op->instantiation_ctx().stream());
-      // HT_LOG_INFO << "Varlen attn cu_seqlens_q is " << cu_seqlens_q;
+      HT_LOG_TRACE << "varlen attn fwd outputs: softmax_lse shape is " << attn_ctx()->acc_softmax_lse->shape() << ", softmax_lse sum is " << NDArray::sum(attn_ctx()->acc_softmax_lse)
+        << ", out shape is " << attn_ctx()->acc_out->shape() << ", out sum is " << NDArray::sum(attn_ctx()->acc_out);
     }
   }
 }
@@ -1147,6 +1512,7 @@ void ParallelAttentionGradientOpImpl::DoDeduceStates(const TensorList& inputs, T
 
 void ParallelAttentionGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
                                                 NDArrayList& outputs, RuntimeContext& ctx) const {
+  _attn_ctx_num = op->graph().CUR_MICRO_BATCH_ID;
   const auto& grad_output = inputs.at(0);
   // 改为从context中取
   // 主要原因是rng_state不定长
@@ -1189,14 +1555,35 @@ void ParallelAttentionGradientOpImpl::DoCompute(Operator& op, const NDArrayList&
   auto dk = NDArray::slice(reshaped_grad_input, dk_begin_pos, dk_shape, stream_idx);
   auto dv = NDArray::slice(reshaped_grad_input, dv_begin_pos, dv_shape, stream_idx);
   double softmax_scale_ = softmax_scale() >= 0 ? softmax_scale() : std::pow(_head_dim, -0.5);
+  // packing相关
+  NDArray cu_seqlens_q = NDArray(), cu_seqlens_k = NDArray();
+  int64_t packing_num = 1, max_seqlen_q = -1, max_seqlen_k = -1;
+  if (_packing) {
+    HT_ASSERT(batch_size == 1)
+      << "packing should not have batch size";
+    HT_ASSERT(inputs.size() == 3)
+      << "packing should have 3 inputs: qkv, cu_seqlens_q and cu_seqlens_k";
+    cu_seqlens_q = inputs.at(1);
+    cu_seqlens_k = inputs.at(2);
+    packing_num = cu_seqlens_q->shape(-1) - 1;
+    HT_ASSERT(packing_num == cu_seqlens_k->shape(-1) - 1 && packing_num >= 1)
+      << "packing num (>= 1) mismatches";
+    max_seqlen_q = get_max_seqlen_q();
+    max_seqlen_k = get_max_seqlen_k();
+  }
+  // cp相关
   int64_t ring_idx;
   DeviceGroupList tp_group_list;
   std::vector<int64_t> seq_len_list;
   std::tie(ring_idx, tp_group_list, seq_len_list) = get_local_ring(op->input(0), _multi_seq_lens_symbol, _multi_cp_group_symbol);
+  
+  // 实际运行
   // 开cp
   if (tp_group_list.size() >= 2) {
+    /*
     HT_ASSERT(!_packing)
       << "currently not support Ring-Attn w/ Packing";
+    */
     auto used_ranks = dynamic_cast<ExecutableGraph&>(op->graph()).GetUsedRanks();
     auto& nccl_comm_group = hetu::impl::comm::NCCLCommunicationGroup::GetOrCreate(used_ranks, hetu::impl::comm::GetLocalDevice());
     auto attn_comm_ring = AttnCommRing(op,
@@ -1210,7 +1597,13 @@ void ParallelAttentionGradientOpImpl::DoCompute(Operator& op, const NDArrayList&
                                        kv_num_heads, 
                                        _head_dim,
                                        softmax_scale_,
-                                       p_dropout());
+                                       p_dropout(),
+                                       _packing,
+                                       packing_num,
+                                       cu_seqlens_q,
+                                       cu_seqlens_k,
+                                       max_seqlen_q,
+                                       max_seqlen_k);
     attn_comm_ring.PrepareStorageBwd(attn_ctx(), reshaped_grad_output, dq);
     attn_comm_ring.GenerateAttnInfo();
     attn_comm_ring.Run(true);
@@ -1245,20 +1638,36 @@ void ParallelAttentionGradientOpImpl::DoCompute(Operator& op, const NDArrayList&
                                   reshaped_grad_input, 2, q_num_heads + kv_num_heads, op->instantiation_ctx().stream());
       */
     } else {
-      HT_ASSERT(inputs.size() == 3)
-        << "packing should have 3 inputs: grad_output, cu_seqlens_q and cu_seqlens_k";
-      auto cu_seqlens_q = inputs.at(1);
-      auto cu_seqlens_k = inputs.at(2);
+      if (cu_seqlens_q->shape().size() == 2) {
+        HT_ASSERT(cu_seqlens_q->shape(0) == 1)
+          << "packing w/o CP shouldn't have multi-dimension cu_seqlens_q";
+        cu_seqlens_q = NDArray::view(cu_seqlens_q, {cu_seqlens_q->shape(1)});
+      }
+      if (cu_seqlens_k->shape().size() == 2) {
+        HT_ASSERT(cu_seqlens_k->shape(0) == 1)
+          << "packing w/o CP shouldn't have multi-dimension cu_seqlens_k";
+        cu_seqlens_k = NDArray::view(cu_seqlens_k, {cu_seqlens_k->shape(1)});
+      }
+      /*
       auto dq_new = NDArray::view(NDArray::contiguous(dq), {batch_size_mul_seq_len, q_num_heads, _head_dim});
       auto dk_new = NDArray::view(NDArray::contiguous(dk), {batch_size_mul_seq_len, kv_num_heads, _head_dim});
       auto dv_new = NDArray::view(NDArray::contiguous(dv), {batch_size_mul_seq_len, kv_num_heads, _head_dim});
+      */
+      // 下面这种理论上更快一些
+      auto dq_new = NDArray::view(NDArray::empty_like(dq, op->instantiation_ctx().stream().stream_index()), {batch_size_mul_seq_len, q_num_heads, _head_dim});
+      auto dk_new = NDArray::view(NDArray::empty_like(dk, op->instantiation_ctx().stream().stream_index()), {batch_size_mul_seq_len, kv_num_heads, _head_dim});
+      auto dv_new = NDArray::view(NDArray::empty_like(dv, op->instantiation_ctx().stream().stream_index()), {batch_size_mul_seq_len, kv_num_heads, _head_dim});
       reshaped_grad_output = NDArray::view(reshaped_grad_output, {batch_size_mul_seq_len, q_num_heads, _head_dim});
+      HT_LOG_TRACE << "varlen attn bwd inputs: cu_seqlens_q is " << cu_seqlens_q << " cu_seqlens_k is " << cu_seqlens_k
+        << ", q shape is " << attn_ctx()->q->shape() << ", softmax_lse shape is " << attn_ctx()->acc_softmax_lse->shape()
+        << ", q sum is " << NDArray::sum(attn_ctx()->q) << ", softmax_lse sum is " << NDArray::sum(attn_ctx()->acc_softmax_lse);
       HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                    hetu::impl::FlashAttnVarlenGradient, reshaped_grad_output,
                                    attn_ctx()->q, attn_ctx()->k, attn_ctx()->v, cu_seqlens_q, cu_seqlens_k, 
                                    attn_ctx()->acc_out, attn_ctx()->acc_softmax_lse, attn_ctx()->rng_state_list.at(0), 
-                                   dq_new, dk_new, dv_new, max_seqlen_q(), max_seqlen_k(), p_dropout(), softmax_scale_, false,
+                                   dq_new, dk_new, dv_new, max_seqlen_q, max_seqlen_k, p_dropout(), softmax_scale_, false,
                                    true, op->instantiation_ctx().stream());
+      HT_LOG_TRACE << "varlen attn bwd outputs: dq sum is " << NDArray::sum(dq_new) << ", dk sum is " << NDArray::sum(dk_new) << ", dv sum is " << NDArray::sum(dv_new);
       dq_new = NDArray::view(dq_new, dq_shape);
       dk_new = NDArray::view(dk_new, dk_shape);
       dv_new = NDArray::view(dv_new, dv_shape);

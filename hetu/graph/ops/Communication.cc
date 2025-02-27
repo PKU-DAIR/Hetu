@@ -697,7 +697,7 @@ TensorList CommOpImpl::DoGradient(Operator& op,
       // row backward, no comm: ->dup->dup-> (forward op DoGradient())
       // sp:
       // col forward, all-gather: ->split0->dup-> (manually insert comm op in .py)
-      // col backward, reduces-scatter: ->partial->split0-> (forward op DoGradient())
+      // col backward, reduce-scatter: ->partial->split0-> (forward op DoGradient())
       // row forward, reduce-scatter: ->partial->split0-> (manually insert comm op in .py)
       // row backward, all-gather: ->split0->dup-> (forward op DoGradient())
       
@@ -759,7 +759,8 @@ HTShapeList AllReduceOpImpl::DoInferShape(Operator& op,
 NDArrayList AllReduceOpImpl::DoCompute(Operator& op,
                                        const NDArrayList& inputs,
                                        RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  // NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx); 
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
@@ -1010,7 +1011,9 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   // workaround: no buffer for allgather inside lora
   if (op->name().find("lora") != op->name().npos) {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
-  } else if (_buffer_for_allgather.is_defined() && _buffer_for_allgather->numel() >= output_numel) {
+  } else if (!runtime_ctx.has_runtime_allocation(op->output(0)->id()) 
+             && _buffer_for_allgather.is_defined() 
+             && _buffer_for_allgather->numel() >= output_numel) {
     auto begin_pos = HTShape(cur_buffer_shape.size(), 0);
     NDArray _slice_buffer_for_all_gather = NDArray::slice(_buffer_for_allgather, begin_pos, cur_buffer_shape,
                                                           op->stream_index());
@@ -1086,7 +1089,7 @@ NDArrayList ReduceScatterOpImpl::DoCompute(Operator& op,
     << "Data type mismatched for ReduceScatter communication: " << inputs.at(0)->dtype()
     << " vs. " << op->input(0)->dtype();
 
-  if (inplace()) {
+  if (inplace() && !ctx.has_runtime_allocation(op->output(0)->id())) {
     // just inplace here
     NDArrayMeta meta = inputs.at(0)->meta();
     HTShape scatter_shape = inputs.at(0)->shape();
@@ -1239,7 +1242,7 @@ NDArrayList SplitAllReduceOpImpl::DoCompute(Operator& op,
     }
   }
   NDArrayList outputs = inputs;
-  if (!can_inplace) {
+  if (!can_inplace || ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = DoAllocOutputs(op, inputs, ctx);
   }
   // 目前只支持第0维切

@@ -67,6 +67,7 @@ class Graph {
   size_t CUR_HETERO_ID = 0;
   size_t COMPUTE_SUGGESTED_HETERO_ID = 0;
   bool EVENT_TIMING = true;
+  size_t CUR_MICRO_BATCH_ID = 0;
 
   // disable copy constructor and move constructor
   Graph(const Graph&) = delete;
@@ -78,7 +79,7 @@ class Graph {
                           const FeedDict& feed_dict = {}) = 0;
 
   virtual NDArrayList Run(const Tensor& loss, const TensorList& fetches, 
-                          const FeedDict& feed_dict = {}, const int num_micro_batches = 1,
+                          const FeedDict& feed_dict = {}, const IntSymbolDict& int_symbol_dict = {}, const int num_micro_batches = 1,
                           const int compute_strategy_id = 0, const int optimize_strategy_id = 0, RunLevel run_level = RunLevel::UPDATE,
                           bool save_checkpoint = false, const double grad_scale = 1) {}                          
 
@@ -152,6 +153,8 @@ class Graph {
       return 0;
     }
   }
+
+  void SetMicroBatchCtx(size_t micro_batch_id, const IntSymbolDict& int_symbol_dict);
 
   const Operator& GetOp(OpId op_id) const {
     return _op_indexing.at(op_id);
@@ -1073,6 +1076,32 @@ inline OpRefList Graph::TopoSort(const OpRefList& ops, int32_t num_ops_hint,
         }
       }
     }
+    /*
+    // Question: is it necessary?
+    // ensure update ops are executed later
+    if (is_optimizer_update_op(ret[i])) {
+      if (visited.find(ret[i].get()->id()) != visited.end())
+        continue;
+      visited.insert(ret[i].get()->id());
+      TensorId updated_var_id = ret[i].get()->input(0)->id();
+      for (size_t j = ret.size() - 1; j > i; j--) {
+        if (is_optimizer_update_op(ret[j]))
+          continue;
+        bool non_conflicting = Operator::all_input_tensors_of(
+          ret[j].get(),
+          [&](const Tensor& tensor) { return tensor->id() != updated_var_id; });
+        if (non_conflicting)
+          continue;
+        // insert ret[i] after ret[j]
+        auto& update_op_ref = ret[i];
+        for (size_t k = i; k < j; k++)
+          ret[k] = ret[k + 1];
+        ret[j] = update_op_ref;
+        i--;
+        break;
+      }
+    }
+    */
   }
 
   return ret;

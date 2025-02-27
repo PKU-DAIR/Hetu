@@ -624,7 +624,7 @@ class OpDef : public shared_ptr_target {
       input_sums.push_back(NDArray::sum(input));
     }
     HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
-      << ", the input vals are " << input_sums;
+      << ", inputs are " << _inputs << ", and the input vals are " << input_sums;
     */
     instantiation_ctx().start[micro_batch_id]->Record(stream());
     auto rets = _body->Compute(get_self(), inputs, runtime_ctx);

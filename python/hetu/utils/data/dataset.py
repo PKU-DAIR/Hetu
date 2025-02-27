@@ -1,57 +1,103 @@
-import functools
-from typing import (
-    Callable,
-    Dict,
-    Generic,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    TypeVar,
-)
-class Dataset():
-    functions: Dict[str, Callable] = {}
+import os
+import json
+import pickle
+import time
+import numpy as np
+from tqdm import tqdm
+from types import SimpleNamespace
+from torch.utils.data import Dataset
+from .tokenizer import build_tokenizer
 
-    def __getitem__(self, index):
-        raise NotImplementedError
+class Encoder(object):
+    def __init__(self, args):
+        self.args = args
+        self.tokenizer = build_tokenizer(self.args)
 
-    # def __add__(self, other: 'Dataset[T_co]') -> 'ConcatDataset[T_co]':
-    #     return ConcatDataset([self, other])
+    def pad_id(self):
+        return self.tokenizer.pad
 
+    def encode(self, json_line):
+        data = json.loads(json_line)
+        doc = data[self.args.key] # key: content for web, text for wiki
+        assert self.args.tokenizer_type == 'GPT2BPETokenizer', 'Now only support GPT2BPETokenizer!'
+        doc_ids = self.tokenizer.tokenize(doc)
+        return doc_ids
 
-    def __getattr__(self, attribute_name):
-        if attribute_name in Dataset.functions:
-            function = functools.partial(Dataset.functions[attribute_name], self)
-            return function
+class HetuJsonDataset(Dataset):
+    def __init__(self, json_file, key, max_seq_len, vocab_file, merge_file):
+        args = {
+            'key': key,
+            'rank': 0,
+            'make_vocab_size_divisible_by': 128,
+            'tensor_model_parallel_size': 1,
+            'vocab_extra_ids': 0,
+            'tokenizer_type': 'GPT2BPETokenizer',
+            'vocab_file': vocab_file,
+            'merge_file': merge_file,
+        }
+        args = SimpleNamespace(**args)
+        self.encoder = Encoder(args)
+        self.data = []
+
+        cache_path = json_file.split('.')[0] + f'_cache.pkl'
+        if os.path.exists(cache_path):
+            # read exists data cache here
+            print(f'Loading exists cache from {cache_path} begin ...')
+            start_time = time.time()
+            with open(cache_path, 'rb') as f:
+                self.data = pickle.load(f)
+            end_time = time.time()
+            print(f'Loading exists cache end, time cost: {end_time - start_time: .3f} s')
         else:
-            raise AttributeError
+            # tokenize data from json file
+            print(f'Building dataset begin ...')
+            start_time = time.time()
+            with open(json_file, 'r') as f:
+                for json_line in tqdm(f.readlines()):
+                    doc_ids = self.encoder.encode(json_line)
+                    # doc_ids may be empty, will cause error when mbs=1
+                    if len(doc_ids) > 0:
+                        self.data.append(doc_ids)
+            # save cache
+            with open(cache_path, 'wb') as f:
+                pickle.dump(self.data, f)                    
+            end_time = time.time()
+            print(f'Building dataset end, time cost: {end_time - start_time: .3f} s')
 
-class IterableDataset(Dataset):
-    functions: Dict[str, Callable] = {}
-    reduce_ex_hook : Optional[Callable] = None
+        # deal with max_seq_len + 1 (for tokens/labels seq_len = max_seq_len+1 - 1)
+        print(f'Cutting or padding data to max_seq_len + 1 = {max_seq_len + 1} begin ...')
+        start_time = time.time()
+        max_seq_len = max_seq_len + 1
+        for idx, doc_ids in enumerate(self.data):
+            if len(doc_ids) > max_seq_len:
+                self.data[idx] = doc_ids[:max_seq_len]
+            elif len(doc_ids) < max_seq_len:
+                self.data[idx] += [self.encoder.pad_id()] * (max_seq_len - len(doc_ids))
+        end_time = time.time()
+        print(f'Cutting or padding data end, time cost: {end_time - start_time: .3f} s')
 
-    def __iter__(self) -> Iterator:
-        raise NotImplementedError
+    def pad_id(self):
+        return self.encoder.pad_id()
 
-    # def __add__(self, other: Dataset[T_co]):
-    #     return ChainDataset([self, other])
+    def __len__(self):
+        return len(self.data)
 
-    # No `def __len__(self)` default? Subclasses raise `TypeError` when needed.
-    # See NOTE [ Lack of Default `__len__` in Python Abstract Base Classes ]
+    def __getitem__(self, idx):
+        return np.array(self.data[idx])
 
-    def __getattr__(self, attribute_name):
-        if attribute_name in IterableDataset.functions:
-            function = functools.partial(IterableDataset.functions[attribute_name], self)
-            return function
-        else:
-            raise AttributeError
+def get_mask_and_position_ids(tokens, pad):
+    batch_size, seq_length = tokens.shape
+    attention_mask = np.not_equal(tokens, pad)
+    position_ids = np.arange(0, seq_length, dtype=np.int64) # [1, seq_len]
+    position_ids = np.tile(position_ids, [batch_size, 1]) # [batch_size, seq_len]
+    return attention_mask, position_ids
 
-    def __reduce_ex__(self, *args, **kwargs):
-        if IterableDataset.reduce_ex_hook is not None:
-            try:
-                return IterableDataset.reduce_ex_hook(self)
-            except NotImplementedError:
-                pass
-        return super().__reduce_ex__(*args, **kwargs)
+if __name__ == '__main__':
+    root_folder = 'data'
+    test_dataset = HetuJsonDataset(
+        json_file=f'{root_folder}/web/refinedweb0.json',
+        key='content',
+        max_seq_len=1024,
+        vocab_file=f'{root_folder}/vocab.json',
+        merge_file=f'{root_folder}/merges.txt'
+    )

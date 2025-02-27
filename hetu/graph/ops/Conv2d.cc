@@ -110,9 +110,9 @@ HTShapeList Conv2dOpImpl::DoInferShape(Operator&op,
 
 void Conv2dOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta_0", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate_0", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor_0", inputs.at(0));
   dst_ctx.put("in_meta_1", inputs.at(1)->meta());
-  dst_ctx.put("in_dstate_1", inputs.at(1)->get_distributed_states());
+  dst_ctx.put("in_tensor_1", inputs.at(1));
 }
 
 void Conv2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -150,12 +150,12 @@ HTShapeList
 Conv2dGradientofFilterOpImpl::DoInferShape(Operator&op,
                                            const HTShapeList& input_shapes,
                                            RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void Conv2dGradientofFilterOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_1");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate_1");
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_1", "in_meta");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor_1", "in_tensor");
 }
 
 void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -163,7 +163,7 @@ void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
                                                   const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
-  const DistributedStates& ds_filter = inst_ctx.get<DistributedStates>("in_dstate");
+  const DistributedStates& ds_filter = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_grad_output.is_valid() && ds_filter.is_valid()) 
     << "ConcatGradientOpDef: distributed states for input and grad_output and filter must be valid!";  
   HT_ASSERT(ds_input.get_dim(-2) == 1 && ds_grad_output.get_dim(-2) == 1 && ds_filter.get_dim(-2) == 1) 
@@ -191,12 +191,12 @@ HTShapeList
 Conv2dGradientofDataOpImpl::DoInferShape(Operator&op,
                                          const HTShapeList& input_shapes,
                                          RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void Conv2dGradientofDataOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
-  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_0");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate_0");
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_0", "in_meta");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor_0", "in_tensor");
 }
 
 void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -204,7 +204,7 @@ void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
                                                 const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_filter = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
-  const DistributedStates& ds_input = inst_ctx.get<DistributedStates>("in_dstate");
+  const DistributedStates& ds_input = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_grad_output.is_valid() && ds_filter.is_valid()) 
     << "ConcatGradientOpDef: distributed states for input and grad_output and filter must be valid!";  
   HT_ASSERT(ds_input.get_dim(-2) == 1 && ds_grad_output.get_dim(-2) == 1 && ds_filter.get_dim(-2) == 1) 

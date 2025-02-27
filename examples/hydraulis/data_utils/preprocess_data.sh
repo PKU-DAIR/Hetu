@@ -1,7 +1,7 @@
 #!/bin/bash  
   
 # 设置ROOT路径  
-ROOT_FOLDER=/home/pkuhetu/lhy/multi_switch/examples/hydraulis/data
+ROOT_FOLDER=data
 JSON_FILE=${ROOT_FOLDER}/web/combined_data.json
 JSON_KEY=content
 VOCAB_FILE=${ROOT_FOLDER}/vocab.json

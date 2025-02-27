@@ -58,6 +58,7 @@ enum class ArgType : uint8_t {
   OPERATOR,
   OPERATOR_LIST,
   FEED_DICT,
+  INT_SYMBOL_DICT,
   PARAMETER_DICT,
   STATE_DICT,
   DISTRIBUTED_STATES,
@@ -405,6 +406,14 @@ class ParsedPyArgs {
 
   inline FeedDict get_feed_dict_or_empty(size_t i) const {
     return has(i) ? get_feed_dict(i) : FeedDict();
+  }
+
+  inline IntSymbolDict get_int_symbol_dict(size_t i) const {
+    return IntSymbolDict_FromPyObject(_args[i]);
+  }
+
+  inline IntSymbolDict get_int_symbol_dict_or_empty(size_t i) const {
+    return has(i) ? get_int_symbol_dict(i) : IntSymbolDict();
   }
 
   inline ParameterDict get_parameter_dict(size_t i) const {

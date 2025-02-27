@@ -34,7 +34,7 @@ PyObject* PyPopCPUOffloadCtx(PyObject*, PyObject* args, PyObject* kwargs) {
 
 // NOLINTNEXTLINE
 PyMethodDef PyCPUOffloadCtx_methods[] = { 
-  {"push_cpu_offload_ctx", (PyCFunction) PyPushCPUOffloadCtx, METH_NOARGS, nullptr},
+  {"push_cpu_offload_ctx", (PyCFunction) PyPushCPUOffloadCtx, METH_VARARGS | METH_KEYWORDS, nullptr},
   {"pop_cpu_offload_ctx", (PyCFunction) PyPopCPUOffloadCtx, METH_NOARGS, nullptr},
   {nullptr}
 };

@@ -102,7 +102,7 @@ void AddElewiseOpImpl::DoCompute(Operator& op,
 NDArrayList AddElewiseOpImpl::DoCompute(Operator& op,
                                         const NDArrayList& inputs,
                                         RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }
@@ -130,9 +130,9 @@ HTShapeList AddElewiseOpImpl::DoInferShape(Operator& op, const HTShapeList& inpu
 
 void AddElewiseOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta_0", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate_0", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor_0", inputs.at(0));
   dst_ctx.put("in_meta_1", inputs.at(1)->meta());
-  dst_ctx.put("in_dstate_1", inputs.at(1)->get_distributed_states());
+  dst_ctx.put("in_tensor_1", inputs.at(1));
 }
 
 void AddElewiseOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -189,9 +189,9 @@ HTShapeList SubElewiseOpImpl::DoInferShape(Operator& op, const HTShapeList& inpu
 
 void SubElewiseOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta_0", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate_0", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor_0", inputs.at(0));
   dst_ctx.put("in_meta_1", inputs.at(1)->meta());
-  dst_ctx.put("in_dstate_1", inputs.at(1)->get_distributed_states());
+  dst_ctx.put("in_tensor_1", inputs.at(1));
 }
 
 void SubElewiseOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -242,7 +242,7 @@ HTShapeList SubFromConstOpImpl::DoInferShape(Operator& op,
 NDArrayList NegateOpImpl::DoCompute(Operator& op,
                                     const NDArrayList& inputs,
                                     RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }
@@ -293,9 +293,9 @@ HTShapeList MulElewiseOpImpl::DoInferShape(Operator& op, const HTShapeList& inpu
 
 void MulElewiseOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta_0", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate_0", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor_0", inputs.at(0));
   dst_ctx.put("in_meta_1", inputs.at(1)->meta());
-  dst_ctx.put("in_dstate_1", inputs.at(1)->get_distributed_states());
+  dst_ctx.put("in_tensor_1", inputs.at(1));
 }
 
 void MulElewiseOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -406,7 +406,7 @@ HTShapeList DivFromConstOpImpl::DoInferShape(Operator& op,
 NDArrayList ReciprocalOpImpl::DoCompute(Operator& op,
                                         const NDArrayList& inputs,
                                         RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }
@@ -443,20 +443,20 @@ void AddElewiseGradientOpImpl::DoCompute(Operator& op,
 HTShapeList AddElewiseGradientOpImpl::DoInferShape(Operator& op,
                                                    const HTShapeList& input_shapes,
                                                    RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void AddElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
-  auto dstate_key = std::string("in_dstate_") + std::to_string(index());
+  auto dstate_tensor_key = std::string("in_tensor_") + std::to_string(index());
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, dstate_tensor_key, "in_tensor");
 }
 
 void AddElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                               const OpMeta& op_meta,
                                               const InstantiationContext& inst_ctx) const {
-  DistributedStates ds_output = inst_ctx.get<DistributedStates>("in_dstate");
+  DistributedStates ds_output = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   if (axes().size() > 0) 
     ds_output = ReduceOpImpl::StatesForDistributedReduce(inputs.at(0), axes(), keep_dims());
   outputs.at(0)->set_distributed_states(ds_output);
@@ -486,20 +486,20 @@ void SubElewiseGradientOpImpl::DoCompute(Operator& op,
 HTShapeList SubElewiseGradientOpImpl::DoInferShape(Operator& op,
                                                    const HTShapeList& input_shapes,
                                                    RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void SubElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
-  auto dstate_key = std::string("in_dstate_") + std::to_string(index());
+  auto dstate_tensor_key = std::string("in_tensor_") + std::to_string(index());
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, dstate_tensor_key, "in_tensor");
 }
 
 void SubElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                               const OpMeta& op_meta,
                                               const InstantiationContext& inst_ctx) const {
-  DistributedStates ds_output = inst_ctx.get<DistributedStates>("in_dstate");
+  DistributedStates ds_output = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   if (axes().size() > 0) 
     ds_output = ReduceOpImpl::StatesForDistributedReduce(inputs.at(0), axes(), keep_dims());
   outputs.at(0)->set_distributed_states(ds_output);
@@ -519,20 +519,20 @@ void MulElewiseGradientOpImpl::DoCompute(Operator& op,
 HTShapeList MulElewiseGradientOpImpl::DoInferShape(Operator& op,
                                                    const HTShapeList& input_shapes,
                                                    RuntimeContext& ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void MulElewiseGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   auto meta_key = std::string("in_meta_") + std::to_string(index());
-  auto dstate_key = std::string("in_dstate_") + std::to_string(index());
+  auto dstate_tensor_key = std::string("in_tensor_") + std::to_string(index());
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, meta_key, "in_meta");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, dstate_key, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, dstate_tensor_key, "in_tensor");
 }
 
 void MulElewiseGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                                               const OpMeta& op_meta,
                                               const InstantiationContext& inst_ctx) const {
-  DistributedStates ds_output = inst_ctx.get<DistributedStates>("in_dstate");
+  DistributedStates ds_output = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   if (axes().size() > 0) 
     ds_output = ReduceOpImpl::StatesForDistributedReduce(inputs.at(0), axes(), keep_dims());
   outputs.at(0)->set_distributed_states(ds_output);

@@ -1,6 +1,6 @@
 import hetu as ht
 import numpy as np
-from hetu.nn.modules.parallel_utils import get_multi_ds_parallel_config, parallel_multi_data_provider, get_device_index
+from hetu.utils.parallel import get_multi_ds_parallel_config, parallel_multi_data_provider, get_device_index
 
 sin_global = None
 cos_global = None
@@ -352,10 +352,10 @@ class LLamaModel(ht.nn.Module):
         return hidden_states
 
 # the ds_parallel_config use the same as gpt
-class LLamaLMHeadModel(ht.nn.Module):
+class LLaMALMHeadModel(ht.nn.Module):
 
     def __init__(self, config, ds_parallel_configs):
-        super(LLamaLMHeadModel, self).__init__()
+        super(LLaMALMHeadModel, self).__init__()
         self.transformer = LLamaModel(config, ds_parallel_configs)
         self.lm_head = ht.nn.HtMultiColumnParallelLinear(
             config.n_embd,

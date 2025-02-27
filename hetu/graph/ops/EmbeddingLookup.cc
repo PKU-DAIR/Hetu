@@ -37,7 +37,7 @@ EmbeddingLookupOpImpl::DoInferShape(Operator& op,
 
 void EmbeddingLookupOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
   dst_ctx.put("in_meta", inputs.at(0)->meta());
-  dst_ctx.put("in_dstate", inputs.at(0)->get_distributed_states());
+  dst_ctx.put("in_tensor", inputs.at(0));
 }
 
 void EmbeddingLookupOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -95,12 +95,12 @@ HTShapeList
 EmbeddingLookupGradientOpImpl::DoInferShape(Operator& op,
                                             const HTShapeList& input_shapes,
                                             RuntimeContext &ctx) const {
-  return {ctx.get_or_create(op->id()).get<NDArrayMeta>("in_meta").shape};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
 }
 
 void EmbeddingLookupGradientOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
   dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta");
-  dst_ctx.migrate_from<DistributedStates>(src_ctx, "in_dstate");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor");
 }
 
 void EmbeddingLookupGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
@@ -108,7 +108,7 @@ void EmbeddingLookupGradientOpImpl::DoDeduceStates(const TensorList& inputs, Ten
                                                    const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_grad_output = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_id = inputs.at(1)->get_distributed_states();
-  const DistributedStates& ds_tb = inst_ctx.get<DistributedStates>("in_dstate");
+  const DistributedStates& ds_tb = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
 
   DistributedStates ds_tb_grad(ds_grad_output);
   if (ds_tb.check_pure_duplicate()) {
