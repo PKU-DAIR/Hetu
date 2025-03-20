@@ -773,8 +773,10 @@
 
 - name: rotary
   op: RotaryOp
-  args: Tensor x, Tensor cos, Tensor sin, bool interleaved=False, bool inplace=False
-  self: x
+  args: Tensor qkv, Tensor cos, Tensor sin, int64_t head_dim, int64_t group_query_ratio, List[List[IntSymbol]] multi_seq_lens_symbol, List[List[IntSymbol]] multi_cp_group_symbol, 
+        bool packing=False, Tensor cu_seqlens_q=None, Tensor cu_seqlens_k=None, IntSymbol max_seqlen_q=None, IntSymbol max_seqlen_k=None,
+        bool interleaved=False, bool inplace=False
+  self: qkv
 
 - name: swiglu
   op: SwiGLUOp

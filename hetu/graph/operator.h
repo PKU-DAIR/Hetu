@@ -1191,6 +1191,8 @@ static const uint64_t PARALLEL_ATTN_OP = 1ul << 26;
 static const uint64_t PARALLEL_ATTN_GRAD_OP = 1ul << 27;
 static const uint64_t BINARY_OP = 1ul << 28;
 static const uint64_t INDEX_ADD_OP = 1ul << 29;
+static const uint64_t ROTARY_OP = 1ul << 30;
+static const uint64_t ROTARY_GRADIENT_OP = 1ul << 31;
 static const uint64_t FUSED_GROUP_OP = 1ul << 53;
 static const uint64_t CONCAT_OP = 1ul << 54;
 static const uint64_t CONTIGUOUS_OP = 1ul << 55;
@@ -1247,6 +1249,8 @@ DECLARE_OP_INDICATOR_CHECKER(parallel_attn_grad, PARALLEL_ATTN_GRAD_OP)
 DECLARE_OP_INDICATOR_CHECKER(binary, BINARY_OP)
 DECLARE_OP_INDICATOR_CHECKER(unknown, UNKNOWN_OP)
 DECLARE_OP_INDICATOR_CHECKER(index_add, INDEX_ADD_OP)
+DECLARE_OP_INDICATOR_CHECKER(rotary, ROTARY_OP)
+DECLARE_OP_INDICATOR_CHECKER(rotary_gradient, ROTARY_GRADIENT_OP)
 DECLARE_OP_INDICATOR_CHECKER(communication,
                              PEER_TO_PEER_SEND_OP | PEER_TO_PEER_RECV_OP |
                              ALL_TO_ALL_OP | ALL_REDUCE_OP |
