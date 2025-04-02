@@ -12,7 +12,7 @@ import numpy as np
 import hetu as ht
 from queue import Queue
 from torch.profiler import profile, ProfilerActivity
-from hetu.models.llama import LLaMALMHeadModel, LLaMAConfig
+from hetu.models.llama import LlamaLMHeadModel, LlamaConfig
 from hetu.utils.data import HetuJsonDataset, build_data_loader, get_sorted_batch_and_len, get_input_and_label_buckets 
 from hetu.utils.parallel import distributed_init, read_ds_parallel_config, parse_multi_ds_parallel_config
 from hetu.rpc.kv_store import KeyValueStoreClient
@@ -44,7 +44,7 @@ def get_dg_from_union(device, dg_union):
 def pretrain(args):
     ds_parallel_configs = read_ds_parallel_config(args.ds_parallel_config, args.num_strategy)
 
-    config = LLaMAConfig(
+    config = LlamaConfig(
         vocab_size=args.vocab_size, 
         n_embd=args.hidden_size,
         ffn_hidden_size=args.ffn_hidden_size,
@@ -66,7 +66,7 @@ def pretrain(args):
         f'llama blocks range: {ranges} is conflict with num_hidden_layers: {config.num_hidden_layers}!'
 
     # Hetu model definition
-    model = LLaMALMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
+    model = LlamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
 
     input_ds_hierarchy, input_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'input')
     label_ds_hierarchy, label_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'label')

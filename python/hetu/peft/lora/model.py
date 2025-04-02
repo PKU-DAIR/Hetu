@@ -101,10 +101,10 @@ class LoraModel(Module):
 
     def __init__(self, model, config) -> None:
         super(LoraModel, self).__init__()
-        self.model = model
+        self.base_model = model
         self.targeted_module_names: list[str] = []
         self.peft_config = config
-        self.inject_adapter(self.model)
+        self.inject_adapter(self.base_model)
     
     def inject_adapter(self, model):
         key_list = [key for key, _ in model.named_modules()]
@@ -117,7 +117,7 @@ class LoraModel(Module):
             parent, target, target_name = self._get_submodules(model, key)
             self._create_and_replace(self.peft_config, target, target_name, parent)
         
-        self._mark_only_adapters_as_tranable(model)
+        self._mark_only_adapters_as_trainable(model)
             
     def _check_target_module_exists(self, lora_config, key):
         if isinstance(lora_config.target_modules, str):
@@ -154,7 +154,7 @@ class LoraModel(Module):
     def _create_new_module(self, target, **kwargs):
         return dispatch_lora_layer(target, **kwargs)
 
-    def _mark_only_adapters_as_tranable(self, model) -> None:
+    def _mark_only_adapters_as_trainable(self, model) -> None:
         for n, p in model.named_parameters():
             if self.prefix not in n:
                 p.set_requires_grad(False)
@@ -167,7 +167,7 @@ class LoraModel(Module):
         token_type_ids=None,
         labels=None,
     ):
-        return self.model(
+        return self.base_model(
             input_ids=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,

@@ -102,6 +102,10 @@ NDArray TensorDef::get_or_compute() {
   return graph().GetOrCompute(get_self());
 }
 
+void* TensorDef::get_raw_data_ptr() {
+  return get_or_compute()->raw_data_ptr();
+}
+
 void TensorDef::merge_strategy(Tensor& tensor) {
   for (const auto& ds_union : tensor->ds_hierarchy().raw_data()) {
     _ds_hierarchy.add(ds_union);

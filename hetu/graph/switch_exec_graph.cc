@@ -280,11 +280,9 @@ void ParamBuffer::Bind(const std::shared_ptr<NDArrayStorage>& storage) {
 size_t ParamBuckets::GetSuggestedBucketId(const Tensor& tensor) {
   // workaround
   // 目前通过name来判断是python端的哪个layer
+  // 只要没有block的都放到0号bucket
   // 后续要通过subgraph判断
-  if (tensor->name().find("lm_head") != std::string::npos
-      || tensor->name().find("wte") != std::string::npos
-      || tensor->name().find("wpe") != std::string::npos
-      || tensor->name().find("final") != std::string::npos) {
+  if (tensor->name().find("block") == std::string::npos) {
     return 0;
   }
   std::string sub_str = "block";

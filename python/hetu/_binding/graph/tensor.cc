@@ -320,6 +320,12 @@ PyObject* PyTensor_ds_hierarchy(PyTensor* self) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyTensor_dg_hierarchy(PyTensor* self) {
+  HT_PY_FUNC_BEGIN
+  return PyDeviceGroupHierarchy_New(self->tensor->producer()->device_group_hierarchy());   
+  HT_PY_FUNC_END
+}
+
 PyObject* PyTensor_has_placement_group(PyTensor* self) {
   HT_PY_FUNC_BEGIN
   Py_RETURN_BOOLEAN_COND(self->tensor->has_placement_group());   
@@ -344,6 +350,18 @@ PyObject* PyTensor_device_group(PyTensor* self) {
 PyObject* PyTensor_data(PyTensor* self) {
   HT_PY_FUNC_BEGIN
   return PyNDArray_New(self->tensor->get_or_compute());
+  HT_PY_FUNC_END
+}
+
+PyObject* PyTensor_raw_data_ptr(PyTensor* self) {
+  HT_PY_FUNC_BEGIN
+  return PyLong_FromInteger(int64_t(self->tensor->get_raw_data_ptr()));
+  HT_PY_FUNC_END
+}
+
+PyObject* PyTensor_is_floating_point(PyTensor* self) {
+  HT_PY_FUNC_BEGIN
+  Py_RETURN_BOOLEAN_COND(IsFloatingPoint(self->tensor->dtype()));
   HT_PY_FUNC_END
 }
 
@@ -423,6 +441,74 @@ PyObject* PyTensor_from_numpy(PyObject*, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyTensor_from_buffer(PyObject*, PyObject* args, PyObject* kwargs) {
+  HT_PY_FUNC_BEGIN
+  auto* unsafe_self = PyTensor_Type->tp_alloc(PyTensor_Type, 0);
+  HT_RUNTIME_ERROR_IF(!unsafe_self) << "Failed to alloc PyTensor";
+  auto* self = reinterpret_cast<PyTensor*>(unsafe_self);
+  
+  static PyArgParser parser({
+    "from_buffer(bytes data, DataType dtype, List[int] shape, bool requires_grad=false, \
+     DistributedStatesHierarchy ds_hierarchy=None, " OP_META_ARGS ")",
+    "from_buffer(bytearray data, DataType dtype, List[int] shape, bool requires_grad=false, \
+     DistributedStatesHierarchy ds_hierarchy=None, " OP_META_ARGS ")",
+  });
+  auto parsed_args = parser.parse(args, kwargs);
+
+  if (parsed_args.signature_index() == 0) {
+    // Get buffer interface from Python object
+    Py_buffer view;
+    PyObject* buffer_obj = parsed_args.get_bytes(0);
+    if (PyObject_GetBuffer(buffer_obj, &view, PyBUF_SIMPLE) < 0) {
+      PyErr_SetString(PyExc_TypeError, "Unable to get buffer from object");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+
+    DataType dtype = parsed_args.get_dtype(1);
+    std::vector<int64_t> shape = parsed_args.get_int64_list(2);
+    bool requires_grad = parsed_args.get_bool_or_default(3);
+    DistributedStatesHierarchy ds_hierarchy = parsed_args.get_ds_hierarchy_or_empty(4);
+
+    // Create NDArray from buffer
+    NDArray array = NDArrayFromBuffer(view.buf, dtype, shape);
+    PyBuffer_Release(&view);
+
+    new(&self->tensor) Tensor();
+    self->tensor = MakeParameterOp(array, false, dtype, requires_grad, ds_hierarchy, parse_op_meta(parsed_args, 5));
+    
+    return reinterpret_cast<PyObject*>(self);
+  } else if (parsed_args.signature_index() == 1) {
+    // Get buffer interface from Python object
+    Py_buffer view;
+    PyObject* buffer_obj = parsed_args.get_bytearray(0);
+    if (PyObject_GetBuffer(buffer_obj, &view, PyBUF_SIMPLE) < 0) {
+      PyErr_SetString(PyExc_TypeError, "Unable to get buffer from object");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+
+    DataType dtype = parsed_args.get_dtype(1);
+    std::vector<int64_t> shape = parsed_args.get_int64_list(2);
+    bool requires_grad = parsed_args.get_bool_or_default(3);
+    DistributedStatesHierarchy ds_hierarchy = parsed_args.get_ds_hierarchy_or_empty(4);
+
+    // Create NDArray from buffer
+    NDArray array = NDArrayFromBuffer(view.buf, dtype, shape);
+    PyBuffer_Release(&view);
+
+    new(&self->tensor) Tensor();
+    self->tensor = MakeParameterOp(array, false, dtype, requires_grad, ds_hierarchy, parse_op_meta(parsed_args, 5));
+    
+    return reinterpret_cast<PyObject*>(self);
+  } else {
+    Py_TYPE(self)->tp_free(self);
+    HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
+    __builtin_unreachable();
+  }
+  HT_PY_FUNC_END
+}
+
 PyObject* PyTensor_data_transfer(PyTensor* self, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
   auto* unsafe_self = PyTensor_Type->tp_alloc(PyTensor_Type, 0);
@@ -463,6 +549,9 @@ PyObject* PyTensor_reset_data(PyTensor* self, PyObject* args, PyObject* kwargs) 
   }
   else if (parsed_args.signature_index() == 1) {
     auto array_obj = parsed_args.get_ndarray(0);
+    // HT_ASSERT(self->tensor->shape() == array_obj->shape())
+    //   << "The shape of provided data does not match the shape of the tensor: "
+    //   << self->tensor->shape() << " vs " << array_obj->shape();
     ResetVariableData(self->tensor, array_obj);
     // HT_LOG_TRACE << "ResetVariableData successfully.";
   } else {
@@ -508,6 +597,20 @@ PyObject* PyTensor_get_device_group_union(PyTensor* self, PyObject* args, PyObje
   HT_PY_FUNC_END
 }
 
+PyObject* PyTensor_get_ds_union(PyTensor* self, PyObject* args, PyObject* kwargs) {
+  HT_PY_FUNC_BEGIN
+  static PyArgParser parser({
+    "get_ds_union()"
+  });
+  auto parsed_args = parser.parse(args, kwargs);
+  if (parsed_args.signature_index() == 0) {
+    return PyDistributedStatesUnion_New(self->tensor->cur_ds_union());
+  } else {
+    HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
+    __builtin_unreachable();
+  }
+  HT_PY_FUNC_END
+}
 
 PyObject* PyTensor_from_numpy_parallel(PyObject*, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
@@ -601,6 +704,31 @@ PyObject* PyTensor_set_requires_grad(PyTensor* self, PyObject* args, PyObject* k
   HT_PY_FUNC_END
 }
 
+PyObject* PyTensor_copy(PyTensor* self, PyObject* args, PyObject* kwargs) {
+  HT_PY_FUNC_BEGIN
+  auto* unsafe_self = PyTensor_Type->tp_alloc(PyTensor_Type, 0);
+  HT_RUNTIME_ERROR_IF(!unsafe_self) << "Failed to alloc PyTensor";
+  auto* new_tensor = reinterpret_cast<PyTensor*>(unsafe_self);
+    
+  new(&new_tensor->tensor) Tensor();
+    
+  NDArray data = self->tensor->get_or_compute();
+  NDArray data_copy = NDArray::copy(data, kBlockingStream);
+  DataType dtype = self->tensor->dtype();
+  bool requires_grad = self->tensor->requires_grad();
+  DistributedStatesHierarchy ds_hierarchy = self->tensor->ds_hierarchy();
+  
+  new_tensor->tensor = MakeParameterOp(
+    data_copy,
+    false,
+    dtype,
+    requires_grad,
+    ds_hierarchy
+  );
+    
+  return reinterpret_cast<PyObject*>(new_tensor);
+  HT_PY_FUNC_END
+}
 
 // NOLINTNEXTLINE
 PyGetSetDef PyTensor_properties[] = {
@@ -617,6 +745,7 @@ PyGetSetDef PyTensor_properties[] = {
   {PY_GET_SET_DEF_NAME("requires_grad"), (getter) PyTensor_requires_grad, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("distributed_states"), (getter) PyTensor_distributed_states, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("ds_hierarchy"), (getter) PyTensor_ds_hierarchy, nullptr, nullptr, nullptr},
+  {PY_GET_SET_DEF_NAME("dg_hierarchy"), (getter) PyTensor_dg_hierarchy, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("has_placement_group"), (getter) PyTensor_has_placement_group, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("placement_group_union"), (getter) PyTensor_placement_group_union, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("data"), (getter) PyTensor_data, nullptr, nullptr, nullptr}, 
@@ -677,9 +806,13 @@ std::vector<PyMethodDef> InitTensorPyMethodDefs() {
     {"stride", (PyCFunction) PyTensor_stride, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"numpy", (PyCFunction) PyTensor_to_numpy, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"to", (PyCFunction) PyTensor_data_transfer, METH_VARARGS | METH_KEYWORDS, nullptr },
+    {"copy", (PyCFunction) PyTensor_copy, METH_NOARGS, nullptr},
     {"reset_data", (PyCFunction) PyTensor_reset_data, METH_VARARGS | METH_KEYWORDS, nullptr },
     {"get_data", (PyCFunction) PyTensor_get_data, METH_VARARGS | METH_KEYWORDS, nullptr },
+    {"raw_data_ptr", (PyCFunction) PyTensor_raw_data_ptr, METH_VARARGS | METH_KEYWORDS, nullptr },
+    {"is_floating_point", (PyCFunction) PyTensor_is_floating_point, METH_NOARGS, nullptr },
     {"get_device_group_union", (PyCFunction) PyTensor_get_device_group_union, METH_VARARGS | METH_KEYWORDS, nullptr },
+    {"get_ds_union", (PyCFunction) PyTensor_get_ds_union, METH_VARARGS | METH_KEYWORDS, nullptr },
     {"check_ds_hierarchy_equal", (PyCFunction) PyTensor_check_ds_hierarchy_equal, METH_VARARGS | METH_KEYWORDS, nullptr },
     {"check_ds_hierarchy_equal_except_split", (PyCFunction) PyTensor_check_ds_hierarchy_equal_except_split, METH_VARARGS | METH_KEYWORDS, nullptr },
     {"get_or_compute", (PyCFunction) PyTensor_get_or_compute, METH_NOARGS, nullptr }, 
@@ -699,6 +832,7 @@ std::vector<PyMethodDef> InitTensorPyClassMethodDefs() {
   AddPyMethodDefs(ret, {
     {"from_numpy", (PyCFunction) PyTensor_from_numpy, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"from_numpy_parallel", (PyCFunction) PyTensor_from_numpy_parallel, METH_VARARGS | METH_KEYWORDS, nullptr },     
+    {"from_buffer", (PyCFunction) PyTensor_from_buffer, METH_VARARGS | METH_KEYWORDS, nullptr },
     {nullptr}
   });
   AddPyMethodDefs(ret, hetu::graph::get_registered_tensor_class_methods());

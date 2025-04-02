@@ -1,2 +1,3 @@
-from .gpt_model import GPTLMHeadModel
-from .gpt_config import GPTConfig
+from .gpt_model import *
+from .gpt_config import *
+from .gpt_tokenizer import *

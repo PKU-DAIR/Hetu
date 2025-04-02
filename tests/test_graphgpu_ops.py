@@ -830,7 +830,8 @@ class TestTransformOps(unittest.TestCase):
 
     _test_shapes = [
         (64, 256),
-        (128, 128)
+        (128, 128),
+        (64, 64, 256)
     ]
 
     _pad_shapes = [
@@ -898,19 +899,25 @@ class TestTransformOps(unittest.TestCase):
 
     def test_concat_op(self):
         print(sys._getframe().f_code.co_name)
-        dims = [0, 1]
         for shape in TestTransformOps._test_shapes:
+            dims = range(len(shape))
             for dim in dims:
-                x_np = np.random.randn(*shape).astype(np.float32)
-                y_np = np.random.randn(*shape).astype(np.float32)
+                shape_1 = list(shape)
+                shape_1[dim] = shape_1[dim] // 2
+                shape_2 = list(shape)
+                shape_2[dim] = shape_2[dim] * 2
+                x_np = np.random.randn(*shape_1).astype(np.float32)
+                y_np = np.random.randn(*shape_2).astype(np.float32)
                 z_np = np.random.randn(*shape).astype(np.float32)
                 gt = np.concatenate((x_np, y_np), dim)
                 x = hetu.from_numpy(x_np)
                 y = hetu.from_numpy(y_np)
                 z = hetu.from_numpy(z_np)
-                self.assertTrue(allclose(hetu.concat([x, y], dim), gt))
+                self.assertTrue(allclose(hetu.concat([x, y], axis=dim), gt))
                 gt = np.concatenate((x_np, y_np, z_np), dim)
-                self.assertTrue(allclose(hetu.concat([x, y, z], dim), gt))
+                self.assertTrue(allclose(hetu.concat([x, y, z], axis=dim), gt))
+                gt = np.concatenate((x_np,), dim)
+                self.assertTrue(allclose(hetu.concat([x], axis=dim), gt))
                 
                 if GRAD_TEST:
                     torch_in = torch.tensor(x_np, requires_grad=True)

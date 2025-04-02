@@ -7,6 +7,29 @@
 namespace hetu {
 namespace impl {
 
+template <typename spec_a_t, typename spec_b_t>
+void data_transfer_cpu(const spec_a_t* from, size_t size, spec_b_t* to) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+  for (size_t idx = 0; idx < size; idx++)
+    to[idx] = static_cast<spec_b_t>(from[idx]);
+}
+
+template <typename spec_a_t, typename spec_b_t>
+void data_transfer_cpu(const spec_a_t* from, size_t size, spec_b_t* to,
+                       int64_t ndims, const int64_t* stride, const int64_t* stride_out,
+                       const int64_t* c_shape) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+  for (size_t idx = 0; idx < size; idx++) {
+    int64_t i_idx = hetu::impl::get_index(idx, ndims, stride, c_shape);
+    int64_t o_idx = hetu::impl::get_index(idx, ndims, stride_out, c_shape);
+    to[o_idx] = static_cast<spec_b_t>(from[i_idx]);
+  }
+}
+
 void DataTransferCpu(const NDArray& from, NDArray& to, const Stream& stream) {
   HT_ASSERT_COPIABLE(from, to);
   size_t numel = from->numel();
@@ -32,7 +55,13 @@ void DataTransferCpu(const NDArray& from, NDArray& to, const Stream& stream) {
         from->dtype(), to->dtype(), spec_a_t, spec_b_t, "DataTransferCpu", [&]() {
           auto* typed_from_ptr = reinterpret_cast<spec_a_t*>(from_ptr);
           auto* typed_to_ptr = reinterpret_cast<spec_b_t*>(to_ptr);
-          std::copy(typed_from_ptr, typed_from_ptr + numel, typed_to_ptr);
+          if (from->is_contiguous() && to->is_contiguous()) {
+            data_transfer_cpu<spec_a_t, spec_b_t>(typed_from_ptr, numel, typed_to_ptr);
+          } else {
+            data_transfer_cpu<spec_a_t, spec_b_t>(
+              typed_from_ptr, numel, typed_to_ptr, from->ndim(), from->stride().data(),
+              to->stride().data(), from->shape().data());
+          }
         });
     }
   },

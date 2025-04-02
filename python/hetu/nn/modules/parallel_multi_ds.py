@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 class HtMultiParallelRMSNorm(Module):
-    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, recompute_allgather=False, dtype=hetu.float32, name='rmsnorm'):
+    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, recompute_allgather=False, eps=1e-5, dtype=hetu.float32, name='rmsnorm'):
         super(HtMultiParallelRMSNorm, self).__init__()
         self.ds_parallel_configs = multi_ds_parallel_config
         if isinstance(normalized_shape, numbers.Integral):
@@ -25,6 +25,7 @@ class HtMultiParallelRMSNorm(Module):
         self.sequence_parallel = sequence_parallel
         self.recompute_allgather = recompute_allgather
         self.name = name
+        self.eps = eps
         self.layer_idx = int(name.split('Block')[1]) if 'Block' in name else -1
         self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
@@ -66,7 +67,7 @@ class HtMultiParallelRMSNorm(Module):
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0'])
             with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
-                output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
+                output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, eps=self.eps, \
                                                     device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
             # handle allgather recompute manually
             if output_rms_split0.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
@@ -83,7 +84,7 @@ class HtMultiParallelRMSNorm(Module):
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0_dup'])
             with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
-                output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
+                output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, eps=self.eps, \
                                                 device_group_hierarchy=self.device_group_unions, name=self.name)[0]
         return output_rms
 

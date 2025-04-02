@@ -1,8 +1,8 @@
 import json
 import fcntl
 import os
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
+from .ds_config import RecomputeConfig
 
 GPUS_PER_NODE = 8
 
@@ -15,13 +15,6 @@ class GPUPos:
         attrs = vars(self)
         attrs_str = ', '.join(f'{key} = {value}' for key, value in attrs.items())
         return f'{self.__class__.__name__}({attrs_str})'
-
-@dataclass
-class RecomputeConfig:
-    recompute_granularity: List[Optional[str]] # dcp_size
-    recompute_layer_idxs_list: List[List[int]] # dcp_size * [recompute_layer_1, recompute_layer_2, ..., recompute_layer_dcp_k]
-    blocks_recompute: List[List[bool]] # total_layers * dcp_size
-    blocks_output_recompute: List[List[bool]] # total_layers * dcp_size
 
 def write_with_lock(file_path, data):
     with open(file_path, 'w') as f:
@@ -160,7 +153,7 @@ def generate_recompute_config(
         elif type(recompute_granularity) == str:
             recompute_granularity = [recompute_granularity for _ in range(dcp_size)]
         else:
-            raise ValueError(f"recompute_granularity should be a string or a list of strings, but got {recompute_granularity}")
+            raise ValueError(f"recompute_granularity should be a string or a list of strings, but got {type(recompute_granularity)}: {recompute_granularity}")
     else:
         recompute_granularity = [None for _ in range(dcp_size)]
     for i, granularity in enumerate(recompute_granularity):
@@ -175,7 +168,7 @@ def generate_recompute_config(
             recompute_num_layers = [recompute_num_layers[0] for _ in range(dcp_size)]
         else:
             assert len(recompute_num_layers) == dcp_size, \
-                f"recompute_num_layers should have the same length as dcp, but got {len(recompute_num_layers)} vs. {dp}"
+                f"recompute_num_layers should have the same length as dcp, but got {len(recompute_num_layers)} vs. {dcp_size}"
     elif type(recompute_num_layers) == int:
         recompute_num_layers = [recompute_num_layers for _ in range(dcp_size)]
     for i, recompute_num_layer in enumerate(recompute_num_layers):
@@ -252,6 +245,11 @@ def generate_recompute_config(
         blocks_recompute=blocks_recompute,
         blocks_output_recompute=blocks_output_recompute
     )
+
+__all__ = [
+    'convert_strategy',
+    'generate_recompute_config',
+]
 
 # 需要根据具体的模型去generate_ds_parallel_config
 # 因此将这一部分放到了python/models目录下

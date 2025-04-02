@@ -258,6 +258,8 @@ class TensorDef : public shared_ptr_target {
 
   NDArray get_or_compute();
 
+  void* get_raw_data_ptr();
+
   bool has_cur_ds_union();
 
   DistributedStatesUnion& cur_ds_union();

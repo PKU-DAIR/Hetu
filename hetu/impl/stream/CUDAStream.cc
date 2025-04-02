@@ -36,16 +36,8 @@ static void InitDevice(int32_t device_id) {
       device_streams[device_id][i] = cudaStreamLegacy;
     }
     else {
-      CudaStreamCreateWithPriority(&device_streams[device_id][i], cudaStreamDefault, 0);
-      /*
-      if (i == kComputingStream) {
-        CudaStreamCreateWithPriority(&device_streams[device_id][i], cudaStreamDefault, -100);
-      } else if (i == kCollectiveStream) {
-        CudaStreamCreateWithPriority(&device_streams[device_id][i], cudaStreamDefault, -1);
-      } else {
-        CudaStreamCreateWithPriority(&device_streams[device_id][i], cudaStreamDefault, 0);
-      }
-      */
+      CudaStreamCreateWithPriority(
+        &device_streams[device_id][i], cudaStreamDefault, 0);
     }
   }
   device_initialized[device_id] = 1;

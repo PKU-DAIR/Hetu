@@ -50,6 +50,14 @@ NDArray NDArrayCopyFromSequenceCtor(PyObject* obj, optional<DataType>&& dtype,
   return ret;
 }
 
+NDArray NDArrayFromBuffer(void* data, DataType dtype, const HTShape& shape) {
+  size_t size = NumEl(shape) * DataType2Size(dtype);
+  NDArray array = NDArray::empty(shape, Device(kCPU), dtype);
+  void* dst = array->raw_data_ptr();
+  memcpy(dst, data, size);
+  return array;
+}
+
 PyObject* PyNDArray_New(const NDArray& ndarray, bool return_none_if_undefined) {
   HT_PY_FUNC_BEGIN
   if (return_none_if_undefined && !ndarray.is_defined()) {
@@ -203,6 +211,76 @@ PyObject* PyNDArray_from_numpy(PyObject*, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyNDArray_from_buffer(PyObject*, PyObject* args, PyObject* kwargs) {
+  HT_PY_FUNC_BEGIN
+  auto* unsafe_self = PyNDArray_Type->tp_alloc(PyNDArray_Type, 0);
+  HT_RUNTIME_ERROR_IF(!unsafe_self) << "Failed to alloc PyNDArray";
+  auto* self = reinterpret_cast<PyNDArray*>(unsafe_self);
+  
+  static PyArgParser parser({
+    "buffer_to_NDArray(bytes data, DataType dtype, List[int] shape)",
+    "buffer_to_NDArray(bytearray data, DataType dtype, List[int] shape)",
+  });
+  auto parsed_args = parser.parse(args, kwargs);
+
+  if (parsed_args.signature_index() == 0) {
+    Py_buffer view;
+    PyObject* buffer_obj = parsed_args.get_bytes(0);
+    if (PyObject_GetBuffer(buffer_obj, &view, PyBUF_SIMPLE) < 0) {
+      PyErr_SetString(PyExc_TypeError, "Unable to get buffer from object");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+
+    DataType dtype = parsed_args.get_dtype(1);
+    HTShape shape = parsed_args.get_int64_list(2);
+
+    size_t expected_size = NumEl(shape) * DataType2Size(dtype);
+    if (view.len < expected_size) {
+      PyBuffer_Release(&view);
+      PyErr_SetString(PyExc_ValueError, 
+        "buffer size does not match the expected size");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+    new(&self->ndarray) NDArray();
+    self->ndarray = NDArrayFromBuffer(view.buf, dtype, shape);
+
+    PyBuffer_Release(&view);
+    return reinterpret_cast<PyObject*>(self);
+  } else if (parsed_args.signature_index() == 1) {
+    Py_buffer view;
+    PyObject* buffer_obj = parsed_args.get_bytearray(0);
+    if (PyObject_GetBuffer(buffer_obj, &view, PyBUF_SIMPLE) < 0) {
+      PyErr_SetString(PyExc_TypeError, "Unable to get buffer from object");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+
+    DataType dtype = parsed_args.get_dtype(1);
+    HTShape shape = parsed_args.get_int64_list(2);
+
+    size_t expected_size = NumEl(shape) * DataType2Size(dtype);
+    if (view.len < expected_size) {
+      PyBuffer_Release(&view);
+      PyErr_SetString(PyExc_ValueError, 
+        "buffer size does not match the expected size");
+      Py_TYPE(self)->tp_free(self);
+      return nullptr;
+    }
+    new(&self->ndarray) NDArray();
+    self->ndarray = NDArrayFromBuffer(view.buf, dtype, shape);
+
+    PyBuffer_Release(&view);
+    return reinterpret_cast<PyObject*>(self);
+  } else {
+    Py_TYPE(self)->tp_free(self);
+    HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
+    __builtin_unreachable();
+  }
+  HT_PY_FUNC_END
+}
+
 PyObject* PyNDArray_to_numpy(PyNDArray* self, PyObject* args, 
                              PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
@@ -237,7 +315,7 @@ PyObject* PyNDArray_to(PyNDArray* self, PyObject* args, PyObject* kwargs) {
     if (dtype == nullopt || dtype == self->ndarray->dtype()) {
       return reinterpret_cast<PyObject*>(self);
     } else {
-      auto out = NDArray::to(self->ndarray, Device(), *dtype, -1);
+      auto out = NDArray::to(self->ndarray, Device(), *dtype, kBlockingStream);
       return PyNDArray_New(out);
     }
   } else if (parsed_args.signature_index() == 1) {
@@ -252,7 +330,7 @@ PyObject* PyNDArray_to(PyNDArray* self, PyObject* args, PyObject* kwargs) {
         self->ndarray, 
         device.value_or(Device()), 
         dtype.value_or(kUndeterminedDataType), 
-        -1);
+        kBlockingStream);
       return PyNDArray_New(out);
     }
   } else if (parsed_args.signature_index() == 2) {
@@ -266,7 +344,7 @@ PyObject* PyNDArray_to(PyNDArray* self, PyObject* args, PyObject* kwargs) {
         self->ndarray, 
         other->device(), 
         other->dtype(), 
-        -1);
+        kBlockingStream);
       return PyNDArray_New(out);
     }
   } else {
@@ -320,6 +398,13 @@ PyObject* PyNDArray_transpose(PyNDArray* self, PyObject* args, PyObject* kwargs)
 PyObject* PyNDArray_copy(PyNDArray* self, PyObject* args, PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
   auto out = NDArray::copy(self->ndarray, kBlockingStream);
+  return PyNDArray_New(out);
+  HT_PY_FUNC_END
+}
+
+PyObject* PyNDArray_contiguous(PyNDArray* self, PyObject* args, PyObject* kwargs) {
+  HT_PY_FUNC_BEGIN
+  auto out = NDArray::contiguous(self->ndarray, kBlockingStream);
   return PyNDArray_New(out);
   HT_PY_FUNC_END
 }
@@ -401,6 +486,7 @@ std::vector<PyMethodDef> InitNDArrayPyMethodDefs() {
     {"to", (PyCFunction) PyNDArray_to, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"slice", (PyCFunction) PyNDArray_slice, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"copy", (PyCFunction) PyNDArray_copy, METH_NOARGS, nullptr }, 
+    {"contiguous", (PyCFunction) PyNDArray_contiguous, METH_NOARGS, nullptr }, 
     {"transpose", (PyCFunction) PyNDArray_transpose, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {"view", (PyCFunction) PyNDArray_view, METH_VARARGS | METH_KEYWORDS, nullptr }, 
     {nullptr}
@@ -414,6 +500,7 @@ std::vector<PyMethodDef> InitNDArrayPyClassMethodDefs() {
   AddPyMethodDefs(ret, {
     // TODO: wrap from_numpy of NDArray in a capsule
     {"numpy_to_NDArray", (PyCFunction) PyNDArray_from_numpy, METH_VARARGS | METH_KEYWORDS, nullptr }, 
+    {"buffer_to_NDArray", (PyCFunction) PyNDArray_from_buffer, METH_VARARGS | METH_KEYWORDS, nullptr },
     {nullptr}
   });
   AddPyMethodDefs(ret, hetu::impl::get_registered_ndarray_class_methods());

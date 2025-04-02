@@ -130,8 +130,39 @@ class ExecutableGraph : public Graph {
     _shape_plan_pool.emplace_back(std::move(shape_plan));
   }
 
+  void TopoSortExecTensors() {
+    // 对_record_exec_tensors进行拓扑排序
+    std::vector<Tensor> sorted_exec_tensors;
+    std::unordered_map<TensorId, bool> visited;
+    std::function<void(const Tensor&)> topo_sort_by_dep = [&](const Tensor& tensor) {
+      if (visited[tensor->id()]) return;
+      visited[tensor->id()] = true;
+  
+      auto& exec_op = tensor->producer();
+      for (const auto& input : exec_op->inputs()) {
+        auto it = std::find_if(_record_exec_tensors.begin(), _record_exec_tensors.end(),
+          [&input](const Tensor& t) { return t->id() == input->id(); });
+        if (it != _record_exec_tensors.end()) {
+          topo_sort_by_dep(*it);
+        }
+      }
+      sorted_exec_tensors.emplace_back(tensor);
+    };
+  
+    for (const auto& tensor : _record_exec_tensors) {
+      if (!visited[tensor->id()]) {
+        topo_sort_by_dep(tensor);
+      }
+    }
+    
+    _record_exec_tensors = std::move(sorted_exec_tensors);
+  }
+
   void UpdateExecShapePlan(RuntimeContext& runtime_ctx) {
     auto& exec_shape_plan = runtime_ctx.shape_plan();
+    // topo sort the recorded exec tensors in case the input is also recorded
+    // but emplaced after the output
+    TopoSortExecTensors();
     for (const auto& exec_tensor : _record_exec_tensors) {
       if (exec_shape_plan.find(exec_tensor->id()) != exec_shape_plan.end())
         continue;
@@ -141,7 +172,8 @@ class ExecutableGraph : public Graph {
       for (const auto& exec_input : exec_op->inputs()) {
         auto it = exec_shape_plan.find(exec_input->id());
         HT_ASSERT(it != exec_shape_plan.end()) 
-          << "Something wrong, can't find the input shape of " << exec_input
+          << "Something wrong, can't find the shape of input " << exec_input
+          << " of op " << exec_op
           << " from the current exec shape plan!";
         exec_input_shapes.push_back(it->second);
       }

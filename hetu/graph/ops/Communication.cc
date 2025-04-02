@@ -1009,7 +1009,8 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   auto cur_buffer_shape = runtime_ctx.get_runtime_shape(op->output(0)->id());
   int64_t output_numel = std::accumulate(cur_buffer_shape.begin(), cur_buffer_shape.end(), 1, std::multiplies<int64_t>());
   // workaround: no buffer for allgather inside lora
-  if (op->name().find("lora") != op->name().npos) {
+  if (op->name().find("lora") != op->name().npos
+      || runtime_ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   } else if (!runtime_ctx.has_runtime_allocation(op->output(0)->id()) 
              && _buffer_for_allgather.is_defined() 

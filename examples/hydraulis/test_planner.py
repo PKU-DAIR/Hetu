@@ -10,7 +10,7 @@ import numpy as np
 import multiprocessing
 from tqdm import tqdm
 from multiprocessing import Pool
-from hetu.utils.data import HetuJsonDataset, build_data_loader, get_sorted_batch_and_len, get_input_and_label_buckets 
+from data_utils import LLaMAJsonDataset, build_data_loader, get_sorted_batch_and_len, build_fake_batch_and_len, get_input_and_label_buckets
 from strategy import get_strategy_max_seqlen, dynamic_strategy, batching_strategy
 
 # Global variables to store large data
@@ -44,7 +44,7 @@ def compute_cost2(args):
     return (step_index, cost_2)
 
 def train_dataset_provider(args):
-    train_dataset = HetuJsonDataset(
+    train_dataset = LLaMAJsonDataset(
         json_file=args.json_file,
         key=args.json_key,
         max_seq_len=args.max_seq_len,
@@ -163,7 +163,7 @@ if __name__ == '__main__':
     global_multi_max_seqlen_list = multi_max_seqlen_list
     
     # multi process
-    multi = 3
+    multi = 10
     for begin_step in range(0, 100, multi):
         global_sorted_lens = []
         global_batch_indices_map = {}

@@ -1,7 +1,6 @@
-import argparse
+import hydra
 import json
 import os
-import ast
 from hetu.utils.parallel import generate_recompute_config
 
 def generate_gpt_4d_config(
@@ -129,66 +128,33 @@ def generate_gpt_4d_config(
             }
     return ds_parallel_config
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--num_layers', type=int, default=32, help='size of gpt, 7b is 32 and 13b is 40.'
-    )
-    parser.add_argument(
-        '--num_gpus', type=int, default=8, help='num of gpus.'
-    )
-    parser.add_argument(
-        '--dp', type=int, default=2, help='dp.'
-    )
-    parser.add_argument(
-        '--cp', type=int, default=1, help='cp.'
-    )
-    parser.add_argument(
-        '--tp', type=int, default=2, help='tp.'
-    )
-    parser.add_argument(
-        '--pp', type=int, default=2, help='pp.'
-    )
-    parser.add_argument(
-        '--zero', action='store_true', help='use zero or not.'
-    )
-    parser.add_argument(
-        '--recompute_granularity', type=str, default="null", help='recompute granularity: "selevctive" or "full".'
-    )
-    parser.add_argument(
-        '--recompute_method', type=str, default="null", help='recompute method: "uniform" or "block".'
-    )
-    parser.add_argument(
-        '--recompute_num_layers', type=str, default="null", help='recompute num layers: str(int).'
-    )
-    parser.add_argument(
-        '--recompute_layer_idxs', type=str, default="null", help='recompute layer idxs: List[int].'
-    )
-
-    args = parser.parse_args()
-    num_layers = args.num_layers
+@hydra.main(config_path="conf", config_name="config", version_base=None)
+def main(config):
+    config = config.ds_parallel
+    num_layers = config.num_layers
         
-    assert args.dp * args.cp * args.tp * args.pp == args.num_gpus, \
-            f'dp * cp * tp * pp = {args.dp * args.cp * args.tp * args.pp} is not equal to num_gpus {args.num_gpus}!'
+    assert config.dp * config.cp * config.tp * config.pp == config.num_gpus, \
+            f'dp * cp * tp * pp = {config.dp * config.cp * config.tp * config.pp} is not equal to num_gpus {config.num_gpus}!'
     
     ds_parallel_config = generate_gpt_4d_config(
         num_layers, 
-        args.num_gpus, 
-        args.dp, 
-        args.cp, 
-        args.tp, 
-        args.pp, 
-        args.zero,
-        None if args.recompute_granularity == "null" else args.recompute_granularity, 
-        None if args.recompute_method == "null" else args.recompute_method, 
-        None if args.recompute_num_layers == "null" else int(args.recompute_num_layers), 
-        None if args.recompute_layer_idxs == "null" else [ast.literal_eval(args.recompute_layer_idxs)]
+        config.num_gpus, 
+        config.dp, 
+        config.cp, 
+        config.tp, 
+        config.pp, 
+        config.zero,
+        config.recompute.recompute_granularity, 
+        config.recompute.recompute_method, 
+        config.recompute.recompute_num_layers, 
+        config.recompute.recompute_layer_idxs
     )
     
-    save_folder = './ds_parallel_config/gpt_homo'
-    file_name = f'dp{args.dp}_cp{args.cp}_tp{args.tp}_pp{args.pp}.json'
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    save_folder = config.ds_parallel_config_path
+    file_name = config.ds_parallel_config_name
+    os.makedirs(save_folder, exist_ok=True)
     with open(f'{save_folder}/{file_name}', 'w') as f:
         json.dump(ds_parallel_config, f, indent=4)
 
+if __name__ == '__main__':
+    main()

@@ -1698,7 +1698,6 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       Instantiate(fetches, local_device);
       HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate end...";
 
-      /*
       // init instantiated topo
       OpRefList topo_before_recompute = Graph::TopoSort(fetches, num_ops(), is_op_computed);
       HT_LOG_DEBUG << local_device << ": global topo before recompute pass: " << topo_before_recompute;
@@ -1721,7 +1720,6 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       ActivationCPUOffload::OffloadToCPU(topo_before_activation_offload);
       Graph::pop_graph_ctx();
       HT_LOG_INFO << local_device << ": [Execution Plan] activation offload pass end...";
-      */
 
       // init topo contains comm_op
       OpRefList topo_before_substitute_comm = Graph::TopoSort(fetches, num_ops(), is_op_computed);
@@ -1954,7 +1952,9 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       substitute_current_grad_buffer_map[dtype] = std::make_shared<ParamBuffer>("substitute_current_grad_buffer_" + DataType2Str(dtype));
       substitute_accumulate_grad_buffer_map[dtype] = std::make_shared<ParamBuffer>("substitute_accumulate_grad_buffer_" + DataType2Str(dtype));
     }  
-    _terminate_subgraph->topo_sort();
+    if (_terminate_subgraph != nullptr) {
+      _terminate_subgraph->topo_sort();
+    }
     for (auto& op_ref : bw_topo) {
       if (is_group_op(op_ref)) {
         accumulated_ops.insert(op_ref.get()->id());
@@ -2095,18 +2095,20 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       // HT_LOG_INFO << param << " substitute final grad done";
     }
     // 这里直接将substitute后的param buffer替换掉define graph中生成的
-    for (int i = 0; i < static_cast<int>(DataType::NUM_DATA_TYPES); i++) {
-      DataType dtype = static_cast<DataType>(i);
-      if (_shape_mismatch_flag == 0) {
+    if (!bw_topo.empty()){
+      for (int i = 0; i < static_cast<int>(DataType::NUM_DATA_TYPES); i++) {
+        DataType dtype = static_cast<DataType>(i);
+        if (_shape_mismatch_flag == 0) {
         HT_ASSERT(_transfer_param_buffer_map[dtype]->size() == substitute_transfer_param_buffer_map[dtype]->size()
                   && _current_grad_buffer_map[dtype]->size() == substitute_current_grad_buffer_map[dtype]->size()
-                  && _accumulate_grad_buffer_map[dtype]->size() == substitute_accumulate_grad_buffer_map[dtype]->size())
-          << "buffer size should be equal";
-      }
-      _transfer_param_buffer_map[dtype] = substitute_transfer_param_buffer_map[dtype];
-      _current_grad_buffer_map[dtype] = substitute_current_grad_buffer_map[dtype];
-      _accumulate_grad_buffer_map[dtype] = substitute_accumulate_grad_buffer_map[dtype];
-    }  
+                    && _accumulate_grad_buffer_map[dtype]->size() == substitute_accumulate_grad_buffer_map[dtype]->size())
+            << "buffer size should be equal";
+        }
+        _transfer_param_buffer_map[dtype] = substitute_transfer_param_buffer_map[dtype];
+        _current_grad_buffer_map[dtype] = substitute_current_grad_buffer_map[dtype];
+        _accumulate_grad_buffer_map[dtype] = substitute_accumulate_grad_buffer_map[dtype];
+      }  
+    }
     // dtype_transfer_tensor还有别的（非param的）需要再插入一轮
     // (group1) variable op -> send -> (group2) recv -> other ops
     for (auto& op_ref : local_fw_topo) {

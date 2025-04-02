@@ -43,11 +43,13 @@ inline bool PyDeviceGroup_CheckExact(PyObject* obj) {
   return PyDeviceGroup_Type && obj->ob_type == PyDeviceGroup_Type;
 }
 
+using DeviceGroupHierarchy = graph::DeviceGroupHierarchy;
+
 PyObject* PyDeviceGroup_New(const DeviceGroup& device_group);
 
 PyObject* PyDeviceGroupList_New(const DeviceGroupList& dg_list);
 
-// PyObject* PyDeviceGroupHierarchy_New(const DeviceGroupHierarchy& dg_hierarchy);
+PyObject* PyDeviceGroupHierarchy_New(const DeviceGroupHierarchy& dg_hierarchy);
 
 void AddPyDeviceGroupTypeToModule(py::module_& module);
 

@@ -1,0 +1,90 @@
+defaults:  
+  - _self_  
+
+hydra:
+  output_subdir: hydra_logs
+  run:
+    dir: ${rpc.log_path}
+  job_logging:
+    version: 1
+    disable_existing_loggers: false
+    root:
+      handlers: []
+
+rpc:
+  hosts: ${oc.env:ENV_PATH}/host_single.yaml
+  server_addr: 127.0.0.1
+  server_port: 23459
+  num_gpus: 8
+  command: null
+  envs: ${oc.env:ENV_PATH}/env_A100.sh
+  log_path: logs/test_pretrain_pad_homo_cp
+
+ds_parallel:
+  hetero: false
+  dp: 1
+  cp: 2
+  tp: 4
+  pp: 1
+  zero: True
+  num_layers: ${model.num_hidden_layers} 
+  num_gpus: ${rpc.num_gpus}
+  recompute:
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+    recompute_layer_idxs_list: null
+  ds_parallel_config_path: ds_parallel_config
+  ds_parallel_config_name: test_pretrain_pad_homo_cp_config.json
+  rank_to_device_mapping: null
+  unused_rank: null
+  gpus_per_stage: ${ds_parallel.tp}
+  hetero_layers: null
+  micro_batch_num_list: null
+  seq_len_list: null
+  cp_list: null
+
+trainer:
+  output_dir: ${rpc.log_path}/save_model
+  overwrite_output_dir: true
+  steps: 10
+  plot_loss: false
+  bf16: true
+
+  packing: false
+
+  micro_batch_size: 2
+  global_load_size: 8
+  data_load_level: SAMPLE
+
+  train_dataset_path: data/c4_demo/c4_demo.json
+  dataset_text_field: text
+  max_seq_length: 1024
+
+  torch_profile: false
+  start_profile_step: 1
+  end_profile_step: 5
+
+  ds_parallel: ${ds_parallel}
+
+model:
+  architecture: LlamaLMHeadModel
+  config_type: LlamaConfig
+  num_hidden_layers: 2
+  num_attention_heads: 32
+  hidden_size: 256
+  intermediate_size: 2752
+  vocab_size: 50304
+  attention_dropout: 0
+  hidden_act: fast-swiglu
+  use_flash_attn: true
+
+  tokenizer:
+    type: GPT2BPETokenizer
+    vocab_file: data/vocab.json
+    merge_file: data/merges.txt
+    pretrained_model_name_or_path: null
+  optimizer:
+    type: Adam
+    learning_rate: 1e-4
+    lr_scheduler: null

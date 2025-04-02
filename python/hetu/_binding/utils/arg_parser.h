@@ -24,14 +24,18 @@ using namespace hetu::graph;
 enum class ArgType : uint8_t {
   /* Python primitives */
   BOOL = 0, 
+  INT32,
   INT64, 
   FLOAT64, 
   STRING, 
+  BYTES,
+  BYTEARRAY,
   DICT,
   
   /* Python sequences of primitives */
   BOOL_LIST,
   BOOL_LIST_LIST,
+  INT32_LIST,
   INT64_LIST, 
   FLOAT64_LIST, 
   STRING_LIST, 
@@ -110,9 +114,11 @@ class FnArg {
   // default values
   std::string _default_repr;
   bool _default_bool;
+  int32_t _default_int32;
   int64_t _default_int64;
   double _default_float64;
   std::string _default_string;
+  std::vector<int32_t> _default_int32_list;
   std::vector<int64_t> _default_int64_list;
   std::vector<double> _default_float64_list;
   std::vector<bool> _default_bool_list;
@@ -198,6 +204,18 @@ class ParsedPyArgs {
     return has(i) ? get_bool(i) : default_value;
   }
 
+  inline int32_t get_int32(size_t i) const {
+    return Int32_FromPyLong(_args[i]);
+  }
+  
+  inline int32_t get_int32_or_default(size_t i) const {
+    return has(i) ? get_int32(i) : signature_arg(i)._default_int32;
+  }
+
+  inline int32_t get_int32_or_else(size_t i, int32_t default_value) const {
+    return has(i) ? get_int32(i) : default_value;
+  }
+
   inline int64_t get_int64(size_t i) const {
     return Int64_FromPyLong(_args[i]);
   }
@@ -235,6 +253,22 @@ class ParsedPyArgs {
     return has(i) ? get_string(i) : default_value;
   }
 
+  inline PyObject* get_bytes(size_t i) const {
+    PyObject* obj = _args[i];
+    if (!PyBytes_Check(obj)) {
+      HT_VALUE_ERROR << "Expected a bytearray object.";
+    }
+    return obj;
+  }
+
+  inline PyObject* get_bytearray(size_t i) const {
+    PyObject* obj = _args[i];
+    if (!PyByteArray_Check(obj)) {
+      HT_VALUE_ERROR << "Expected a bytearray object.";
+    }
+    return obj;
+  }
+
   inline std::vector<bool> get_bool_list(size_t i) const {
     return BoolList_FromPyBoolList(_args[i]);
   }
@@ -249,6 +283,14 @@ class ParsedPyArgs {
 
   inline std::vector<std::vector<bool>> get_bool_list_list_or_default(size_t i) const {
     return has(i) ? get_bool_list_list(i) : signature_arg(i)._default_bool_list_list;
+  }
+
+  inline std::vector<int32_t> get_int32_list(size_t i) const {
+    return Int32List_FromPyIntList(_args[i]);
+  }
+
+  inline std::vector<int32_t> get_int32_list_or_default(size_t i) const {
+    return has(i) ? get_int32_list(i) : signature_arg(i)._default_int32_list;
   }
 
   inline std::vector<int64_t> get_int64_list(size_t i) const {
@@ -462,6 +504,14 @@ class ParsedPyArgs {
 
   inline DistributedStatesHierarchy get_ds_hierarchy(size_t i) {
     return DistributedStatesHierarchy_FromPyObject(_args[i]);
+  }
+  
+  inline DistributedStatesUnion get_ds_union_or_empty(size_t i) {
+    return has(i) ? DistributedStatesUnion_FromPyObject(_args[i]) : DistributedStatesUnion();
+  }
+
+  inline DistributedStatesUnion get_ds_union(size_t i) {
+    return DistributedStatesUnion_FromPyObject(_args[i]);
   }
 
   inline IntSymbol get_int_symbol_or_empty(size_t i) {

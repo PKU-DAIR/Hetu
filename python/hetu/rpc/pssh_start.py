@@ -55,7 +55,7 @@ def pssh(args):
             new_train_command = f"nsys profile -o {args.log_path}/report_{i} " + train_command
         else:
             new_train_command = train_command
-        cmd_list.append(cmd + f"export HETU_LOCAL_HOSTNAME={hostname} && " + new_train_command + f" 2>&1 | tee {args.log_path}" + "/log_" + f"{i}" + ".txt")
+        cmd_list.append(cmd + f"export HETU_LOCAL_HOSTNAME={hostname} && " + new_train_command + f" 2>&1 | tee {args.log_path}" + "/log_" + f"{i}" + ".log")
     clients = []
     outputs = []
     for hostname, port, password, cmd in zip(hostnames, ports, passwords, cmd_list):

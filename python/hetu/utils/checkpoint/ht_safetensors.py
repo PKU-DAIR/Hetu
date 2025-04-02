@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import os
 import sys
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-import torch
 import hetu
 import numpy as np
 
@@ -111,41 +112,20 @@ def change_query_key_value_ordering(param, num_splits, num_heads, hidden_size):
     param = param.view(input_shape)
     return param
 
+def storage_ptr(tensor: hetu.Tensor) -> int:
+    return tensor.raw_data_ptr()
 
-def storage_ptr(tensor: torch.Tensor) -> int:
-    try:
-        return tensor.untyped_storage().data_ptr()
-    except Exception:
-        # Fallback for torch==1.10
-        try:
-            return tensor.storage().data_ptr()
-        except NotImplementedError:
-            # Fallback for meta storage
-            return 0
-
-
-def _end_ptr(tensor: torch.Tensor) -> int:
-    if tensor.nelement():
-        stop = tensor.view(-1)[-1].data_ptr() + _SIZE[tensor.dtype]
+def _end_ptr(tensor: hetu.Tensor) -> int:
+    if tensor.numel():
+        stop = tensor.raw_data_ptr() + _SIZE[tensor.dtype] * tensor.numel()
     else:
-        stop = tensor.data_ptr()
+        stop = tensor.raw_data_ptr()
     return stop
 
+def storage_size(tensor: hetu.Tensor) -> int:
+    return tensor.numel() * _SIZE[tensor.dtype]
 
-def storage_size(tensor: torch.Tensor) -> int:
-    try:
-        return tensor.untyped_storage().nbytes()
-    except AttributeError:
-        # Fallback for torch==1.10
-        try:
-            return tensor.storage().size() * _SIZE[tensor.dtype]
-        except NotImplementedError:
-            # Fallback for meta storage
-            # On torch >=2.0 this is the tensor size
-            return tensor.nelement() * _SIZE[tensor.dtype]
-
-
-def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
+def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, hetu.Tensor]) -> List[Set[str]]:
     filtered_tensors = []
     for shared in tensors:
         if len(shared) < 2:
@@ -155,7 +135,7 @@ def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, tor
         areas = []
         for name in shared:
             tensor = state_dict[name]
-            areas.append((tensor.data_ptr(), _end_ptr(tensor), name))
+            areas.append((tensor.raw_data_ptr(), _end_ptr(tensor), name))
         areas.sort()
 
         _, last_stop, last_name = areas[0]
@@ -169,24 +149,21 @@ def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, tor
 
     return filtered_tensors
 
-
-def _find_shared_tensors(state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
+def _find_shared_tensors(state_dict: Dict[str, hetu.Tensor]) -> List[Set[str]]:
     tensors = defaultdict(set)
     for k, v in state_dict.items():
-        if v.device != torch.device("meta") and storage_ptr(v) != 0 and storage_size(v) != 0:
+        if storage_ptr(v) != 0 and storage_size(v) != 0:
             # Need to add device as key because of multiple GPU.
             tensors[(v.device, storage_ptr(v), storage_size(v))].add(k)
     tensors = list(sorted(tensors.values()))
     tensors = _filter_shared_not_shared(tensors, state_dict)
     return tensors
 
-
-def _is_complete(tensor: torch.Tensor) -> bool:
-    return tensor.data_ptr() == storage_ptr(tensor) and tensor.nelement() * _SIZE[tensor.dtype] == storage_size(tensor)
-
+def _is_complete(tensor: hetu.Tensor) -> bool:
+    return tensor.raw_data_ptr() == storage_ptr(tensor) and tensor.numel() * _SIZE[tensor.dtype] == storage_size(tensor)
 
 def _remove_duplicate_names(
-    state_dict: Dict[str, torch.Tensor],
+    state_dict: Dict[str, hetu.Tensor],
     *,
     preferred_names: Optional[List[str]] = None,
     discard_names: Optional[List[str]] = None,
@@ -345,7 +322,6 @@ def temp_save(
                 continue
             visit_tensors.add(param.id)
             opt_state_dict = optimizer.get_states(param)
-            print("Opt_State_Dict:", opt_state_dict)
             # global_value, abs_max = data_transform_for_store(key, param, data, config, save_dtype, 
             #                                                  ht_state_dict, local_device)
             # global_state_dict[key] = global_value.numpy(force=True, save=True)
@@ -406,11 +382,9 @@ def temp_save(
                         else:
                             need_save_json = True
                         break
-                    print("DEV:", dev.hostname)
                     last_hostname = dev.hostname
                         
                 if need_save_json:
-                    print(local_device, "\n", ds_json)
                     json_file = "param_states" + f'-{i + 1}-of-{len(all_device_groups)}' + ".json"
                     json_file = os.path.join(
                         filename, json_file
@@ -433,7 +407,6 @@ def temp_save(
         archive_file = os.path.join(
             filename, archive_file
         )
-        print(local_device, archive_file)
         try:
             save_file(global_state_dict, archive_file, metadata=metadata)
         except ValueError as e:
@@ -486,7 +459,6 @@ def temp_save_split(
                 continue
             visit_tensors.add(param.id)
             opt_state_dict = optimizer.get_states(param)
-            print("Opt_State_Dict:", opt_state_dict)
             # global_value, abs_max = data_transform_for_store(key, param, data, config, save_dtype, 
             #                                                  ht_state_dict, local_device)
             # global_state_dict[key] = global_value.numpy(force=True, save=True)
@@ -560,7 +532,6 @@ def temp_save_split(
                     for idx, split_idx in enumerate(split_group):
                         for i in range(start_pos, start_pos + splits_per_device):
                             temp_split_group.append(split_idx * temp_splits + i)
-                        # print("Split:", split_data[idx].shape, split_dim, temp_splits, splits_per_device)
                         block_splits = np.split(split_data[idx], splits_per_device, axis=dim)
                         for blk in block_splits:
                             temp_split_data.append(blk)
@@ -569,7 +540,6 @@ def temp_save_split(
                 state["split_group"] = split_group
                 for idx, split_idx in enumerate(split_group):
                     split_key = state_key + "_split_" + str(split_idx)
-                    # print(local_device, split_key)
                     global_state_dict[split_key] = split_data[idx]
                 ds_json[state_key] = state
             cur_sum += 1
@@ -585,7 +555,6 @@ def temp_save_split(
         for i, device_group in enumerate(all_device_groups):
             if device_group.contains(local_device):
                 if device_group.get_index(local_device) == 0:
-                    print(local_device, "\n", ds_json)
                     json_file = "param_states" + f'-{i + 1}-of-{len(all_device_groups)}' + ".json"
                     json_file = os.path.join(
                         filename, json_file
@@ -727,8 +696,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
             ds_files.append(file)
         if (WEIGHTS_NAME in file and WEIGHTS_FORMAT in file):
             archive_files.append(file)
-    print("GYGYGYGY:", local_hostname, " ", ds_files)
-    print("DAFILE:", ds_files)
     for i, json_file in enumerate(ds_files):
         json_file = os.path.join(
             filename, json_file
@@ -738,8 +705,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
             file_obj=open(json_file,'r',encoding='utf-8')
             python_data=json.load(file_obj)
             ds_json.append(python_data)
-            # if d_index == 0:
-            #     print(json_file, "\n", python_data)
     
         except ValueError as e:
             msg = str(e)
@@ -782,7 +747,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
             
         if optimizer is not None:
             opt_state_dict = optimizer.get_states(param)
-            # print("Opt_State_Dict:", opt_state_dict)
             for state_k, state_param in opt_state_dict.items():
                 # if (k == "step"):
                 #     continue
@@ -801,7 +765,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
 
     save_st = time.time()
     # state_dict = load_file(archive_file, parameter_to_dtype)
-    print("Need Switch:", need_switch)
     if need_switch:
         archive_opens = []
         ptr = 0
@@ -838,10 +801,8 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
                     num_data_splits = num_data_splits // states[dim]
             stride = int(1)
             split_numpys = []
-            # print("GGG:", k, device_index, num_data_splits, archive_files)
             if num_data_splits == 1:
                 split1_sum += 1
-                # print(len(archive_opens))
                 if k in archive_opens[device_index[0]].keys():
                     split_numpys.append(archive_opens[device_index[0]].get_tensor(k))
                     shared_param = False
@@ -860,13 +821,11 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
                                     split_numpys.append(archive_opens[device_index[ptr]].get_tensor(k))
                                     shared_param = False
                                 ptr += stride
-                            # print("HHJIJ:", len(split_numpys), num_data_splits, order, states)
                             assert(shared_param or (len(split_numpys) == num_data_splits))
                         
                         if (states[dim] > 1):           
                             split_numpys_ = []
                             assert(num_data_splits % states[dim] == 0)
-                            # print(num_data_splits, " ", len(split_numpys))
                             for j in range(num_data_splits // states[dim]):
                                 temp_storage = []
                                 for l in range(states[dim]):
@@ -874,8 +833,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
                                 split_numpys_.append(np.concatenate(temp_storage, axis=dim))
                             split_numpys = split_numpys_
                             num_data_splits = num_data_splits // states[dim]
-            # print(param, " shape:", param.shape, " t_shape:", split_numpys[0].shape, " order:", order, 
-            #       " states", states, " num_splits", num_data_splits, " split_nps:", len(split_numpys))
             from hetu.nn.modules.module import parallel_data_provider
             # global_data = hetu.numpy_to_NDArray(split_numpys[0], parameter_to_dtype[k])
             global_data = split_numpys[0]
@@ -886,7 +843,6 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
                 device_idx = cur_device_group.get_index(local_device)
                 data = parallel_data_provider(global_data, param.distributed_states, device_idx)
                 state_dict[k] = data
-        print("SP1:", split1_sum, "SP>1:", split2_sum)        
     else:  
         d_index = all_devices.get_index(local_device)
         num_devices = 0
@@ -896,15 +852,13 @@ def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike
         archive_file = os.path.join(
             filename, archive_file
         )
-        print("ARC:", archive_file)
-        state_dict = load_file(archive_file, parameter_to_dtype)
+        state_dict = load_file(archive_file)
     save_ed = time.time()
     print(local_device, 'Load_Params_Time = %.4f'%(save_ed - save_st))
     
     save_st = time.time()
     for k in hetu_state_dict:
         if k in state_dict:
-            # print("Reset:", k)
             hetu_state_dict[k].reset_data(state_dict[k])
     save_ed = time.time()
     print(local_device, 'Reset_Params_Time = %.4f'%(save_ed - save_st))
@@ -936,7 +890,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             ds_files.append(file)
         if (WEIGHTS_NAME in file and WEIGHTS_FORMAT in file):
             archive_files.append(file)
-    print("DAFILE:", ds_files)
     for i, json_file in enumerate(ds_files):
         json_file = os.path.join(
             filename, json_file
@@ -946,8 +899,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             file_obj=open(json_file,'r',encoding='utf-8')
             python_data=json.load(file_obj)
             ds_json.append(python_data)
-            # if d_index == 0:
-            #     print(json_file, "\n", python_data)
     
         except ValueError as e:
             msg = str(e)
@@ -986,7 +937,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             
         if optimizer is not None:
             opt_state_dict = optimizer.get_states(param)
-            # print("Opt_State_Dict:", opt_state_dict)
             for state_k, state_param in opt_state_dict.items():
                 # if (k == "step"):
                 #     continue
@@ -1005,7 +955,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
 
     save_st = time.time()
     # state_dict = load_file(archive_file, parameter_to_dtype)
-    print("Need Switch:", need_switch)
     if need_switch:
         archive_opens = []
         archive_keys = []
@@ -1029,7 +978,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                 continue
             shared_param = False
             if k not in trans_strategy.keys():
-                print("Shared:", param)
                 continue 
             parameter_to_dtype[k] = param.dtype
             
@@ -1085,7 +1033,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                             break
                         
             split_dims = min(param.ndim, SPLIT_DIMS)
-            # print(local_device, k, split_group, len(split_data))
             for dim in range(split_dims - 1, -1, -1):
                 temp_split_data = []
                 split_dim = states[dim] if dim in states else 1
@@ -1093,7 +1040,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                 temp_splits = min(param.shape[dim], temp_splits)
                 splits_per_device = temp_splits // split_dim
                 num_groups = len(split_data) // splits_per_device
-                # print(local_device, k, state["states"], num_groups, dim, temp_splits, split_dim, splits_per_device)
                 for i in range(num_groups):
                     concat_group = []
                     for j in range(splits_per_device):
@@ -1123,7 +1069,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
         archive_file = os.path.join(
             filename, archive_file
         )
-        print("ARC:", archive_file)
         result = {}
         with safe_open(archive_file, framework="np") as f:
             for k, dtype in parameter_to_dtype.items():
@@ -1158,7 +1103,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                     
                 for split_block_idx in split_group:
                     split_key = k + "_split_" + str(split_block_idx)
-                    # print(local_device, archive_file, split_key)
                     split_data.append(f.get_tensor(split_key))
                 
                 split_dims = min(hetu_state_dict[k].ndim, SPLIT_DIMS)
@@ -1169,7 +1113,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                     temp_splits = min(hetu_state_dict[k].shape[dim], temp_splits)
                     splits_per_device = temp_splits // split_dim
                     num_groups = len(split_data) // splits_per_device
-                    # print(local_device, k, state["states"], num_groups, dim, temp_splits, split_dim, splits_per_device)
                     for i in range(num_groups):
                         concat_group = []
                         for j in range(splits_per_device):
@@ -1185,19 +1128,17 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
     save_st = time.time()
     for k in hetu_state_dict:
         if k in state_dict:
-            # print("Reset:", k)
             hetu_state_dict[k].reset_data(state_dict[k])
     save_ed = time.time()
     print(local_device, 'Reset_Params_Time = %.4f'%(save_ed - save_st))
     return model
 
-
-def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = None) -> bytes:
+def save(tensors: Dict[str, hetu.Tensor], metadata: Optional[Dict[str, str]] = None) -> bytes:
     """
     Saves a dictionary of tensors into raw bytes in safetensors format.
 
     Args:
-        tensors (`Dict[str, torch.Tensor]`):
+        tensors (`Dict[str, hetu.Tensor]`):
             The incoming tensors. Tensors need to be contiguous and dense.
         metadata (`Dict[str, str]`, *optional*, defaults to `None`):
             Optional text only metadata you might want to save in your header.
@@ -1210,10 +1151,10 @@ def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = 
     Example:
 
     ```python
-    from safetensors.torch import save
-    import torch
+    from hetu.utils.checkpoint.ht_safetensors import save
+    import hetu
 
-    tensors = {"embedding": torch.zeros((512, 1024)), "attention": torch.zeros((256, 256))}
+    tensors = {"embedding": hetu.zeros((512, 1024)), "attention": hetu.zeros((256, 256))}
     byte_data = save(tensors)
     ```
     """
@@ -1223,7 +1164,7 @@ def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = 
 
 
 def save_file(
-    tensors: Dict[str, np.ndarray],
+    tensors: Dict[str, hetu.NDArray],
     filename: Union[str, os.PathLike],
     metadata: Optional[Dict[str, str]] = None,
 ):
@@ -1231,7 +1172,7 @@ def save_file(
     Saves a dictionary of tensors into raw bytes in safetensors format.
 
     Args:
-        tensors (`Dict[str, torch.Tensor]`):
+        tensors (`Dict[str, hetu.Tensor]`):
             The incoming tensors. Tensors need to be contiguous and dense.
         filename (`str`, or `os.PathLike`)):
             The filename we're saving into.
@@ -1246,75 +1187,77 @@ def save_file(
     Example:
 
     ```python
-    from safetensors.torch import save_file
-    import torch
+    from hetu.utils.checkpoint.ht_safetensors import save_file
+    import hetu
 
-    tensors = {"embedding": torch.zeros((512, 1024)), "attention": torch.zeros((256, 256))}
+    tensors = {"embedding": hetu.zeros((512, 1024)), "attention": hetu.zeros((256, 256))}
     save_file(tensors, "model.safetensors")
     ```
     """
     if not os.path.exists(filename):
-        open(filename, "w").close()
-    # for k, v in tensors.items():
-    #     print("save:", k, v.dtype, v.flatten()[:10])
-    import time
-    save_st = time.time()
-    flattened = {k: {"dtype": v.dtype.name, "shape": v.shape, "data": _tobytes(v)} for k, v in tensors.items()}
-    save_ed = time.time()
-    print('Flattened_Time = %.4f'%(save_ed - save_st))
+        with open(filename, 'w') as f:
+            pass
+    flattened = {k: {"dtype": str(v.dtype).split(".")[-1], "shape": v.shape, "data": _tobytes(v.numpy(save=True))} for k, v in tensors.items()}
     serialize_file(flattened, filename, metadata=metadata)
-    save_ed = time.time()
-    print('Safetensors_Save_Time = %.4f'%(save_ed - save_st))
 
-def load_file(filename: Union[str, os.PathLike], parameter_to_dtype, device="cpu") -> Dict[str, torch.Tensor]:
+def load_file(
+    filename: Union[str, os.PathLike],
+    dtype: Optional[hetu.dtype] = None,
+    device: str = "cpu",
+) -> Dict[str, hetu.NDArray]:
     """
-    Loads a safetensors file into torch format.
+    Loads a safetensors file into hetu format.
 
     Args:
         filename (`str`, or `os.PathLike`):
             The name of the file which contains the tensors
         device (`Dict[str, any]`, *optional*, defaults to `cpu`):
             The device where the tensors need to be located after load.
-            available options are all regular torch device locations
+            available options are all regular hetu device locations
 
     Returns:
-        `Dict[str, torch.Tensor]`: dictionary that contains name as key, value as `torch.Tensor`
+        `Dict[str, hetu.Tensor]`: dictionary that contains name as key, value as `hetu.Tensor`
 
     Example:
 
     ```python
-    from safetensors.torch import load_file
+    from hetu.utils.checkpoint.ht_safetensors import load_file
 
     file_path = "./my_folder/bert.safetensors"
     loaded = load_file(file_path)
     ```
     """
-    result = {}
-    with safe_open(filename, framework="np") as f:
-        for k in f.keys():
-            # print(f.get_tensor(k))
-            if (k in parameter_to_dtype):
-                # print(parameter_to_dtype[k])
-                # print("load:", k, f.get_tensor(k).dtype, parameter_to_dtype[k], f.get_tensor(k).flatten()[:10])
-                result[k] = hetu.numpy_to_NDArray(f.get_tensor(k), parameter_to_dtype[k])
+    # with safe_open(filename, framework="np") as f:
+    #     for k in f.keys():
+    #         if dtype is not None:
+    #             if str(dtype) != str(_getdtype(f.get_dtype(k))):
+    #                 print(f"Warning: loading state dict with dtype {dtype} but found {f.get_dtype(k)}")
+    #             result[k] = hetu.numpy_to_NDArray(f.get_tensor(k), dtype)
+    #         else:
+    #             result[k] = hetu.numpy_to_NDArray(f.get_tensor(k), _getdtype(f.get_dtype(k)))
+    with open(filename, "rb") as f:
+        data = f.read()
+        result = load(data)
+        for k, v in result.items():
+            if dtype is not None and not v.dtype == dtype:
+                v.to(dtype)
     return result
 
-
-def load(data: bytes) -> Dict[str, torch.Tensor]:
+def load(data: bytes) -> Dict[str, hetu.NDArray]:
     """
-    Loads a safetensors file into torch format from pure bytes.
+    Loads a safetensors file into hetu format from pure bytes.
 
     Args:
         data (`bytes`):
             The content of a safetensors file
 
     Returns:
-        `Dict[str, torch.Tensor]`: dictionary that contains name as key, value as `torch.Tensor` on cpu
+        `Dict[str, hetu.Tensor]`: dictionary that contains name as key, value as `hetu.Tensor` on cpu
 
     Example:
 
     ```python
-    from safetensors.torch import load
+    from hetu.utils.checkpoint.ht_safetensors import load
 
     file_path = "./my_folder/bert.safetensors"
     with open(file_path, "rb") as f:
@@ -1324,7 +1267,7 @@ def load(data: bytes) -> Dict[str, torch.Tensor]:
     ```
     """
     flat = deserialize(data)
-    return _view2torch(flat)
+    return _view2hetu(flat)
 
 _SIZE = {
     hetu.int64: 8,
@@ -1359,16 +1302,15 @@ _TYPES = {
     "NF4": hetu.nfloat4,
 }
 
-
-def _getdtype(dtype_str: str) -> torch.dtype:
+def _getdtype(dtype_str: str) -> hetu.dtype:
     return _TYPES[dtype_str]
 
 
-def _view2torch(safeview) -> Dict[str, torch.Tensor]:
+def _view2hetu(safeview) -> Dict[str, hetu.NDArray]:
     result = {}
     for k, v in safeview:
         dtype = _getdtype(v["dtype"])
-        arr = hetu.frombuffer(v["data"], dtype=dtype).reshape(v["shape"])
+        arr = hetu.buffer_to_NDArray(v["data"], dtype=dtype, shape=v["shape"])
         result[k] = arr
 
     return result

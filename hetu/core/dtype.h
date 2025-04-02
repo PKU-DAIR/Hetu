@@ -78,6 +78,7 @@ constexpr int16_t NUM_DATA_TYPES =
 size_t DataType2Size(const DataType&);
 std::string DataType2Str(const DataType&);
 std::ostream& operator<<(std::ostream&, const DataType&);
+bool IsFloatingPoint(const DataType&);
 
 } // namespace hetu
 

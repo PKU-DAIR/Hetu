@@ -248,6 +248,18 @@ PyObject* PyDeviceGroupList_New(const DeviceGroupList& dg_list) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyDeviceGroupHierarchy_New(const DeviceGroupHierarchy& dg_hierarchy) {
+  HT_PY_FUNC_BEGIN
+  PyObject* ret = PyList_New(dg_hierarchy.size());
+  HT_RUNTIME_ERROR_IF(!ret) << "Failed to alloc dict";
+  for (size_t i = 0; i < dg_hierarchy.size(); i++) {
+    auto* dg_list_obj = PyDeviceGroupList_New(dg_hierarchy.raw_data()[i].raw_data());
+    PyList_SET_ITEM(ret, i, dg_list_obj);
+  }
+  return ret;
+  HT_PY_FUNC_END
+}
+
 PyObject* PyDeviceGroup_pynew(PyTypeObject* type, PyObject* args, 
                               PyObject* kwargs) {
   HT_PY_FUNC_BEGIN
