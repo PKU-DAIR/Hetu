@@ -177,5 +177,3 @@ class PreTrainedTokenizer(object):
         if attr is None:
             raise AttributeError(f"{self._tokenizer.__class__.__name__} object has no attribute '{name}'")
         return attr
-
-__all__ = ["PreTrainedTokenizer"]

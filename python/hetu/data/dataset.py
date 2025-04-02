@@ -226,9 +226,3 @@ def get_mask_and_position_ids(tokens, pad_id):
     position_ids = np.arange(0, seq_length, dtype=np.int64) # [1, seq_len]
     position_ids = np.tile(position_ids, [batch_size, 1]) # [batch_size, seq_len]
     return attention_mask, position_ids
-
-__all__ = [
-    'JsonDataset',
-    'SFTDataset',
-    'get_mask_and_position_ids',
-]

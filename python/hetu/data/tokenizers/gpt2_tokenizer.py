@@ -463,5 +463,3 @@ class GPT2BPETokenizer(BaseTokenizer):
     ) -> Union[str, List[int], Dict[str, List[int]]]:
         # TODO: Implement it
         raise NotImplementedError
-
-__all__ = ["GPT2BPETokenizer", "GPT2Tokenizer"]

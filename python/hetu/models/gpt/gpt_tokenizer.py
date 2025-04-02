@@ -10,5 +10,3 @@ class GPTTokenizer(PreTrainedTokenizer):
     ):
         kwargs.update({"tokenizer": backend_tokenizer})
         super().__init__(**kwargs)
-
-__all__ = ["GPTTokenizer"]

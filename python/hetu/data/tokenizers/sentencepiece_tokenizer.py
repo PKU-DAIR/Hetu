@@ -270,5 +270,3 @@ class SentencePieceTokenizer(BaseTokenizer, SpecialToken):
             The size of the vocabulary.
         """
         return self.tokenizer.vocab_size()
-
-__all__ = ["SentencePieceTokenizer"]

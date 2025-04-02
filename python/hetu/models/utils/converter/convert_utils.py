@@ -164,5 +164,3 @@ def save_model(model_state_dict, output_path, precision, sharded_store):
         # release memory
         model_state_dict.clear()
         gc.collect()
-
-__all__ = ['save_model']

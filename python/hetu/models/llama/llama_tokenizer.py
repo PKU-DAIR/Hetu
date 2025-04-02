@@ -68,6 +68,3 @@ class Llama3Tokenizer(PreTrainedTokenizer):
         self.stop_tokens = [self.eos_id, self.eot_id]
         # TODO: refactor it to be more general
         self._tokenizer.__setattr__("pad_token", "<|finetune_right_pad_id|>")
-
-
-__all__ = ["LlamaTokenizer", "Llama2Tokenizer", "Llama3Tokenizer"]

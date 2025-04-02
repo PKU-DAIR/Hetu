@@ -41,5 +41,3 @@ class DataCollatorForLanguageModel:
         collate_batch["input_ids"] = np.array(collate_batch["input_ids"])
         collate_batch["labels"] = np.array(collate_batch["labels"])
         return collate_batch
-            
-__all__ = ["DataCollatorForLanguageModel"]

@@ -1,3 +1,9 @@
-from .gpt_model import *
-from .gpt_config import *
-from .gpt_tokenizer import *
+from .gpt_model import GPTLMHeadModel
+from .gpt_config import GPTConfig
+from .gpt_tokenizer import GPTTokenizer
+
+__all__ = [
+    "GPTConfig",
+    "GPTLMHeadModel",
+    "GPTTokenizer",
+]

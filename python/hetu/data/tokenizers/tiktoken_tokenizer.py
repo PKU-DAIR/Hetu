@@ -122,5 +122,3 @@ class TikTokenizer(BaseTokenizer):
     @property
     def base_vocab_size(self) -> int:
         return self.vocab_size - len(self.special_tokens)
-
-__all__ = ["TikTokenizer"]

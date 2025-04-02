@@ -213,12 +213,3 @@ def parse_multi_ds_parallel_config(ds_parallel_configs, module_name, _range=-1):
         ds_hierarchy.append(ds_union)
         dg_hierarchy.append(dg_union)
     return ds_hierarchy, dg_hierarchy
-
-__all__ = [
-    'config2ds',
-    'config_spread_zero',
-    'read_ds_parallel_config',
-    'get_multi_ds_parallel_config',
-    'get_multi_recompute_from',
-    'parse_multi_ds_parallel_config',
-]

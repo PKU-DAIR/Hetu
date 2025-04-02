@@ -240,7 +240,3 @@ class BaseTokenizer(ABC):
         **kwargs,
     ) -> Union[str, List[int], Dict[str, List[int]]]:
         pass
-
-
-
-__all__ = ["PaddingStrategy", "TruncationStrategy", "SpecialToken", "BaseTokenizer", "SPECIAL_TOKENS_ATTRIBUTE"]

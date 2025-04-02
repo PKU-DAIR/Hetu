@@ -392,5 +392,3 @@ class GPTLMHeadModel(ht.nn.Module):
         # output = (shift_lm_logits,)
         # output = ((loss,) + output) if loss is not None else output
         return loss # ((loss), (shift_lm_logits))
-
-__all__ = ['GPTLMHeadModel']

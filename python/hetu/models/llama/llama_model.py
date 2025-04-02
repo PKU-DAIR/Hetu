@@ -346,5 +346,3 @@ class LlamaLMHeadModel(LlamaPreTrainedModel):
             loss = ht.sum(loss_unreduce)
 
         return loss
-
-__all__ = ["LlamaLMHeadModel"]

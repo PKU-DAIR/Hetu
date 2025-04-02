@@ -107,5 +107,3 @@ def build_tokenizer(
         )
         kwargs.update({"padded_vocab_size": padded_vocab_size})
     return tokenizer
-
-__all__ = ["build_tokenizer"]

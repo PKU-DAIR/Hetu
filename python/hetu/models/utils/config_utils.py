@@ -191,5 +191,3 @@ class PreTrainedConfig(object):
         for key, value in config_dict.items():
             setattr(self, key, value)
         return self
-
-__all__ = ["PreTrainedConfig"]

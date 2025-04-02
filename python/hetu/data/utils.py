@@ -56,8 +56,3 @@ def convert_parquet_to_json(
                 json.dump(row.to_dict(), f)
                 f.write('\n')
     return json_file
-
-__all__ = [
-    'build_fake_batch_and_len',
-    'convert_parquet_to_json',
-]

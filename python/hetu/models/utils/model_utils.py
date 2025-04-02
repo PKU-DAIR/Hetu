@@ -984,8 +984,3 @@ class PreTrainedModel(hetu.nn.Module):
                 f"The model is saved by {num_save_devices} devices in {save_directory}. "
                 f"You can find where each parameters has been saved in the index located at {save_index_file}."
             )
-
-__all__ = [
-    'PreTrainedModel',
-    'simple_check_blocks_range',
-]

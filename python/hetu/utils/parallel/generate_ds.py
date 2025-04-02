@@ -246,11 +246,6 @@ def generate_recompute_config(
         blocks_output_recompute=blocks_output_recompute
     )
 
-__all__ = [
-    'convert_strategy',
-    'generate_recompute_config',
-]
-
 # 需要根据具体的模型去generate_ds_parallel_config
 # 因此将这一部分放到了python/models目录下
 # 不同模型（例如gpt和llama）调用不同的generate_ds_parallel_config

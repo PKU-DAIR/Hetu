@@ -920,5 +920,3 @@ class HuggingFaceTokenizer(HuggingFaceSpecialToken, BaseTokenizer):
     
     def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> Tuple[str]:
         raise NotImplementedError
-
-__all__ = ["HuggingFaceTokenizer"]
