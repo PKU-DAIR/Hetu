@@ -1599,6 +1599,144 @@ class TestOtherOps(unittest.TestCase):
             self.assertTrue(allclose(hetu.where(cond, x, y), gt))
         print(sys._getframe().f_code.co_name)
 
+    _rotary_test_shapes = [((16 * 16, 3 * 4 * 64), (16, 64)),
+                           ((8 * 32, 3 * 32 * 128), (32, 128))]
+    _rotary_test_packinig_shapes = [((16, 3 * 4 * 64), (16, 64), (0, 4, 16)),
+                                    ((1024, 3 * 32 * 256), (1024, 256), (0, 128, 512, 1024))]
+    def test_rotaryop(self):
+        print(sys._getframe().f_code.co_name)
+
+        def rotary_torch(qkv_np: np.ndarray, cos_np: np.ndarray, sin_np: np.ndarray):
+            # qkv: (batch_size * seq_len, 3 * num_heads * head_dim)
+            # cos, sin: (seq_len, head_dim)
+            # packing情况下，qkv batch_size = 1, cos,sin 的seq_len应为当前的cur_seq_len
+            s, d = cos_np.shape
+            b = qkv_np.shape[0] // s
+            h = qkv_np.shape[1] // d // 3
+            qkv_t_ori = torch.tensor(qkv_np, requires_grad=GRAD_TEST)
+            qkv_t = qkv_t_ori.reshape(b, s, 3 * h, d).transpose(0, 1)
+            cos_t = torch.tensor(cos_np).reshape(s, 1, 1, d)
+            sin_t = torch.tensor(sin_np).reshape(s, 1, 1, d)
+            def _rotate_half(x):
+                from einops import rearrange
+                x = rearrange(x, '... (j d) -> ... j d', j=2)
+                x1, x2 = x.unbind(dim=-2)
+                return torch.cat((-x2, x1), dim=-1)
+            
+            def apply_rotary_torch(x, cos, sin):
+                # x shape: [seq_len, ..., head_dim]
+                # cos,sin shape: [seq_len, ..., head_dim]
+                return (x * cos) + (_rotate_half(x) * sin)
+            q_t, k_t, v_t = torch.chunk(qkv_t, 3, dim=-2)
+            q_t = apply_rotary_torch(q_t, cos_t, sin_t)
+            k_t = apply_rotary_torch(k_t, cos_t, sin_t)
+            qkv_gt = torch.concat([q_t, k_t, v_t], dim=-2).transpose(0, 1).reshape(*qkv_np.shape)
+            return qkv_t_ori, qkv_gt
+
+        for shape_qkv, shape_cos, cu_seqlens in TestOtherOps._rotary_test_packinig_shapes:
+            qkv_np = np.random.randn(*shape_qkv)
+            cos_np = np.random.randn(*shape_cos)
+            sin_np = np.random.randn(*shape_cos)
+            cu_seqlens_np = np.array(cu_seqlens, dtype=np.int32)  # 注意类型必须是int32
+
+            qkv = hetu.Tensor(qkv_np, requires_grad=GRAD_TEST)
+            cos = hetu.Tensor(cos_np)
+            sin = hetu.Tensor(sin_np)
+            cu_seqlens_q = hetu.Tensor(cu_seqlens_np)
+            cu_seqlens_k = hetu.Tensor(cu_seqlens_np)
+            multi_seq_lens_symbol = [[hetu.IntSymbol(1)]]
+            multi_cp_group_symbol = [[hetu.IntSymbol(1)]]
+            max_seqlen_symbol = hetu.IntSymbol(1)
+            multi_seq_lens_symbol[0][0].set_data(shape_cos[0])
+            multi_cp_group_symbol[0][0].set_data(0)
+            max_seqlen_symbol.set_data(shape_cos[0])
+            qkv_out = hetu.rotary(
+                qkv, cos, sin,
+                shape_cos[1],
+                1,
+                multi_seq_lens_symbol,
+                multi_cp_group_symbol,
+                True,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_symbol,
+                max_seqlen_symbol,
+                inplace=False
+            )
+
+            qkv_t_ori_list = []
+            qkv_gt_list = []
+            for i in range(len(cu_seqlens) - 1):
+                cur_qkv_np = qkv_np[cu_seqlens[i]:cu_seqlens[i+1], :]
+                cur_cos_np = cos_np[:cu_seqlens[i+1]-cu_seqlens[i], :]
+                cur_sin_np = sin_np[:cu_seqlens[i+1]-cu_seqlens[i], :]
+
+                cur_qkv_t_ori, cur_qkv_gt = rotary_torch(cur_qkv_np, cur_cos_np, cur_sin_np)
+                qkv_t_ori_list.append(cur_qkv_t_ori)
+                qkv_gt_list.append(cur_qkv_gt)
+            qkv_t_ori = torch.concat(qkv_t_ori_list, dim=0)
+            qkv_gt = torch.concat(qkv_gt_list, dim=0)
+
+            self.assertTrue(allclose(qkv_out, qkv_gt.detach().numpy()))
+
+            if GRAD_TEST:
+                hetu_loss = qkv_out.sum()
+                hetu_optimizer = hetu.SGDOptimizer([qkv], lr = 0.5)
+                hetu_optimizer.minimize(hetu_loss)
+
+                torch_loss = qkv_gt.sum()
+                torch_optimizer = optim.SGD([x for x in qkv_t_ori_list], lr = 0.5)
+                torch_loss.backward()
+                torch_optimizer.step()
+
+                self.assertTrue(allclose(qkv, torch.concat(qkv_t_ori_list, dim=0).detach().numpy()))
+
+
+        for shape_qkv, shape_cos in TestOtherOps._rotary_test_shapes:
+            qkv_np = np.random.randn(*shape_qkv)
+            cos_np = np.random.randn(*shape_cos)
+            sin_np = np.random.randn(*shape_cos)
+
+            qkv = hetu.Tensor(qkv_np, requires_grad=GRAD_TEST)
+            cos = hetu.Tensor(cos_np)
+            sin = hetu.Tensor(sin_np)
+            multi_seq_lens_symbol = [[hetu.IntSymbol(1)]]
+            multi_cp_group_symbol = [[hetu.IntSymbol(1)]]
+            max_seqlen_symbol = hetu.IntSymbol(1)
+            multi_seq_lens_symbol[0][0].set_data(shape_cos[0])
+            multi_cp_group_symbol[0][0].set_data(0)
+            max_seqlen_symbol.set_data(shape_cos[0])
+            qkv_out = hetu.rotary(
+                qkv, cos, sin,
+                shape_cos[1],
+                1,
+                multi_seq_lens_symbol,
+                multi_cp_group_symbol,
+                False,
+                None,
+                None,
+                max_seqlen_symbol,
+                max_seqlen_symbol,
+                inplace=False
+            )
+
+            qkv_t_ori, qkv_gt = rotary_torch(qkv_np, cos_np, sin_np)
+
+            self.assertTrue(allclose(qkv_out, qkv_gt.detach().numpy()))
+
+            if GRAD_TEST:
+                hetu_loss = qkv_out.sum()
+                hetu_optimizer = hetu.SGDOptimizer([qkv], lr = 0.5)
+                hetu_optimizer.minimize(hetu_loss)
+
+                torch_loss = qkv_gt.sum()
+                torch_optimizer = optim.SGD([qkv_t_ori], lr = 0.5)
+                torch_loss.backward()
+                torch_optimizer.step()
+
+                self.assertTrue(allclose(qkv, qkv_t_ori.detach().numpy()))
+        print(sys._getframe().f_code.co_name)
+
                 
 
 if __name__ == "__main__":
