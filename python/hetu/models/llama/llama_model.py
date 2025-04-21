@@ -7,6 +7,7 @@ from hetu.utils.parallel import get_multi_ds_parallel_config
 from hetu.data import IGNORE_INDEX
 
 def generate_cos_sin(seqlen, rotary_dim, dtype):
+    assert rotary_dim % 2 == 0
     inv_freqs = 1.0 / (10000 ** (np.arange(0, rotary_dim, 2, dtype=dtype) / rotary_dim))
     seq = np.arange(seqlen, dtype=dtype)
     freqs = np.outer(seq, inv_freqs)
