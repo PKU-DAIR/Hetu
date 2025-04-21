@@ -46,23 +46,28 @@ void DataTransferCpu(const NDArray& from, NDArray& to, const Stream& stream) {
   CPUStream cpu_stream(stream);
   auto _future = cpu_stream.EnqueueTask(
   [from, to, to_ptr, from_ptr, numel]() {
-    if (from->dtype() == to->dtype()) {
-      memcpy(to_ptr, from_ptr, (from->dtype() == kFloat4 || from->dtype() == kNFloat4)
-                               ? ((numel + 1) / 2) * DataType2Size(from->dtype())
-                               : numel * DataType2Size(from->dtype()));
-    } else {
+    if (!(from->is_contiguous() && to->is_contiguous())) {
       HT_DISPATCH_PAIRED_SIGNED_INTEGER_AND_FLOATING_TYPES(
         from->dtype(), to->dtype(), spec_a_t, spec_b_t, "DataTransferCpu", [&]() {
           auto* typed_from_ptr = reinterpret_cast<spec_a_t*>(from_ptr);
           auto* typed_to_ptr = reinterpret_cast<spec_b_t*>(to_ptr);
-          if (from->is_contiguous() && to->is_contiguous()) {
-            data_transfer_cpu<spec_a_t, spec_b_t>(typed_from_ptr, numel, typed_to_ptr);
-          } else {
-            data_transfer_cpu<spec_a_t, spec_b_t>(
-              typed_from_ptr, numel, typed_to_ptr, from->ndim(), from->stride().data(),
-              to->stride().data(), from->shape().data());
-          }
+          data_transfer_cpu<spec_a_t, spec_b_t>(
+            typed_from_ptr, numel, typed_to_ptr, from->ndim(), from->stride().data(),
+            to->stride().data(), from->shape().data());
         });
+    } else {
+      if (from->dtype() == to->dtype()) {
+        memcpy(to_ptr, from_ptr, (from->dtype() == kFloat4 || from->dtype() == kNFloat4)
+                                 ? ((numel + 1) / 2) * DataType2Size(from->dtype())
+                                 : numel * DataType2Size(from->dtype()));
+      } else {
+        HT_DISPATCH_PAIRED_SIGNED_INTEGER_AND_FLOATING_TYPES(
+          from->dtype(), to->dtype(), spec_a_t, spec_b_t, "DataTransferCpu", [&]() {
+            auto* typed_from_ptr = reinterpret_cast<spec_a_t*>(from_ptr);
+            auto* typed_to_ptr = reinterpret_cast<spec_b_t*>(to_ptr);
+            data_transfer_cpu<spec_a_t, spec_b_t>(typed_from_ptr, numel, typed_to_ptr);
+          });
+      }
     }
   },
   "DataTransfer");

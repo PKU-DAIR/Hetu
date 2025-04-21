@@ -66,7 +66,8 @@ class PromptTemplate(object):
             Union[str, Tuple[str, List[Tuple[int, int]]]]: 
                 - If return_mask=False: the formatted message string.
                 - If return_mask=True: a tuple of (formatted string, list of content position tuples).
-                  Each position tuple contains (start_position, end_position) for tracked message content.
+                  Each position tuple contains (start_position, end_position) for tracked message content,
+                  used for building label mask.
         """
         compiled_template = compile_jinja_template(self.template, tracking=return_mask)
         context = {

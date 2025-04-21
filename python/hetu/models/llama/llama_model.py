@@ -7,10 +7,12 @@ from hetu.utils.parallel import get_multi_ds_parallel_config
 from hetu.data import IGNORE_INDEX
 
 def generate_cos_sin(seqlen, rotary_dim, dtype):
-    assert rotary_dim % 2 == 0
-    angle = np.random.rand(seqlen * 2, rotary_dim // 2) * 2 * np.pi
-    cos = np.cos(angle).astype(dtype)
-    sin = np.sin(angle).astype(dtype)
+    inv_freqs = 1.0 / (10000 ** (np.arange(0, rotary_dim, 2, dtype=dtype) / rotary_dim))
+    seq = np.arange(seqlen, dtype=dtype)
+    freqs = np.outer(seq, inv_freqs)
+    freqs = np.concatenate((freqs, freqs), axis=-1)
+    cos = np.cos(freqs).astype(dtype)
+    sin = np.sin(freqs).astype(dtype)
     return cos, sin
   
 # self-attn
@@ -117,19 +119,28 @@ class LlamaAttention(ht.nn.Module):
 
         # apply relative positional encoding (rotary embedding)
         # TODO: 支持动态seq_len
-        def apply_rotary_pos_emb(x, _name='q'):
-            cos_np, sin_np = generate_cos_sin(self.config.seq_len_symbol.data, int(0.5 * self.head_dim), np.float32)
-            device_group_hierarchy = self.qkv_dense.device_group_unions
-            ds_hierarchy = self.dense.ds_union_map['dup']
-            # 去除zero
-            ds_hierarchy = [
-                ht.DistributedStatesUnion([ht.DistributedStates(ds.device_num, {-1: ds.device_num}, [-1]) for ds in ds_union.ds_list], ds_union.hetero_dim)
-                    for ds_union in ds_hierarchy
-            ]
-            sin_global = ht.from_numpy_parallel(sin_np, ds_hierarchy, device_group_hierarchy=device_group_hierarchy, requires_grad=False, name=f'sin_{_name}')
-            cos_global = ht.from_numpy_parallel(cos_np, ds_hierarchy, device_group_hierarchy=device_group_hierarchy, requires_grad=False, name=f'cos_{_name}')
-            out = ht.rotary(x, cos_global, sin_global, inplace=True)
-            return out
+        # 注意此处传入generate_cos_sin的seq_len值要设置为不小于max_seqlen
+        cos_np, sin_np = generate_cos_sin(self.config.max_seqlen_symbol.data, self.head_dim, np.float32)
+        ds_hierarchy = [
+            ht.DistributedStatesUnion([ht.DistributedStates(ds.device_num, {-1: ds.device_num}, [-1]) for ds in ds_union.ds_list], ds_union.hetero_dim)
+                for ds_union in self.dense.ds_union_map['dup']
+        ]
+        dg_hierarchy = self.qkv_dense.device_group_unions
+        sin_global = ht.from_numpy_parallel(sin_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'sin_attn')
+        cos_global = ht.from_numpy_parallel(cos_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'cos_attn')
+        qkv = ht.rotary(
+            qkv, cos_global, sin_global,
+            self.head_dim,
+            self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
+            self.config.multi_seq_lens_symbol,
+            self.config.multi_cp_group_symbol,
+            self.config.packing,
+            self.config.cu_seqlens_list[self.layer_idx],
+            self.config.cu_seqlens_list[self.layer_idx],
+            self.config.max_seqlen_symbol,
+            self.config.max_seqlen_symbol,
+            inplace=False
+        )
 
         assert self.use_flash_attn, "currently only support flash attn"
         # TODO: support packing api
@@ -303,9 +314,6 @@ class LlamaLMHeadModel(LlamaPreTrainedModel):
         super().__init__(config)
         self.config = config
         self.ds_parallel_configs = ds_parallel_configs
-        
-        # self.module_name = "llama_lm_head_model"
-        # self.global_name = "llama_lm_head_model"
 
         self.model = LlamaModel(config, get_multi_ds_parallel_config(ds_parallel_configs, 'llama'))
         self.lm_head = ht.nn.HtMultiColumnParallelLinear(

@@ -99,13 +99,13 @@ class JsonDataset(Dataset):
         logging.info(f'Truncating or padding data end, time cost: {end_time - start_time: .3f} s')
 
     def pad_id(self):
-                return self.tokenizer.pad_id
+        return self.tokenizer.pad_id
 
     def __len__(self):
-                return len(self.data)
+        return len(self.data)
 
     def __getitem__(self, idx):
-                return {"input_ids": np.array(self.data[idx])}
+        return {"input_ids": np.array(self.data[idx])}
 
 class SFTDataset(Dataset):
     """
@@ -197,32 +197,13 @@ class SFTDataset(Dataset):
         logging.info(f'Truncating or padding data end, time cost: {end_time - start_time: .3f} s')
 
     def pad_id(self):
-                return self.tokenizer.pad_id
+        return self.tokenizer.pad_id
 
     def __len__(self):
-                return len(self.data)
+        return len(self.data)
 
     def __getitem__(self, idx):
-                return {
+        return {
             "input_ids": np.array(self.data[idx]["input_ids"]),
             "label_mask": np.array(self.data[idx]["label_mask"])
         }
-
-def get_mask_and_position_ids(tokens, pad_id):
-    """
-    Generate attention mask and position ids for input tokens.
-    
-    Args:
-        tokens (np.ndarray): Input tokens of shape [batch_size, seq_length]
-        pad_id (int): Padding token id
-    
-    Returns:
-        tuple: A tuple containing:
-            - attention_mask (np.ndarray): Attention mask of shape [batch_size, seq_length]
-            - position_ids (np.ndarray): Position ids of shape [batch_size, seq_length]
-    """
-    batch_size, seq_length = tokens.shape
-    attention_mask = np.not_equal(tokens, pad_id)
-    position_ids = np.arange(0, seq_length, dtype=np.int64) # [1, seq_len]
-    position_ids = np.tile(position_ids, [batch_size, 1]) # [batch_size, seq_len]
-    return attention_mask, position_ids

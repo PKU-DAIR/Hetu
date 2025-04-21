@@ -1,6 +1,25 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
+def get_mask_and_position_ids(tokens: np.ndarray, pad_id: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Generate attention mask and position ids for input tokens.
+    
+    Args:
+        tokens (np.ndarray): Input tokens of shape [batch_size, seq_length]
+        pad_id (int): Padding token id
+    
+    Returns:
+        tuple: A tuple containing:
+            - attention_mask (np.ndarray): Attention mask of shape [batch_size, seq_length]
+            - position_ids (np.ndarray): Position ids of shape [batch_size, seq_length]
+    """
+    batch_size, seq_length = tokens.shape
+    attention_mask = np.not_equal(tokens, pad_id)
+    position_ids = np.arange(0, seq_length, dtype=np.int64) # [1, seq_len]
+    position_ids = np.tile(position_ids, [batch_size, 1]) # [batch_size, seq_len]
+    return attention_mask, position_ids
+
 def build_fake_batch_and_len(
     fake_seqlens: List[int],
     pad_token_id: int,
@@ -38,9 +57,9 @@ def convert_parquet_to_json(
 
     Args:
         parquet_file (str): path to the parquet file.
-        json_file (str): path to the json file.
-        columns (List[str], optional): list of columns to be converted.
-        chunksize (int, optional): chunk size for reading the parquet file. Defaults to 100000.
+        json_file (str): path to the json file. Defaults to None.
+        columns (List[str], optional): list of columns to be converted. Defaults to None.
+        chunksize (int, optional): chunk size for reading the parquet file. Defaults to None.
     """
     import pandas as pd
     import json
