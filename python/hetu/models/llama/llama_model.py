@@ -1,3 +1,4 @@
+import math
 import hetu as ht
 import numpy as np
 
@@ -6,15 +7,83 @@ from hetu.models.utils.model_utils import PreTrainedModel
 from hetu.utils.parallel import get_multi_ds_parallel_config
 from hetu.data import IGNORE_INDEX
 
-def generate_cos_sin(seqlen, rotary_dim, dtype):
-    inv_freqs = 1.0 / (10000 ** (np.arange(0, rotary_dim, 2, dtype=dtype) / rotary_dim))
-    seq = np.arange(seqlen, dtype=dtype)
-    freqs = np.outer(seq, inv_freqs)
-    freqs = np.concatenate((freqs, freqs), axis=-1)
-    cos = np.cos(freqs).astype(dtype)
-    sin = np.sin(freqs).astype(dtype)
-    return cos, sin
-  
+class RotaryEmbedding(ht.nn.Module):
+    def __init__(
+        self,
+        rotary_dim,
+        seq_len_interpolation_factor: float = None,
+        rotary_base: int = 10000,
+        rope_scaling: bool = False,
+        rope_scaling_factor: float = 8.0,
+        use_cpu_initialization=True,
+        name='rotary_embedding',
+    ):
+        assert use_cpu_initialization == True, "Currently only support cpu initialization by numpy"
+        super().__init__()
+        
+        self.name = name
+        self.seq_len_interpolation_factor = seq_len_interpolation_factor
+        self.inv_freq = 1.0 / (
+            rotary_base ** (np.arange(0, rotary_dim, 2, dtype=np.float32) / rotary_dim)
+        )
+        
+        if rope_scaling:
+            self.inv_freq = self._apply_scaling(self.inv_freq, factor=rope_scaling_factor)
+    
+    def _apply_scaling(
+        self,
+        freqs,
+        factor=8,
+        low_freq_factor=1,
+        high_freq_factor=4,
+        original_max_position_embeddings=8192,
+    ):
+        # This implementation is adapted from:
+        # https://github.com/huggingface/transformers/blob/2a5a6ad18aa22e98429bb5ecb880660328030ea0/src/transformers/modeling_rope_utils.py#L303-L343
+
+        factor = factor  # `8` in the original implementation
+        low_freq_factor = low_freq_factor  # `1` in the original implementation
+        high_freq_factor = high_freq_factor  # `4` in the original implementation
+        old_context_len = original_max_position_embeddings  # `8192` in the original implementation
+
+        low_freq_wavelen = old_context_len / low_freq_factor
+        high_freq_wavelen = old_context_len / high_freq_factor
+
+        wavelen = 2 * math.pi / freqs
+        # wavelen < high_freq_wavelen: do nothing
+        # wavelen > low_freq_wavelen: divide by factor
+        inv_freq_llama = np.where(wavelen > low_freq_wavelen, freqs / factor, freqs)
+        # otherwise: interpolate between the two, using a smooth factor
+        smooth_factor = (old_context_len / wavelen - low_freq_factor) / (
+            high_freq_factor - low_freq_factor
+        )
+        smoothed_inv_freq = (
+            1 - smooth_factor
+        ) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
+        is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+        inv_freq_llama = np.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
+
+        return inv_freq_llama
+    
+    def get_cos_sin(self, max_seq_len: int, offset: int = 0):
+        seq = np.arange(max_seq_len, dtype=self.inv_freq.dtype) + offset
+        
+        if self.seq_len_interpolation_factor is not None:
+            seq *= 1 / self.seq_len_interpolation_factor
+
+        freqs = np.outer(seq, self.inv_freq)
+        freqs = np.concatenate((freqs, freqs), axis=-1)
+        cos = np.cos(freqs).astype(self.inv_freq.dtype)
+        sin = np.sin(freqs).astype(self.inv_freq.dtype)
+        return cos, sin
+
+    def _load_from_state_dict(self, state_dict, local_device, prefix, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        # ignore inv_freq in state_dict
+        state_dict.pop(prefix + 'inv_freq', None)
+        super()._load_from_state_dict(state_dict, local_device, prefix, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
+
 # self-attn
 class LlamaAttention(ht.nn.Module):
     def __init__(self, config: LlamaConfig, ds_parallel_configs, layer_idx, name='attn'):
@@ -40,6 +109,14 @@ class LlamaAttention(ht.nn.Module):
         self.scale_attn_weights = self.head_dim**-0.5
         self.scale_attn_by_inverse_layer_idx = config.scale_attn_by_inverse_layer_idx
         '''
+        
+        self.rotary_embedding = RotaryEmbedding(
+            self.head_dim,
+            seq_len_interpolation_factor=config.rope_scaling,
+            rope_scaling=config.rope_scaling,
+            use_cpu_initialization=True,
+            name=f'rotary_embedding_{name}',
+        )
 
         self.qkv_dense = ht.nn.HtMultiColumnParallelLinear(
             config.hidden_size,
@@ -120,7 +197,7 @@ class LlamaAttention(ht.nn.Module):
         # apply relative positional encoding (rotary embedding)
         # TODO: 支持动态seq_len
         # 注意此处传入generate_cos_sin的seq_len值要设置为不小于max_seqlen
-        cos_np, sin_np = generate_cos_sin(self.config.max_seqlen_symbol.data, self.head_dim, np.float32)
+        cos_np, sin_np = self.rotary_embedding.get_cos_sin(self.config.max_seqlen_symbol.data)
         ds_hierarchy = [
             ht.DistributedStatesUnion([ht.DistributedStates(ds.device_num, {-1: ds.device_num}, [-1]) for ds in ds_union.ds_list], ds_union.hetero_dim)
                 for ds_union in self.dense.ds_union_map['dup']

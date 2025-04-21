@@ -137,8 +137,7 @@ def convert(input_name_or_path, output_path, precision, sharded_store=False, tes
             hf_state_dict = {f'model.{k}': v for k, v in hf_state_dict.items()}
             embed_weight = hf_state_dict['model.embed_tokens.weight']
             checkpoint['state_dict'][f'model.wte.embedding_table'] = param_to_weights(embed_weight)
-            
-            # TODO: rope inv_freq
+
             for l in range(int(num_layers)):
                 logging.info(f"converting layer {l}")
                 # Attn
