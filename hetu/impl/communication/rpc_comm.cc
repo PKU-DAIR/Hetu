@@ -14,6 +14,7 @@ namespace {
 
 static std::once_flag rpc_init_flag;
 static int rpc_world_rank = -1; // 当前进程的rank
+static int local_device_idx = -1;
 std::vector<int> rpc_world_ranks; // [0, 1, 2, ..., rpc_world_size - 1]
 static int rpc_world_size = -1; // 一共有多少rank（例如2台A100机器就是16）
 static std::string global_server_address;
@@ -41,7 +42,6 @@ static void RPC_Init_Once() {
                                                                       grpc::InsecureChannelCredentials()));
     // 告知server当前进程的hostname
     // server会统计一共多少host以及每个host上有多少进程
-    HT_LOG_INFO << Device::GetLocalHostname() << " collecting server...";
     local_client->Connect(Device::GetLocalHostname());
     std::vector<int> all_ranks(rpc_world_size);
     std::iota(all_ranks.begin(), all_ranks.end(), 0);
@@ -51,10 +51,11 @@ static void RPC_Init_Once() {
     // 等所有client进程都向server注册完
     local_client->Barrier(0, all_ranks);
     // 进程获取自己的rank（与注册顺序相关）
-    int rank = local_client->GetRank(Device::GetLocalHostname());
-    HT_LOG_DEBUG << "GETRANK:" << rank;
+    auto rank_pair = local_client->GetRank(Device::GetLocalHostname());
     HT_LOG_INFO << Device::GetLocalHostname();
-    rpc_world_rank = rank;
+    rpc_world_rank = rank_pair.first;
+    HT_LOG_DEBUG << "GETRANK:" << rpc_world_rank;
+    local_device_idx = rank_pair.second;
     // 启动一个后台线程
     // 定期发送heartbeat给server
     local_client->LaunchHeartBeat(rpc_world_rank);
@@ -133,7 +134,7 @@ void SetUpDeviceMappingWithAssignedLocalDevice(const Device& local_device) {
     DeviceInfoReply reply = local_client->GetDeviceInfo(rank);
     Device rank_device(static_cast<DeviceType>(reply.type),
                        reply.index, hostnames[rank],
-                       reply.multiplex);
+                       reply.multiplex, rank);
     HT_LOG_DEBUG << "Device of rank[" << rank << "]: " << rank_device;
     HT_ASSERT(device_to_rank_mapping.find(rank_device) ==
                 device_to_rank_mapping.end() ||
@@ -142,6 +143,8 @@ void SetUpDeviceMappingWithAssignedLocalDevice(const Device& local_device) {
     device_to_rank_mapping.insert({rank_device, rank});
     rank_to_device_mapping.emplace_back(rank_device);
   }
+  HT_LOG_WARN << "world_size:" << world_size;
+  HT_LOG_WARN << "rank_to_device_mapping:" << rank_to_device_mapping;
   global_device_group = DeviceGroup(rank_to_device_mapping);
   HT_LOG_DEBUG << "Global devices: " << global_device_group;
 }
@@ -157,14 +160,17 @@ void SetUpDeviceMappingAndAssignLocalDevice(
   HT_ASSERT(hostnames[rpc_world_rank] == local_hostname)
     << "Local hostname mismatched after gathering: " << hostnames[rpc_world_rank]
     << " vs. " << local_hostname;
+  Device local_device;
   int local_rank = 0;
-  for (int i = 0; i < rpc_world_rank; i++)
-    if (hostnames[i] == local_hostname)
-      local_rank++;
+  // for (int i = 0; i < rpc_world_rank; ++i) {
+  //   if (hostnames[i] == local_hostname)
+  //     local_rank++;
+  // }
+  local_rank = local_device_idx;
   HT_LOG_DEBUG << "local host = " << local_hostname << ", rank = " << rpc_world_rank 
                << ", all hosts = " << hostnames << ", world ranks = " << rpc_world_ranks
                << ", world size = " << GetWorldSize() << ", local rank = " << local_rank;
-  Device local_device;
+  HT_LOG_WARN << device_idxs;
   if (resources.find(kCUDA) == resources.end() || resources.at(kCUDA) == 0) {
     // Question: do we need to set the multiplex field for CPU?
     local_device = Device(kCPU);
@@ -172,8 +178,10 @@ void SetUpDeviceMappingAndAssignLocalDevice(
     auto device_id = device_idxs.empty() ? local_rank % resources.at(kCUDA)
                                          : device_idxs[local_rank % resources.at(kCUDA)];
     auto multiplex = local_rank / resources.at(kCUDA);
+    auto global_device_id = rpc_world_rank;
     // multiplex当rank数大于卡数时出现（比如只有4个GPU但开了8个进程）
-    local_device = Device(kCUDA, device_id, local_hostname, multiplex);
+    local_device = Device(kCUDA, device_id, local_hostname, 
+                          multiplex, global_device_id);
   }
   SetUpDeviceMappingWithAssignedLocalDevice(local_device);
 }
@@ -249,7 +257,7 @@ std::vector<int> DeviceGroupToWorldRanks(const DeviceGroup& device_group) {
   ranks.reserve(device_group.num_devices());
   for (const auto& device : device_group.devices())
     ranks.push_back(DeviceToWorldRank(device));
-  std::sort(ranks.begin(), ranks.end());
+  // std::sort(ranks.begin(), ranks.end());
   return ranks;
 }
 

@@ -160,6 +160,12 @@ PyObject* PyNDArray_data_ptr(PyNDArray* self) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyNDArray_shm_offset(PyNDArray* self) {
+  HT_PY_FUNC_BEGIN
+  return PyLong_FromInteger(int64_t(self->ndarray->shm_offset()));
+  HT_PY_FUNC_END
+}
+
 PyObject* PyNDArray_numel(PyNDArray* self) {
   HT_PY_FUNC_BEGIN
   return PyLong_FromInteger(self->ndarray->numel());
@@ -347,6 +353,7 @@ PyGetSetDef PyNDArray_properties[] = {
   {PY_GET_SET_DEF_NAME("dtype"), (getter) PyNDArray_dtype, nullptr, nullptr, nullptr},
   {PY_GET_SET_DEF_NAME("shape"), (getter) PyNDArray_shape, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("data_ptr"), (getter) PyNDArray_data_ptr, nullptr, nullptr, nullptr}, 
+  {PY_GET_SET_DEF_NAME("shm_offset"), (getter) PyNDArray_shm_offset, nullptr, nullptr, nullptr}, 
   {nullptr}
 };
 

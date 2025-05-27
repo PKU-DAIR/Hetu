@@ -74,7 +74,7 @@ void DefineAndRunGraph::ResetVariableDataInner(const Tensor& tensor,
   }
 }
 
-NDArray DefineAndRunGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
+NDArray DefineAndRunGraph::GetDetachedVariableDataInner(const Tensor& tensor, bool gpu) {
   if (_is_active) {
     auto& tensor_to_exec_tensor_mapping = _exec_graph_plan_pool[_active_exec_plan].tensor_to_exec_tensor_mapping;
     auto it_1 = tensor_to_exec_tensor_mapping.find(tensor->id());
@@ -105,7 +105,7 @@ NDArray DefineAndRunGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
         HT_LOG_TRACE << "The data is not locate at local executable graph, return an empty NDArray.";
         return NDArray::empty(tensor->shape(), Device(kCPU), tensor->dtype(), kBlockingStream);
       }
-      auto ret = Graph::GetDetachedVariableData(it_1->second);
+      auto ret = Graph::GetDetachedVariableData(it_1->second, gpu);
       Stream stream(Device(kCPU), NDArray::DEFAULT_STREAM);
       stream.Sync();
       return ret;
@@ -1151,7 +1151,8 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
 NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches,
                                    const FeedDict& feed_dict, const int num_micro_batches,
                                    const int compute_strategy_id, const int optimize_strategy_id, RunLevel run_level,
-                                   bool save_checkpoint, const double grad_scale) {
+                                   bool save_checkpoint, const double grad_scale,
+                                   const RuntimeContext& ctx) {
   _run_level = run_level;
   COMPUTE_STRATEGY_ID = static_cast<size_t>(compute_strategy_id);
   OPTIMIZE_STRATEGY_ID = static_cast<size_t>(optimize_strategy_id);
@@ -1238,7 +1239,10 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
       pipeline_num = loss->cur_ds_union().size();
     } else {
       HT_RUNTIME_ERROR << "Currently we use the ds of loss to deduce pipeline num"
-        << ", so the ds union of loss shouldn't be hetero on other dim except for 0";
+        << ", so the ds union of loss shouldn't be hetero on other dim except for 0"
+        << "\nds_union:" << loss->cur_ds_union().ds_union_info()
+        << "\nis_hetero:" << loss->cur_ds_union().is_hetero()
+        << "\nhetero_dim:" << loss->cur_ds_union().hetero_dim();
     }
     Instantiate(std::move(global_topo), std::move(shape_plan), pipeline_num);
     // 补上fetches（其在instantiate中不需要用到，但是plan需要进行记录）
@@ -1334,7 +1338,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
     exec_graph->Run(exec_loss, exec_fetches, 
                     exec_feed_dict, num_micro_batches, 
-                    RunLevel::TOPO, grad_scale);
+                    RunLevel::TOPO, grad_scale, ctx);
     Graph::pop_graph_ctx();
   }
 
@@ -1609,7 +1613,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
     ret = exec_graph->Run(exec_loss, exec_fetches, 
                           exec_feed_dict, num_micro_batches, 
-                          run_level, grad_scale);
+                          run_level, grad_scale, ctx);
     Graph::pop_graph_ctx();
   }
   // 释放graph切换相关的event

@@ -28,6 +28,8 @@ examples/hydraulis/func_call/
 examples/hydraulis/dataset_analysis/
 examples/hydraulis/results
 examples/hydraulis/draw
+examples/ampelos/data
+
 
 # Python
 *.png

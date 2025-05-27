@@ -1,3 +1,4 @@
+#include "hetu/common/except.h"
 #include "hetu/impl/memory/CUDAStreamOrderedMemoryPool.cuh"
 #include "hetu/impl/stream/CUDAStream.h"
 #include "hetu/impl/stream/CPUStream.h"
@@ -57,7 +58,8 @@ CUDAStreamOrderedMemoryPool::~CUDAStreamOrderedMemoryPool() {
 }
 
 DataPtr CUDAStreamOrderedMemoryPool::AllocDataSpace(size_t num_bytes,
-                                                    const Stream& stream) {
+                                                    const Stream& stream,
+                                                    bool shared_memory) {
   HT_VALUE_ERROR_IF(!stream.device().is_cuda())
     << "Cuda arrays must be allocated on cuda streams. Got " << stream;
   if (num_bytes == 0)
@@ -85,6 +87,17 @@ DataPtr CUDAStreamOrderedMemoryPool::AllocDataSpace(size_t num_bytes,
     << "Failed to insert data " << data_ptr << " to info";
   
   return data_ptr;
+}
+
+void CUDAStreamOrderedMemoryPool::AllocShareMemory(size_t num_bytes, 
+                                                   const Stream& stream,
+                                                   bool realloc) {
+  HT_NOT_IMPLEMENTED << "CUDA MemoryPool doesn't support share memory currently.";
+}
+
+bool CUDAStreamOrderedMemoryPool::ShareMemoryReady() {
+  // Since GPU currently doesn't support share memory, this is always true; 
+  return true;
 }
 
 DataPtr CUDAStreamOrderedMemoryPool::BorrowDataSpace(void*, size_t,

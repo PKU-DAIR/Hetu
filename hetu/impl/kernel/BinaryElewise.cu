@@ -341,8 +341,15 @@ void launch_broadcast_loop_kernel(const NDArray& inputA, const NDArray& inputB, 
         NDArray::MarkUsedBy(                                                   \
           {inputA, inputB, output}, stream);                                   \
       } else {                                                                 \
-        HT_NOT_IMPLEMENTED                                                     \
-          << name << " across different data types is not supported yet";      \
+        HT_DISPATCH_TRIPLE_FLOATING_TYPES(                                     \
+          inputA->dtype(), inputB->dtype(),                                    \
+          output->dtype(), spec_a_t, spec_b_t, spec_c_t, name, [&]() {         \
+            launch_loop_kernel<spec_a_t, spec_b_t, spec_c_t>(                  \
+                inputA, inputB, output, size, stream,                          \
+                op<spec_a_t, spec_b_t>());                                     \
+          });                                                                  \
+        NDArray::MarkUsedBy(                                                   \
+          {inputA, inputB, output}, stream);                                   \
       }                                                                        \
     } else {                                                                   \
       size_t num_dims = 0;                                                     \

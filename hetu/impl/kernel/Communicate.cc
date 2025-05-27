@@ -9,7 +9,7 @@ namespace impl {
 using namespace hetu::impl::comm;
 
 void AllReduceCpu(const NDArray& input, NDArray& output, ReductionType red_type,
-                  const DeviceGroup& device_group, const Stream& stream) {
+                  const DeviceGroup& device_group, bool use_fp32, const Stream& stream) {
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = MPICommunicationGroup::GetOrCreate(ranks, stream);
   comm_group->AllReduce(input, output, red_type);
@@ -25,7 +25,8 @@ void AllGatherCpu(const NDArray& input, NDArray& output,
 }
 
 void ReduceScatterCpu(const NDArray& input, NDArray& output, ReductionType red_type,
-                      const DeviceGroup& device_group, int32_t scatter_dim, const Stream& stream) {
+                      const DeviceGroup& device_group, int32_t scatter_dim,
+                      bool use_fp32, const Stream& stream) {
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = MPICommunicationGroup::GetOrCreate(ranks, stream);
   comm_group->ReduceScatter(input, output, scatter_dim, red_type);

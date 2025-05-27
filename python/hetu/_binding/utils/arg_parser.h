@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Python.h>
+#include "hetu/_binding/graph/runcontext.h"
 #include "hetu/_binding/utils/pybind_common.h"
 #include "hetu/_binding/utils/python_primitives.h"
 #include "hetu/_binding/utils/numpy.h"
@@ -16,6 +17,7 @@
 #include "hetu/_binding/graph/adamoptimizer.h"
 #include "hetu/_binding/graph/distributed_states.h"
 #include "hetu/_binding/graph/init/initializer.h"
+#include "hetu/graph/operator.h"
 
 namespace hetu {
 
@@ -60,6 +62,7 @@ enum class ArgType : uint8_t {
   FEED_DICT,
   PARAMETER_DICT,
   STATE_DICT,
+  RUNTIMECONTEXT,
   DISTRIBUTED_STATES,
   DISTRIBUTED_STATES_LIST,
   DS_HIERARCHY,
@@ -421,6 +424,14 @@ class ParsedPyArgs {
 
   inline StateDict get_state_dict_or_empty(size_t i) const {
     return has(i) ? get_state_dict(i) : StateDict();
+  }
+
+  inline RuntimeContext get_runtime_context(size_t i) const {
+    return RuntimeContext_FromPyObject(_args[i]);
+  }
+
+  inline RuntimeContext get_runtime_context_or_empty(size_t i) const {
+    return has(i) ? RuntimeContext_FromPyObject(_args[i]) : RuntimeContext();
   }
 
   inline SGDOptimizer get_sgdoptimizer(size_t i) const {

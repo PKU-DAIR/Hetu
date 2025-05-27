@@ -51,8 +51,12 @@ NDArray& ExecutableGraph::GetVariableDataInner(const Tensor& tensor) {
   return it->second;
 }
 
-NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
+NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor, bool gpu) {
   // Question: store the data on different devices? For now, store all on CPU and return.
+  // if we use async param, we should get it from cpu_preserved_data.
+  if (_cpu_preserved_data.find(tensor->id()) != _cpu_preserved_data.end()) {
+    return _cpu_preserved_data[tensor->id()];
+  }
   auto it_1 = _preserved_data.find(tensor->id());
   if (it_1 == _preserved_data.end()) {
     auto it_2 = _add_on_inits.find(tensor->id());
@@ -68,6 +72,10 @@ NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
     }
   }
   HT_LOG_TRACE << "Fetch the data from the executable graph.";
+  if (gpu) {
+    // HT_LOG_WARN << "tensor:" << tensor << ", ptr:" << it_1->second->raw_data_ptr();
+    return it_1->second;
+  }
   return NDArray::to(it_1->second, Device(kCPU));
 }
 

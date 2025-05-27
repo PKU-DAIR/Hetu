@@ -150,7 +150,7 @@ NDArray NDArrayFromNumpy(PyObject* obj, const HTShape& dynamic_shape, DataType d
     << "The provided Numpy array is not in machine byte-order";
   
   bool writable = PyArray_ISWRITEABLE(numpy_array);
-  HT_LOG_WARN_IF(!writable) << "The provided Numpy array is non-writable.";
+  // HT_LOG_WARN_IF(!writable) << "The provided Numpy array is non-writable.";
   HT_VALUE_ERROR_IF(!PyArray_IS_C_CONTIGUOUS(numpy_array))
     << "Non-contiguous arrays are not supported yet.";
 

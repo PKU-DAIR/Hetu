@@ -5,6 +5,7 @@
 #include "hetu/core/symbol.h"
 #include "hetu/graph/common.h"
 #include "hetu/graph/distributed_states.h"
+#include <optional>
 
 
 namespace hetu {

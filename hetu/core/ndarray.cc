@@ -16,7 +16,7 @@ void NDArrayDef::Serialize(std::ostream& os, size_t n_print) const {
   os << "NDArray([";
   size_t size = numel();
   n_print = MIN(n_print, size);
-  if (n_print > 0 && dtype() != kFloat4 && dtype() != kNFloat4) {
+  if (n_print > 0 && dtype() != kFloat4 && dtype() != kNFloat4 && dtype() != kBool) {
     wait(); // ensure all async kernels on this array have completed
     HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
       dtype(), spec_t, __FUNCTION__, [&]() {
@@ -37,7 +37,7 @@ void NDArrayDef::Serialize(std::ostream& os, size_t n_print) const {
         }
       });
   }
-  else if (n_print > 0){
+  else if (n_print > 0 && dtype() != kBool){
     if (is_cpu()) {
       const uint8_t* ptr = data_ptr<uint8_t>();
       os << int(ptr[0] >> 4) << ", " << int(ptr[0] & 0xF);
@@ -166,7 +166,7 @@ NDArray NDArray::to(const NDArray& input, const Device& device, DataType dtype,
                     StreamIndex stream_id, NDArray& output) {
   bool same_device = device.is_undetermined() || device == input->device();
   bool same_dtype = dtype == kUndeterminedDataType || dtype == input->dtype();
-  if (same_device && same_dtype) {
+  if (same_device && same_dtype && !output.is_defined()) {
     return NDArray(input->meta(), input->storage(), input->storage_offset());
   } else {
     const auto& target_device = same_device ? input->device() : device;
@@ -1620,6 +1620,11 @@ NDArray NDArray::slice(const NDArray& input, const HTShape& begin_pos,
                                   .set_stride(in_stride)
                                   .set_device(input->device());
   auto out = NDArray(output_meta, input->storage(), storage_offset);
+  // Stream stream(input->device(), stream_id);
+  // auto out = NDArray::empty(output_shape, input->device(), input->dtype(), stream_id);
+  // HT_DISPATCH_KERNEL_CPU_AND_CUDA(input->device().type(), __FUNCTION__,
+  //                                 hetu::impl::Slice, input,
+  //                                 out, begin_pos, stream);
   return out;
 }
 
@@ -1773,7 +1778,7 @@ NDArray NDArray::cat(const NDArrayList& inputs, int axis,
 // deprecated: dynamic shape at inference when using different seq_len
 NDArray NDArray::empty(const HTShape& shape, const Device& device,
                        DataType dtype, StreamIndex stream_id,
-                       const HTShape& dynamic_shape) {
+                       const HTShape& dynamic_shape, bool shared_memory) {
   auto meta = NDArrayMeta()
                 .set_device(device)
                 .set_dtype(dtype)
@@ -1782,7 +1787,7 @@ NDArray NDArray::empty(const HTShape& shape, const Device& device,
   auto storage = std::make_shared<NDArrayStorage>(AllocFromMemoryPool(
     device, (dtype == kFloat4 || dtype == kNFloat4) ?  
     ((meta.numel() + 1) / 2) * DataType2Size(dtype) : 
-    meta.numel() * DataType2Size(dtype), Stream(device, stream_id)));
+    meta.numel() * DataType2Size(dtype), Stream(device, stream_id), shared_memory));
   // mempool debug use
   // HT_LOG_INFO << "NDArray empty with " << meta;
   // if (storage->is_new_malloc())

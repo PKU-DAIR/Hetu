@@ -270,13 +270,26 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
         });
         // if allreduce/reduce-scatter group is different between input grads,
         // then assert error in placement group deduce process.
+        HT_ASSERT(partial_grad_list.size() > 0);
+        auto& cur_graph = partial_grad_list[0]->producer()->graph();
+        std::shared_ptr<SubGraph> subgraph = cur_graph.GetSubGraph(partial_grad_list[0]->producer());
         Tensor partial_grad_sum = MakeSumOp(
           partial_grad_list,
           OpMeta().set_name("sum_op_for_partial_[" + concat_name_of_partial_grad + "]")
         );
         partial_grad_sum->set_is_grad(true);
         // 原地的comm
-        grad_sum = MakeCommOp(partial_grad_sum, dst_ds_hierarchy, OpMeta().set_name("comm_op_after_partial_grad_sum"));
+        grad_sum = MakeCommOp(partial_grad_sum, dst_ds_hierarchy, 
+                              OpMeta().set_name("comm_op_after_partial_grad_sum_of_" +
+                                                partial_grad_sum->producer()->name()));
+        if (subgraph != nullptr) {
+          cur_graph.AddOpToSubGraph(partial_grad_sum->producer(), 
+                                    subgraph->global_name(), 
+                                    SubGraphOpType::BACKWARD);
+          cur_graph.AddOpToSubGraph(grad_sum->producer(), 
+                                    subgraph->global_name(), 
+                                    SubGraphOpType::BACKWARD);
+        }
       } else {
         std::vector<OpName> grad_name_list;
         for (const auto& grad : filtered) {
@@ -573,6 +586,9 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
         if (is_need_comm_op) {
           final_grad = MakeCommOp(grad_inputs[i], dst_ds_hierarchy, 
             OpMeta().set_name("comm_op_after_" + grad_op->name())); // allreduce
+          // cur_graph.AddOpToSubGraph(final_grad->producer(), 
+          //                           subgraph->global_name(), 
+          //                           SubGraphOpType::BACKWARD);
           final_grad->set_is_grad(true);
           // 这里一定要在原地做
           // 所以不能设置fw_op_id

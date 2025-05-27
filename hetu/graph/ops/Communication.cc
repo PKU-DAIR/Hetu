@@ -1,10 +1,13 @@
 #include "hetu/graph/ops/Communication.h"
+#include "hetu/core/ndarray.h"
 #include "hetu/graph/headers.h"
 #include "hetu/graph/ops/kernel_links.h"
 #include "hetu/graph/executable_graph.h"
 #include "hetu/impl/communication/nccl_comm_group.h"
 #include "hetu/impl/communication/comm_group.h"
 #include "hetu/core/symbol.h"
+#include <any>
+#include <cstdint>
 #include <numeric>
 
 namespace hetu {
@@ -762,6 +765,7 @@ NDArrayList AllReduceOpImpl::DoCompute(Operator& op,
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
+                                  std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                   op->instantiation_ctx().stream());
   return outputs;
 }
@@ -771,6 +775,7 @@ void AllReduceOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
+                                  std::any_cast<bool>(runtime_ctx.get_param("fp32_comm_reduce")),
                                   op->instantiation_ctx().stream());                          
 }
 
@@ -1017,7 +1022,9 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   } else {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
     _buffer_for_allgather = outputs[0];
-  }  
+  } 
+  // TODO: recompute to avoid this additional memory allocate. 
+  outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   DoCompute(op, inputs, outputs, runtime_ctx);
   return outputs;
 }
@@ -1104,7 +1111,9 @@ NDArrayList ReduceScatterOpImpl::DoCompute(Operator& op,
   // HT_LOG_INFO << "comm group " << _comm_group
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::ReduceScatter, inputs.at(0), outputs.at(0), 
-                                  reduction_type(), _comm_group, get_scatter_dim(), op->instantiation_ctx().stream());
+                                  reduction_type(), _comm_group, get_scatter_dim(), 
+                                  std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
+                                  op->instantiation_ctx().stream());
   return outputs;
 }
 
@@ -1118,7 +1127,9 @@ void ReduceScatterOpImpl::DoCompute(Operator& op,
 
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::ReduceScatter, inputs.at(0), outputs.at(0), 
-                                  reduction_type(), _comm_group, get_scatter_dim(), op->instantiation_ctx().stream());
+                                  reduction_type(), _comm_group, get_scatter_dim(), 
+                                  std::any_cast<bool>(runtime_ctx.get_param("fp32_comm_reduce")),
+                                  op->instantiation_ctx().stream());
 }
 
 bool SplitAllGatherOpImpl::DoMapToParallelDevices(Operator& op, 
@@ -1251,6 +1262,7 @@ NDArrayList SplitAllReduceOpImpl::DoCompute(Operator& op,
       HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                       hetu::impl::AllReduce, split_inputs.at(i),
                                       split_outputs.at(i), reduction_type(), comm_group,
+                                      std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                       op->instantiation_ctx().stream());
     }
   }
@@ -1332,6 +1344,7 @@ NDArrayList SplitReduceScatterOpImpl::DoCompute(Operator& op,
       HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                       hetu::impl::ReduceScatter, split_inputs.at(i),
                                       split_outputs.at(i), reduction_type(), comm_group, 0,
+                                      std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                       op->instantiation_ctx().stream());
     }
   }

@@ -79,7 +79,13 @@ class CUDACachingMemoryPool final : public CUDAMemoryPool {
   }
 
   DataPtr AllocDataSpace(size_t num_bytes,
-                         const Stream& stream = Stream()) override;
+                         const Stream& stream = Stream(),
+                         bool shared_memory = false) override;
+  
+  void AllocShareMemory(size_t num_bytes, const Stream& stream = Stream(),
+                        bool realloc = false) override; 
+  
+  bool ShareMemoryReady() override;
 
   DataPtr BorrowDataSpace(void* ptr, size_t num_bytes,
                           DataPtrDeleter deleter,

@@ -60,7 +60,13 @@ service DeviceController {
 
   rpc Barrier (BarrierRequest) returns (BarrierReply) {}
 
+  rpc Consistent (ConsistentRequest) returns (ConsistentReply) {}
+
   rpc HeartBeat (HeartBeatRequest) returns (HeartBeatReply) {}
+
+  rpc AlreadyStop (AlreadyStopRequest) returns (AlreadyStopReply) {}
+
+  rpc WorkerStop (WorkerStopRequest) returns (WorkerStopReply) {}
 }
 
 message ConnectRequest {
@@ -77,6 +83,7 @@ message RankRequest {
 
 message RankReply {
   int32 rank = 1;
+  int32 local_device = 2;
 }
 
 message CommitHostNameRequest {
@@ -278,10 +285,36 @@ message BarrierReply {
   int32 status = 1; 
 }
 
+message ConsistentRequest {
+  int32 rank = 1;
+  int32 value = 2;
+  repeated int32 world_rank = 3;
+}
+
+message ConsistentReply {
+  int32 status = 1; 
+}
+
 message HeartBeatRequest {
   int32 rank = 1;
 }
 
 message HeartBeatReply {
+  int32 status = 1; 
+}
+
+message AlreadyStopRequest {
+  int32 rank = 1;
+}
+
+message AlreadyStopReply {
+  int32 status = 1; 
+}
+
+message WorkerStopRequest {
+  int32 rank = 1;
+}
+
+message WorkerStopReply {
   int32 status = 1; 
 }

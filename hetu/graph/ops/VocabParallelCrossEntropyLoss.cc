@@ -66,6 +66,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, reduce_max_partial,
                                     reduce_max, kMAX, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     NDArray vocab_parallel_logits = preds - reduce_max; // cuda malloc
     NDArray::MarkUsedBy({preds, labels, reduce_max_partial, vocab_parallel_logits}, op->instantiation_ctx().stream());
@@ -77,6 +78,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, sum_exp_logits_partial,
                                     sum_exp_logits, kSUM, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     // store softmax for backward compute
     // NDArray softmax = exp_logits / sum_exp_logits;
@@ -103,6 +105,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, predict_logits_partial,
                                     predict_logits, kSUM, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     NDArray::MarkUsedBy({predict_logits_partial}, op->instantiation_ctx().stream());
 

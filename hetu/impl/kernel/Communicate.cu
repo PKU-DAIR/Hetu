@@ -5,6 +5,7 @@
 #include "hetu/impl/stream/CUDAStream.h"
 
 #include <thread>
+#include <vector>
 
 namespace hetu {
 namespace impl {
@@ -12,10 +13,22 @@ namespace impl {
 using namespace hetu::impl::comm;
 
 void AllReduceCuda(const NDArray& input, NDArray& output, ReductionType red_type,
-                   const DeviceGroup& device_group, const Stream& stream) {
+                   const DeviceGroup& device_group, bool use_fp32, const Stream& stream) {
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = NCCLCommunicationGroup::GetOrCreate(ranks, stream);
-  comm_group->AllReduce(input, output, red_type);
+  if (use_fp32) {
+    NDArray input_fp32, output_fp32;
+    input_fp32 = NDArray::to(input, input->device(), 
+                             kFloat32, stream.stream_index());
+    output_fp32 = NDArray::empty(output->shape(), output->device(), 
+                                 kFloat32, stream.stream_index());
+    comm_group->AllReduce(input_fp32, output_fp32, red_type);
+    NDArray::to(output_fp32, output->device(), output->dtype(),
+                stream.stream_index(), output);
+  }
+  else {
+    comm_group->AllReduce(input, output, red_type);
+  }
   NDArray::MarkUsedBy({input, output}, stream);  
 }
 
@@ -28,10 +41,23 @@ void AllGatherCuda(const NDArray& input, NDArray& output,
 }
 
 void ReduceScatterCuda(const NDArray& input, NDArray& output, ReductionType red_type,
-                   const DeviceGroup& device_group, int32_t scatter_dim, const Stream& stream) {
+                   const DeviceGroup& device_group, int32_t scatter_dim,
+                   bool use_fp32, const Stream& stream) {
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = NCCLCommunicationGroup::GetOrCreate(ranks, stream);
-  comm_group->ReduceScatter(input, output, scatter_dim, red_type);
+  if (use_fp32) {
+    NDArray input_fp32, output_fp32;
+    input_fp32 = NDArray::to(input, input->device(), 
+                             kFloat32, stream.stream_index());
+    output_fp32 = NDArray::empty(output->shape(), output->device(), 
+                                 kFloat32, stream.stream_index());
+    comm_group->ReduceScatter(input_fp32, output_fp32, scatter_dim, red_type);
+    NDArray::to(output_fp32, output->device(), output->dtype(),
+                stream.stream_index(), output);
+  }
+  else {
+    comm_group->ReduceScatter(input, output, scatter_dim, red_type);
+  }
   NDArray::MarkUsedBy({input, output}, stream);  
 }
 

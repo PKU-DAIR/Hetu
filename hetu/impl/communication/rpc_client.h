@@ -22,7 +22,7 @@ class DeviceClient : public DeviceClientImpl {
 
   int Connect(const std::string& hostname) override;
 
-  int GetRank(const std::string& user) override;
+  std::pair<int, int> GetRank(const std::string& user) override;
 
   int CommitHostName(const std::string& hostname, int rank) override;
 
@@ -69,6 +69,8 @@ class DeviceClient : public DeviceClientImpl {
   std::string RemoveJson(const std::string& key) override;
 
   int Barrier(int rank, const std::vector<int>& world_rank) override;
+
+  int Consistent(int rank, int value, const std::vector<int>& world_rank) override;
 
   int HeartBeat(int rank) override;
 

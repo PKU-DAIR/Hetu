@@ -1,7 +1,17 @@
 #include "hetu/impl/memory/CPUMemoryPool.h"
+#include "hetu/common/except.h"
+#include "hetu/core/memory_pool.h"
 #include "hetu/impl/stream/CPUStream.h"
 #include "hetu/impl/stream/CUDAStream.h"
 #include <mutex>
+#include <string>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/stat.h> 
+#include "hetu/impl/communication/comm_group.h"
 
 namespace hetu {
 namespace impl {
@@ -26,10 +36,16 @@ CPUMemoryPool::CPUMemoryPool() : MemoryPool(Device(kCPU), "CPUMemPool") {
 
 CPUMemoryPool::~CPUMemoryPool() {
   std::lock_guard<std::mutex> lock(_mtx);
+  if (_shm_maxium_size > 0) {
+    std::string name_str = "/hetu_shared_memory" +  
+                           std::to_string(hetu::impl::comm::GetWorldRank());
+    shm_unlink(name_str.c_str());
+  }
   CPUStream(Stream(Device(kCPU), kJoinStream)).Sync();
 }
 
-DataPtr CPUMemoryPool::AllocDataSpace(size_t num_bytes, const Stream& stream) {
+DataPtr CPUMemoryPool::AllocDataSpace(size_t num_bytes, const Stream& stream,
+                                      bool shared_memory) {
   if (num_bytes == 0)
     return DataPtr{nullptr, 0, Device(kCPU), static_cast<uint64_t>(-1)};
 
@@ -41,12 +57,31 @@ DataPtr CPUMemoryPool::AllocDataSpace(size_t num_bytes, const Stream& stream) {
   // the synchronization of allocation stream when freeing or waiting 
   // if the allocation becomes non-blocking.
   void* ptr;
-  int err = posix_memalign(&ptr, alignment, aligned_num_bytes);
-  HT_BAD_ALLOC_IF(err != 0)
-    << "Failed to allocate " << aligned_num_bytes
-    << " bytes of host memory. Error: " << strerror(err);
-  DataPtr data_ptr{ptr, aligned_num_bytes, Device(kCPU), next_id()};
-  data_ptr.is_new_malloc = true;
+  DataPtrId nid = next_id();
+  DataPtr data_ptr;
+  if (shared_memory) {
+    HT_ASSERT(ShareMemoryReady())
+      << "shared_memory is not ready.";
+    std::string name_str = "/hetu_shared_memory" +  
+                           std::to_string(hetu::impl::comm::GetWorldRank());
+    int shm_fd = shm_open(name_str.c_str(), O_RDWR | O_CREAT, 0666);
+    ptr = (void*)((char*)base_ptr + _shm_allocated);
+    data_ptr = DataPtr(ptr,aligned_num_bytes, 
+                       Device(kCPU), nid);
+    data_ptr.shmoffset = _shm_allocated;
+    data_ptr.shared_memory = shared_memory;
+    _shm_allocated += aligned_num_bytes;
+    // HT_LOG_WARN << "Alloc shm at ptr:" << ptr << ", cur_size:" << aligned_num_bytes
+    //             << "\ntotal_size:" << _shm_allocated << ", max_size:" << _shm_maxium_size;
+    close(shm_fd);
+  }
+  else {
+    int err = posix_memalign(&ptr, alignment, aligned_num_bytes);
+    HT_BAD_ALLOC_IF(err != 0)
+      << "Failed to allocate " << aligned_num_bytes
+      << " bytes of host memory. Error: " << strerror(err);
+    data_ptr = DataPtr(ptr, aligned_num_bytes, Device(kCPU), nid);
+  }
   _allocated += aligned_num_bytes;
   _peak_allocated = MAX(_peak_allocated, _allocated);
   _alloc_cnt++;
@@ -66,6 +101,47 @@ DataPtr CPUMemoryPool::AllocDataSpace(size_t num_bytes, const Stream& stream) {
     << "Failed to insert data " << data_ptr << " to info";
 
   return data_ptr;
+}
+
+void CPUMemoryPool::AllocShareMemory(size_t num_bytes, const Stream& stream,
+                                     bool realloc) {
+  if (num_bytes == 0)
+    return;
+
+  //TODO:We should support more elegantly shm manager in the future.
+  if ((!realloc) && (_shm_maxium_size != 0)) {
+    HT_LOG_WARN << "Ignore Alloc Shm.";
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(_mtx);
+  auto alignment = get_data_alignment();
+  size_t aligned_num_bytes = DIVUP(num_bytes, alignment) * alignment;
+  
+  std::string name_str = "/hetu_shared_memory" +  
+                          std::to_string(hetu::impl::comm::GetWorldRank());
+  int shm_fd = shm_open(name_str.c_str(), O_RDWR | O_CREAT, 0666);
+  if (_shm_maxium_size == 0) { 
+    int64_t allocated_size = aligned_num_bytes;
+    if (ftruncate(shm_fd, allocated_size) == -1) {
+        close(shm_fd);
+        HT_BAD_ALLOC << "Failed to resize shared memory to:" 
+                    << allocated_size;
+    }
+    base_ptr = mmap(NULL, allocated_size, PROT_READ | PROT_WRITE,
+              MAP_SHARED, shm_fd, 0);
+    _shm_maxium_size = allocated_size;
+    HT_LOG_WARN << "Alloc " << allocated_size << " bytes in shm.";
+    memset(base_ptr, 0, allocated_size);
+    close(shm_fd);
+  }
+}
+
+bool CPUMemoryPool::ShareMemoryReady() {
+  if (_shm_maxium_size > 0) {
+    return true;
+  }
+  return false;
 }
 
 DataPtr CPUMemoryPool::BorrowDataSpace(void* ptr, size_t num_bytes,
@@ -143,7 +219,10 @@ void CPUMemoryPool::_FreeOnAllocStream(CPUMemoryPool* const pool,
   if (it->second.deleter) {
     it->second.deleter(data_ptr);
   } else {
-    free(data_ptr.ptr);
+    if (data_ptr.shared_memory) {
+    }
+    else
+      free(data_ptr.ptr);
   }
   pool->_allocated -= data_ptr.size;
   pool->_data_ptr_info.erase(it);
@@ -152,6 +231,7 @@ void CPUMemoryPool::_FreeOnAllocStream(CPUMemoryPool* const pool,
 
 void CPUMemoryPool::_FreeOnJoinStream(CPUMemoryPool* const pool,
                                       DataPtr data_ptr) {
+  // HT_LOG_WARN << "FreeBEGIN:" << data_ptr;
   std::unique_lock<std::mutex> lock(pool->_mtx);
   auto it = pool->_data_ptr_info.find(data_ptr.id);
   HT_RUNTIME_ERROR_IF(it == pool->_data_ptr_info.end())
@@ -165,12 +245,16 @@ void CPUMemoryPool::_FreeOnJoinStream(CPUMemoryPool* const pool,
   if (it->second.deleter) {
     it->second.deleter(data_ptr);
   } else {
-    free(data_ptr.ptr);
+    if (data_ptr.shared_memory) {
+    }
+    else
+      free(data_ptr.ptr);
   }
   lock.lock();
   pool->_allocated -= data_ptr.size;
   pool->_data_ptr_info.erase(it);
   pool->_free_cnt++;
+  // HT_LOG_WARN << "FreeEND:" << data_ptr;
 }
 
 void CPUMemoryPool::MarkDataSpaceUsedByStream(DataPtr data_ptr,

@@ -25,6 +25,8 @@ class TaskQueue final {
     _workers.reserve(num_workers);
     for (size_t i = 0; i < num_workers; i++)
       _workers.emplace_back(&TaskQueue::_RunWorker, this, i);
+    _alive = 1;
+    _shutdowned = false;
   }
 
   ~TaskQueue() {
@@ -58,6 +60,7 @@ class TaskQueue final {
   void Shutdown() {
     std::unique_lock<std::mutex> lock(_mutex);
     _shutdowned = true;
+    _alive = 0;
     _enqueue_signal.notify_all();
     _dequeue_signal.notify_all();
   }
@@ -79,7 +82,11 @@ class TaskQueue final {
   }
 
   bool running() const {
-    return !_shutdowned;
+    return _alive == 1;
+  }
+  
+  int alive() const {
+    return _alive;
   }
 
  private:
@@ -125,7 +132,8 @@ class TaskQueue final {
   std::condition_variable _enqueue_signal;
   std::condition_variable _dequeue_signal;
   std::vector<std::thread> _workers;
-  bool _shutdowned{false};
+  bool _shutdowned;
+  int _alive;
 };
 
 } // namespace hetu

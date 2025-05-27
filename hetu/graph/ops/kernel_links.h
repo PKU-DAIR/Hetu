@@ -367,7 +367,7 @@ DECLARE_KERNEL_CPU_AND_CUDA(TruncatedNormalInits, NDArray&, double, double,
 
 // Communication kernels
 DECLARE_KERNEL_CPU_AND_CUDA(AllReduce, const NDArray&, NDArray&, ReductionType,
-                            const DeviceGroup&, const Stream&);
+                            const DeviceGroup&, bool, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(P2PSend, const NDArray&, const Device&, 
                             const std::vector<int>&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(P2PRecv, NDArray&, const Device&, 
@@ -379,7 +379,7 @@ DECLARE_KERNEL_CPU_AND_CUDA(BatchedISendIRecv, const NDArrayList&,
 DECLARE_KERNEL_CPU_AND_CUDA(AllGather, const NDArray&, NDArray&,
                             const DeviceGroup&, int32_t gather_dim, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(ReduceScatter, const NDArray&, NDArray&, ReductionType,
-                            const DeviceGroup&, int32_t scatter_dim, const Stream&);
+                            const DeviceGroup&, int32_t scatter_dim, bool, const Stream&);
 
 //other activations
 DECLARE_KERNEL_CUDA(Elu, const NDArray&, double, double, NDArray&,

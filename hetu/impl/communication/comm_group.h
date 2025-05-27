@@ -31,7 +31,7 @@ class CommunicationGroupDef : public shared_ptr_target {
   : _stream(stream) {
     HT_ASSERT(_stream.is_defined()) << "Undefined stream provided.";
     _world_ranks = world_ranks;
-    std::sort(_world_ranks.begin(), _world_ranks.end());
+    // std::sort(_world_ranks.begin(), _world_ranks.end());
     HT_ASSERT(!_world_ranks.empty())
       << "Passing an empty world ranks is a short-cut and "
       << "should only be used in the \"GetOrCreate\" functions. "
@@ -46,9 +46,9 @@ class CommunicationGroupDef : public shared_ptr_target {
   inline static bool IsRanksValid(const std::vector<int>& ranks) {
     if (ranks.size() < 1)
       return false;
-    for (size_t i = 1; i < ranks.size(); i++)
-      if (ranks[i - 1] >= ranks[i])
-        return false;
+    // for (size_t i = 1; i < ranks.size(); i++)
+    //   if (ranks[i - 1] >= ranks[i])
+    //     return false;
     return true;
   }
 

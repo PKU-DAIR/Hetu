@@ -209,7 +209,7 @@ Tensor MakeReduceOp(Tensor input, ReductionType reduction, const HTAxes& axes,
     for (int i = 1; i < len; ++i) {
       parsed_keepdims.emplace_back(keepdim);
     }
-  }     
+  }      
   return Graph::MakeOp(
           std::make_shared<ReduceOpImpl>(reduction, parsed_axes, parsed_keepdims),
           {std::move(input)},
@@ -263,7 +263,9 @@ Tensor MakeReduceGradientOp(Tensor input, Tensor ori_output, Tensor ori_input, c
     int len = add_axes.size();
     for (int i = 0; i < len; ++i) {
       HT_ASSERT(add_axes[i] >= 0 && add_axes[i] < ndim);
-      mean_multiplier *= input_shape[add_axes[i]];
+      if (add_axes[i] != 0) {
+        mean_multiplier *= input_shape[add_axes[i]];
+      }
     }
     const_value = 1.0 / mean_multiplier;
   }

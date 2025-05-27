@@ -115,7 +115,8 @@ CUDACachingMemoryPool::~CUDACachingMemoryPool() {
 // 先会从available table中找
 // 没有匹配项再AllocPtr
 DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
-                                              const Stream& stream) {                         
+                                              const Stream& stream,
+                                              bool shared_memory) {                         
   HT_VALUE_ERROR_IF(!stream.device().is_cuda())
     << "Cuda arrays must be allocated on cuda streams. Got " << stream;
   if (num_bytes == 0)
@@ -333,6 +334,17 @@ DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
   _alloc_cnt++;
   HT_LOG_TRACE << "ptr: " << data_ptr.id << ", alloc: " << data_ptr.size << ", stream: " << stream << ", is new malloc: " << data_ptr.is_new_malloc;
   return data_ptr;
+}
+
+void CUDACachingMemoryPool::AllocShareMemory(size_t num_bytes, 
+                                             const Stream& stream,
+                                             bool realloc) {
+  HT_NOT_IMPLEMENTED << "CUDA MemoryPool doesn't support share memory currently.";
+}
+
+bool CUDACachingMemoryPool::ShareMemoryReady() {
+  // Since GPU currently doesn't support share memory, this is always true; 
+  return true;
 }
 
 // deprecated for now

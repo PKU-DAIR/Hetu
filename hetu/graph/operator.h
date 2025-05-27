@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hetu/common/except.h"
 #include "hetu/common/macros.h"
 #include "hetu/core/ndarray.h"
 #include "hetu/graph/common.h"
@@ -8,6 +9,11 @@
 #include "hetu/impl/stream/CUDAStream.h"
 #include "hetu/impl/stream/CPUStream.h"
 #include "hetu/impl/communication/comm_group.h"
+#include <cstdint>
+#include <memory_resource>
+#include <string>
+#include <unordered_map>
+#include <any>
 
 namespace hetu {
 namespace graph {
@@ -110,6 +116,16 @@ class OpMeta {
     return is_recompute.at(hetero_id); 
   }
 
+
+  inline bool is_recompute() {
+    return is_recompute_op;
+  }
+
+  inline OpMeta& set_is_recompute(bool is_recompute = false) {
+    is_recompute_op = is_recompute;
+    return *this;
+  }
+
   // TODO: support multi-strategies offload
   inline OpMeta& set_is_cpu_offload(bool cpu_offload) {
     is_cpu_offload = cpu_offload;
@@ -163,8 +179,9 @@ class OpMeta {
   // deprecated: DeviceGroupList device_groups; // for multi ds deduce
   DeviceGroupHierarchy device_group_hierarchy{}; // for multi ds multi hetero-dp deduce
   TensorList extra_deps;
-  OpId origin_op_id{-1}; // for recomputation only
+  OpId origin_op_id{OpId(-1)}; // for recomputation only
   std::vector<std::vector<bool>> multi_is_recompute{{false}}; // for multi recomputation strategy multi pipeline
+  bool is_recompute_op{false};
   // TODO: support multi-strategies offload
   bool is_cpu_offload{false};
   bool is_offload{false}; // for offload D2H op only
@@ -179,14 +196,16 @@ using OpRuntimeContext = ContextStore;
 
 class RuntimeContext {
  public:
-  RuntimeContext(): _shape_plan(std::nullopt) {}
+  RuntimeContext(): _shape_plan(std::nullopt) {set_default_param();}
 
   RuntimeContext(size_t init_capacity): _shape_plan(std::nullopt) {
     _ctxs.reserve(init_capacity);
+    set_default_param();
   }
   
   RuntimeContext(size_t init_capacity, Tensor2ShapeMap& shape_plan): _shape_plan(shape_plan) {
     _ctxs.reserve(init_capacity);
+    set_default_param();
   }
 
   ~RuntimeContext() {
@@ -287,11 +306,51 @@ class RuntimeContext {
     _skipped_plan.insert(op_id);
   }
 
+  void set_fp32_grad_accumulation(bool is_fp32) {
+    _fp32_grad_accumulation == is_fp32;
+    any_param_dict["set_fp32_grad_accumulation"] = std::make_any<bool>(is_fp32);
+  }
+
+  void set_fp32_comm_reduce(bool is_fp32) {
+    _fp32_comm_reduce == is_fp32;
+    any_param_dict["set_fp32_comm_reduce"] = std::make_any<bool>(is_fp32);
+  }
+
+  void set_param(std::string k, std::any v) {
+    any_param_dict[k] = v;
+  }
+
+  void set_default_param() {
+    any_param_dict["fp32_grad_accumulation"] = std::make_any<bool>(true);
+    any_param_dict["fp32_comm_reduce"] = std::make_any<bool>(false);
+    any_param_dict["opt_offload"] = std::make_any<bool>(false);
+  }
+
+  std::any get_param(std::string key) const {
+    HT_ASSERT(any_param_dict.find(key) != any_param_dict.end())
+    << "Key:" << key << " must in dict.";
+    return any_param_dict.find(key)->second;
+  }
+
+  std::unordered_map<std::string, std::any> get_param_dict() const {
+    return any_param_dict;
+  } 
+
+  void copy_param_dict(const RuntimeContext& ori_ctx) {
+    std::unordered_map<std::string, std::any> ori_param_dict = ori_ctx.get_param_dict();
+    for (auto it = ori_param_dict.begin(); it != ori_param_dict.end(); ++it) {
+      any_param_dict[it->first] = it->second;
+    } 
+  }
+
  private:
   std::unordered_map<OpId, OpRuntimeContext*> _ctxs; // 初始化时进行赋值
   std::optional<std::reference_wrapper<Tensor2ShapeMap>> _shape_plan; // 初始化时进行赋值，每个tensor必须有一个对应的shape，没有则报错
   Tensor2NDArrayMap _allocation_plan; // 初始化后进行赋值，部分tensor可以有一个对应的allocation，没有则临时分配
   std::unordered_set<OpId> _skipped_plan; // 初始化后进行赋值，部分op不需要sync
+  bool _fp32_grad_accumulation{false};
+  bool _fp32_comm_reduce{false};
+  std::unordered_map<std::string, std::any> any_param_dict;
 };
 
 struct OpInstantiationContext {
@@ -881,7 +940,7 @@ class OpDef : public shared_ptr_target {
   TensorList _extra_in_dep_linkers;
   TensorList _extra_out_dep_linkers;
 
-  OpId _fw_op_id{-1}; // only used for bw op
+  OpId _fw_op_id{OpId(-1)}; // only used for bw op
   OpMeta _op_meta;
   OpInstantiationContext _inst_ctx;
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hetu/common/except.h"
 #include "hetu/utils/shared_ptr_wrapper.h"
 #include "hetu/core/reduction_type.h"
 #include "hetu/core/binary_type.h"
@@ -566,7 +567,8 @@ class NDArray : public shared_ptr_wrapper<NDArrayDef> {
                        const Device& device = Device(kCPU),
                        DataType dtype = kFloat32,
                        StreamIndex stream_id = DEFAULT_STREAM,
-                       const HTShape& dynamic_shape = {});
+                       const HTShape& dynamic_shape = {},
+                       bool shared_memory = false);
 
   static NDArray empty_like(const NDArray& other,
                             StreamIndex stream_id = DEFAULT_STREAM);
@@ -706,6 +708,12 @@ class NDArrayDef : public shared_ptr_target {
     return static_cast<const T*>(raw_data_ptr());
   }
 
+  inline int64_t shm_offset() {
+    HT_ASSERT(_storage->data_ptr().shared_memory)
+      << "Only share memory has shmoffset.";
+    return _storage->data_ptr().shmoffset;
+  }
+
   template <typename T>
   inline T item() {
     HT_VALUE_ERROR_IF(numel() != 1)
@@ -743,6 +751,10 @@ class NDArrayDef : public shared_ptr_target {
 
   bool is_cuda() const {
     return _meta.device.is_cuda();
+  }
+
+  bool is_new_malloc() const {
+    return _storage->is_new_malloc();
   }
 
   bool can_quantization() const {

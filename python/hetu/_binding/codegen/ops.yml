@@ -727,6 +727,13 @@
         double p_dropout=0, double softmax_scale=-1, bool is_causal=True, bool return_softmax=False
   self: qkv
 
+- name: flash_attn
+  op: FlashAttentionOp
+  args: Tensor q, Tensor k, Tensor v, int64_t head_dim, int64_t group_query_ratio, List[List[IntSymbol]] multi_seq_lens_symbol, List[List[IntSymbol]] multi_cp_group_symbol, 
+        bool packing=False, Tensor cu_seqlens_q=None, Tensor cu_seqlens_k=None, IntSymbol max_seqlen_q=None, IntSymbol max_seqlen_k=None,
+        double p_dropout=0, double softmax_scale=-1, bool is_causal=True, bool return_softmax=False
+  self: q
+
 - name: attn
   op: AttentionOp
   args: Tensor q, Tensor k, Tensor v, double p_dropout=0, double softmax_scale=-1, bool is_causal=False, bool return_softmax=False
@@ -734,7 +741,7 @@
 
 - name: attn_varlen
   op: AttentionVarlenOp
-  args: Tensor q, Tensor k, Tensor v, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+  args: Tensor q, Tensor k, Tensor v, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
         double p_dropout=0, double softmax_scale=-1, bool zero_tensors=False, bool is_causal=False, bool return_softmax=False
   self: q
 
@@ -745,7 +752,7 @@
 
 - name: attn_varlen_qkvpacked
   op: AttentionVarlenPackedOp
-  args: Tensor qkv, int64_t head_dim, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
+  args: Tensor qkv, Tensor cu_seqlens_q, Tensor cu_seqlens_k, int max_seqlen_q, int max_seqlen_k,
         double p_dropout=0, double softmax_scale=-1, bool zero_tensors=False, bool is_causal=False, bool return_softmax=False
   self: qkv
 

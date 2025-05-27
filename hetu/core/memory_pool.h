@@ -17,6 +17,8 @@ struct DataPtr {
   size_t size;
   Device device;
   DataPtrId id; // id provided by the memory pool
+  bool shared_memory;
+  int64_t shmoffset;
 
   // 2024.9.17更新data_ptr的辅助信息
   // debug use
@@ -30,7 +32,7 @@ struct DataPtr {
   DataPtr(size_t s, void* _ptr): size(s), ptr(_ptr) {}
 
   DataPtr(void* _ptr, size_t _size, const Device& _device, DataPtrId _id)
-  : ptr(_ptr), size(_size), device(_device), id(_id), split_from_id(_id) {}
+  : ptr(_ptr), size(_size), device(_device), id(_id), split_from_id(_id), shared_memory(false) {}
 };
 
 using DataPtrList = std::vector<DataPtr>;
@@ -45,7 +47,14 @@ class MemoryPool {
   : _device{std::move(device)}, _name{std::move(name)} {}
 
   virtual DataPtr AllocDataSpace(size_t num_bytes,
-                                 const Stream& stream = Stream()) = 0;
+                                 const Stream& stream = Stream(),
+                                 bool shared_memory = false) = 0;
+  
+  virtual void AllocShareMemory(size_t num_bytes,
+                                const Stream& stream = Stream(),
+                                bool realloc = false) = 0;
+  
+  virtual bool ShareMemoryReady() = 0;
 
   virtual DataPtr BorrowDataSpace(void* ptr, size_t num_bytes,
                                   DataPtrDeleter deleter,
@@ -99,7 +108,13 @@ void RegisterMemoryPoolCtor(const Device& device,
 std::shared_ptr<MemoryPool> GetMemoryPool(const Device& device);
 
 DataPtr AllocFromMemoryPool(const Device& device, size_t num_bytes,
-                            const Stream& stream = Stream());
+                            const Stream& stream = Stream(),
+                            bool shared_memory = false);
+
+void AllocShareMemoryFromMemoryPool(const Device& device, size_t num_bytes,
+                                    const Stream& stream = Stream());
+
+bool ShareMomoryReadyOfMemoryPool(const Device& device);
 
 DataPtr BorrowToMemoryPool(const Device& device, void* ptr, size_t num_bytes,
                            DataPtrDeleter deleter);

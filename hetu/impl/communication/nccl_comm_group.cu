@@ -167,7 +167,9 @@ NCCLCommunicationGroupDef::NCCLCommunicationGroupDef(
     << "Failed to get rank and/or size. "
     << "(Got rank " << _rank << " and size " << _size << ".)";
 
+  HT_LOG_DEBUG << "Create NCCL id begin...";
   CreateNCCLUniqueId(_world_ranks, stream, _unique_id);
+  HT_LOG_DEBUG << "Create NCCL id end...";
   {
     hetu::cuda::CUDADeviceGuard guard(_stream.device_index());
     {
