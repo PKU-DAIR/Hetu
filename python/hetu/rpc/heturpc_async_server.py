@@ -3,11 +3,12 @@ from kv_store import key_value_store_server
 import logging
 import multiprocessing.spawn
 import grpc
-import heturpc_pb2
-import heturpc_pb2_grpc
 import threading
 import time
 import multiprocessing
+import heturpc_pb2
+import heturpc_pb2_grpc
+from kv_store.server import key_value_store_server
 
 _MAX_UNFOUND_TIMES = 10000
 _MAX_GRPC_WORKERS = 64
@@ -288,6 +289,7 @@ def serve(arr, exit_arr, last_heartbeat, port):
     server.start()
     print("Server started, listening on " + port)
     server.wait_for_termination()
+    print("Server terminated")
 
 def server_launch(port):
     logging.basicConfig()

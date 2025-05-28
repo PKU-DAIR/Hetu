@@ -230,6 +230,38 @@ PyObject* PyDistributedStates_get_dup_group_index(PyDistributedStates* self, PyO
   HT_PY_FUNC_END
 }
 
+PyObject* PyDistributedStates_combine_states(PyDistributedStates* self, PyObject* args) {
+  HT_PY_FUNC_BEGIN
+  static PyArgParser parser({"combine_states(List[int32] src, int32 dst))"});
+  auto parsed_args = parser.parse(args, nullptr);
+  if (parsed_args.signature_index() == 0) {
+    auto src = parsed_args.get_int32_list(0);
+    auto dst = parsed_args.get_int32(1);
+    std::pair<std::vector<int32_t>, int32_t> src2dst(src, dst);
+    return PyDict_FromUnorderedMap(self->distributed_states.combine_states(src2dst));
+  } else {
+    HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
+    __builtin_unreachable();
+  }  
+  HT_PY_FUNC_END
+}
+
+PyObject* PyDistributedStates_combine_order(PyDistributedStates* self, PyObject* args) {
+  HT_PY_FUNC_BEGIN
+  static PyArgParser parser({"combine_order(List[int32] src, int32 dst))"});
+  auto parsed_args = parser.parse(args, nullptr);
+  if (parsed_args.signature_index() == 0) {
+    auto src = parsed_args.get_int32_list(0);
+    auto dst = parsed_args.get_int32(1);
+    std::pair<std::vector<int32_t>, int32_t> src2dst(src, dst);
+    return PyLongList_FromIntegerList(self->distributed_states.combine_order(src2dst));
+  } else {
+    HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
+    __builtin_unreachable();
+  }  
+  HT_PY_FUNC_END
+}
+
 // NOLINTNEXTLINE
 PyGetSetDef PyDistributedStates_properties[] = {
   {PY_GET_SET_DEF_NAME("device_num"), (getter) PyDistributedStates_device_num, nullptr, nullptr, nullptr},
@@ -246,6 +278,8 @@ PyMethodDef PyDistributedStates_methods[] = {
   {"check_equal", (PyCFunction) PyDistributedStates_check_equal, METH_VARARGS, nullptr },
   {"get_dim", (PyCFunction) PyDistributedStates_get_dim, METH_VARARGS, nullptr },
   {"get_dup_group_index", (PyCFunction) PyDistributedStates_get_dup_group_index, METH_VARARGS, nullptr },
+  {"combine_states", (PyCFunction) PyDistributedStates_combine_states, METH_VARARGS | METH_KEYWORDS, nullptr },
+  {"combine_order", (PyCFunction) PyDistributedStates_combine_order, METH_VARARGS | METH_KEYWORDS, nullptr },
   {nullptr}
 };
 

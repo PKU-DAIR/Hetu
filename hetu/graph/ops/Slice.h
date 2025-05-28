@@ -65,7 +65,7 @@ class SliceOpImpl final : public ViewsOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT(inputs[0]->ndim() == _begin_pos.size() && 
               inputs[0]->ndim() == _output_shape.size());
     int len = _begin_pos.size();
@@ -82,10 +82,12 @@ class SliceOpImpl final : public ViewsOpImpl {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const {};
@@ -96,6 +98,8 @@ class SliceOpImpl final : public ViewsOpImpl {
   TensorList DoGradient(Operator& op, const TensorList& grad_outputs) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   // deprecated: only used in gpt inference, before symbolic shape is realized
   HTShapeList DoInferDynamicShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
@@ -168,20 +172,24 @@ class SliceGradientOpImpl : public ViewsOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
-    return {inputs[1]->meta()};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   SyShape _begin_pos;
   SyShape _output_shape;
@@ -198,12 +206,12 @@ class SliceGradientOpImpl : public ViewsOpImpl {
   }
 };
 
-Tensor MakeSliceGradientOp(Tensor grad_output, Tensor ori_input,
+Tensor MakeSliceGradientOp(Tensor grad_output,
                            const HTShape& begin_pos, const HTShape& output_shape,
                            OpMeta op_meta = OpMeta());
 
 // symbolic shape
-Tensor MakeSliceGradientOp(Tensor grad_output, Tensor ori_input,
+Tensor MakeSliceGradientOp(Tensor grad_output,
                            const SyShape& begin_pos, const SyShape& output_shape,
                            OpMeta op_meta = OpMeta());
 

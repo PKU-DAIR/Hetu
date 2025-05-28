@@ -4,7 +4,7 @@ import argparse
 from trainer.utils.dp_bucket import get_buckets_dp
 from trainer.utils.wrapper import DatasetWrapper
 from data_utils import GPTJsonDataset, Encoder
-from model import LLamaConfig
+from model import LLaMAConfig
 from profiler import CostModel
 from types import SimpleNamespace
 from utils import export_strategy_config
@@ -15,7 +15,7 @@ def deploy_strategy_plan(args):
     trainer_config = TrainerConfig(args.trainer_config_path)
     assert args.train_task_num == trainer_config.train_task_num, \
         f"args.train_task_num should be equal to that in trainer_config, but got {args.train_task_num} v.s. {trainer_config.train_task_num}"
-    cost_model_config = LLamaConfig(
+    cost_model_config = LLaMAConfig(
         vocab_size=args.vocab_size, 
         ffn_hidden_size=args.ffn_hidden_size,
         n_embd=args.hidden_size,

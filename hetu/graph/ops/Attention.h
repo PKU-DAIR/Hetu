@@ -45,7 +45,7 @@ class AttentionOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     std::vector<NDArrayMeta> out_metas = {};
     NDArrayMeta base = inputs.at(0)->meta();
     // workaround
@@ -86,7 +86,8 @@ class AttentionOpImpl final : public OpInterface {
                  RuntimeContext& ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op, const TensorList& grad_outputs) const override;
 
@@ -140,7 +141,7 @@ class AttentionGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[1]->meta(), inputs[2]->meta(), inputs[3]->meta()};
   };
 
@@ -148,7 +149,8 @@ class AttentionGradientOpImpl final : public OpInterface {
                  RuntimeContext& ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
@@ -224,7 +226,7 @@ class AttentionVarlenOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     std::vector<NDArrayMeta> out_metas = {};
     NDArrayMeta base = inputs.at(0)->meta();
     out_metas.emplace_back(base);
@@ -330,7 +332,7 @@ class AttentionVarlenGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[1]->meta(), inputs[2]->meta(), inputs[3]->meta()};
   };
 

@@ -15,12 +15,13 @@ class ScalarsLikeOpImpl : public OpInterface {
   : OpInterface(std::move(type)), _scalar_value(scalar_value) {}
 
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs.front()->meta()};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   TensorList DoGradient(Operator&, const TensorList&) const override {
     return {Tensor()};

@@ -37,7 +37,7 @@ class Conv2dOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     HTShape shape = {-1, -1, -1, -1};
     if (inputs[0]->has_shape() && inputs[1]->has_shape()) {
@@ -67,13 +67,16 @@ protected:
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -118,17 +121,19 @@ class Conv2dGradientofFilterOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -149,7 +154,7 @@ protected:
   }
 };
 
-Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output, Tensor filter,
+Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output,
                                     const HTShape& padding, const HTStride& stride,
                                     OpMeta op_meta = OpMeta());
 
@@ -174,17 +179,19 @@ class Conv2dGradientofDataOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -205,7 +212,7 @@ protected:
   }
 };
 
-Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output, Tensor input,
+Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output,
                                   const HTShape& padding, const HTStride& stride,
                                   OpMeta op_meta = OpMeta());
 
@@ -230,7 +237,7 @@ class Conv2dAddBiasOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     HTShape shape = {-1, -1, -1, -1};
     if (inputs[0]->has_shape() && inputs[1]->has_shape()) {
@@ -251,7 +258,8 @@ protected:
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;

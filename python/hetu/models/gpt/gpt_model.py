@@ -1,6 +1,7 @@
 import hetu as ht
 import numpy as np
 from queue import Queue
+from hetu.data import IGNORE_INDEX
 
 def get_multi_ds_parallel_config(ds_parallel_configs, module_name, _range=-1):
     multi_ds_parallel_config = []
@@ -384,8 +385,9 @@ class GPTLMHeadModel(ht.nn.Module):
             # because of ignored_index, so cannot use auto distributed reduce for mean
             # need sum over distributed tensor, and divide the not ignored_index num after by hand
             # print(shift_lm_logits.distributed_states)
-            loss = ht.vocab_parallel_cross_entropy(shift_lm_logits,
-                shift_labels, ignored_index = -1, reduction = "mean")
+            loss_unreduce = ht.vocab_parallel_cross_entropy(shift_lm_logits,
+                shift_labels, ignored_index = IGNORE_INDEX, reduction = "none").reshape([-1])
+            loss = ht.sum(loss_unreduce)
 
         # output = (shift_lm_logits,)
         # output = ((loss,) + output) if loss is not None else output

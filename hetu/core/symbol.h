@@ -108,12 +108,20 @@ class Symbol : public shared_ptr_wrapper<SymbolDef<T>> {
       this->_ptr = this->template make_ptr<SymbolDef<T>>(op, input_1, input_2);
     }
 
+    const std::shared_ptr<SymbolDef<T>>& get_ptr() const {
+      return this->_ptr;
+    }
+
     void reset() {
       this->_ptr.reset();
     }
 
     explicit operator bool() const noexcept {
       return this->_ptr != nullptr;
+    }
+
+    bool operator == (const Symbol& other) const {
+        return this->_ptr == other._ptr;
     }
 
     Symbol operator + (const Symbol& rhs) const {    
@@ -160,3 +168,12 @@ void set_HTShape_to_SyShape(const HTShape& ht_shape, SyShape& sy_shape);
 std::ostream& operator << (std::ostream& os, const SyShape& sy_shape);
 
 } // namespace hetu
+
+namespace std {
+  template<>
+  struct hash<hetu::IntSymbol> {
+    size_t operator()(const hetu::IntSymbol& s) const noexcept {
+      return hash<std::shared_ptr<hetu::SymbolDef<int64_t>>>()(s.get_ptr());
+    }
+  };
+} // namespace std

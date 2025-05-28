@@ -225,6 +225,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
                                           _transfer_param_buffer_map[transfer_param->dtype()]->AsStorage(), 
                                           _transfer_param_buffer_map[transfer_param->dtype()]->GetElementOffset(transfer_param));
       // 添加runtime allocation
+      // HT_LOG_INFO << transfer_param << " id is " << transfer_param->id() << ", add runtime allocation";
       for (auto& runtime_ctx : runtime_ctx_list) {
         runtime_ctx.add_runtime_allocation(transfer_param->id(), transfer_param_data);
       }
@@ -299,7 +300,9 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
   // 其余var直接正常compute
   for (const auto& op_ref : _execute_plan.local_placeholder_variable_ops) {
     auto& op = op_ref.get();
-    if (is_variable_op(op) && _parameter_ops.find(op->id()) == _parameter_ops.end()) {
+    // 如果param不需要做autocast，则正常compute
+    if (is_variable_op(op) && (_parameter_ops.find(op->id()) == _parameter_ops.end() ||
+        _transfer_map.find(op->output(0)->id()) == _transfer_map.end())) {
       // alloc阶段只分配param
       if (_run_level == RunLevel::ALLOC) {
         continue;
@@ -375,8 +378,10 @@ void ExecutableGraph::PostRun(std::vector<RuntimeContext>& runtime_ctx_list, Ten
                       [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
     // HT_LOG_INFO << cur_subgraph->global_name() << " run end";
   }
-  _terminate_subgraph->run(tensor2data, _preserved_data, runtime_ctx_list[micro_batch_id], micro_batch_id, SubGraphOpType::UPDATE, true,
-                           [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
+  if (_terminate_subgraph != nullptr) {
+    _terminate_subgraph->run(tensor2data, _preserved_data, runtime_ctx_list[micro_batch_id], micro_batch_id, SubGraphOpType::UPDATE, true,
+                            [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
+  }
 }
 
 OpHandlerStatus ExecutableGraph::PostOpHandler(Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) {
@@ -465,6 +470,12 @@ OpHandlerStatus ExecutableGraph::PostOpHandler(Operator& op, Tensor2NDArrayMap& 
                      accumulate_grad_data, 
                      grad_stream.stream_index(),
                      current_grad_data);
+        if (num_tokens() > 0) {
+          NDArray::div(current_grad_data,
+                      num_tokens(),
+                      grad_stream.stream_index(),
+                      current_grad_data);
+        }
         // 需要重新设置grad op的stop event来保证update算子的输入是sync的
         grad->producer()->instantiation_ctx().stop[micro_batch_id]->Record(grad_stream);
       }

@@ -71,6 +71,7 @@ class Graph {
   size_t CUR_HETERO_ID = 0;
   size_t COMPUTE_SUGGESTED_HETERO_ID = 0;
   bool EVENT_TIMING = true;
+  size_t CUR_MICRO_BATCH_ID = 0;
 
   // disable copy constructor and move constructor
   Graph(const Graph&) = delete;
@@ -82,7 +83,7 @@ class Graph {
                           const FeedDict& feed_dict = {}) = 0;
 
   virtual NDArrayList Run(const Tensor& loss, const TensorList& fetches, 
-                          const FeedDict& feed_dict = {}, const int num_micro_batches = 1,
+                          const FeedDict& feed_dict = {}, const IntSymbolDict& int_symbol_dict = {}, const int num_micro_batches = 1,
                           const int compute_strategy_id = 0, const int optimize_strategy_id = 0, RunLevel run_level = RunLevel::UPDATE,
                           bool save_checkpoint = false, const double grad_scale = 1,
                           const RuntimeContext& ctx = RuntimeContext()) {}                          
@@ -149,6 +150,14 @@ class Graph {
     return _op_indexing.size();
   }
 
+  uint64_t num_tokens() const {
+    return _num_tokens;
+  }
+
+  void set_num_tokens(uint64_t num_tokens) {
+    _num_tokens = num_tokens;
+  }
+
   uint32_t get_op_type_cnt(const OpType& op_type) const {
     auto it = _op_type_cnts.find(op_type);
     if (it != _op_type_cnts.end()) {
@@ -157,6 +166,8 @@ class Graph {
       return 0;
     }
   }
+
+  void SetMicroBatchCtx(size_t micro_batch_id, const IntSymbolDict& int_symbol_dict);
 
   const Operator& GetOp(OpId op_id) const {
     return _op_indexing.at(op_id);
@@ -494,6 +505,7 @@ class Graph {
   const GraphId _id;
   const GraphName _name;
   std::unordered_map<OpType, uint32_t> _op_type_cnts;
+  uint64_t _num_tokens{0};
 
   Op2OpMap _op_indexing;
   std::unordered_set<OpId> _parameter_ops;
@@ -871,6 +883,9 @@ class Graph {
 
 inline OpRefList Graph::TopoSort(const OpRefList& ops, int32_t num_ops_hint,
                                  std::function<bool(const Operator&)> stop_at) {
+  if (ops.empty()) {
+    return {};
+  }
   std::unordered_map<OpId, int32_t> in_degrees;
   std::unordered_map<OpId, int32_t> heuristic_deps;
   std::unordered_set<OpId> visited;

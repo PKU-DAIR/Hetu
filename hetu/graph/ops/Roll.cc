@@ -19,7 +19,8 @@ void RollOpImpl::DoCompute(Operator& op,
 }
 
 void RollOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                const OpMeta& op_meta,
+                                const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds.is_valid()) 
     << "RollOpImpl: distributed states for input tensor must be valid!";

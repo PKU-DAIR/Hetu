@@ -40,9 +40,8 @@ Operator& DefineAndRunGraph::MakeOpInner(std::shared_ptr<OpInterface> body,
                                          TensorList inputs, OpMeta op_meta) {
   _check_all_inputs_in_graph(inputs, op_meta.extra_deps);
   // for optimization passes
-  // TODO: support multi-strategies offload
   op_meta = op_meta.set_multi_recompute(Recompute::multi_recompute())
-                   .set_is_cpu_offload(ActivationCPUOffload::enabled());
+                   .set_multi_cpu_offload(ActivationCPUOffload::multi_cpu_offload());
   auto& op = MakeAndAddOp(std::move(body), std::move(inputs), std::move(op_meta));
   if (op->op_meta().need_dequantization()) {
     OpId param_id = op->op_meta().parameter_dict["tensor_id"];
@@ -177,12 +176,17 @@ void DefineAndRunGraph::DeducePipeline(size_t compute_strategy_id, int32_t pipel
       continue;
     }
     auto& dg_union = op->device_group_union();
-    // auto& ds_union = op->output(0)->cur_ds_union(); // 需要使用zero之前的
-    auto before_zero_it = _ds_hierarchy_before_zero.find(op->output(0)->id());
-    HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
-      << "cannot find the ds hierarchy of " << op->input(0)->producer() << " before zero"
-      << ", note no zero should also have it";
-    auto& ds_union = before_zero_it->second.get(compute_strategy_id);
+    DistributedStatesUnion ds_union;
+    // if no need to use optimizer, then use the original ds
+    if (!_ds_hierarchy_before_zero.empty()) {
+      auto before_zero_it = _ds_hierarchy_before_zero.find(op->output(0)->id());
+      HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
+        << "cannot find the ds hierarchy of " << op->input(0)->producer() << " before zero"
+        << ", note no zero should also have it";
+      ds_union = before_zero_it->second.get(compute_strategy_id);
+    } else {
+      ds_union = op->output(0)->cur_ds_union();
+    }
     // HT_LOG_INFO << op << " device group union: " << dg_union << " and ds union: " << ds_union.ds_union_info();
     HT_ASSERT(dg_union.size() != 0 && ds_union.size() != 0 && dg_union.size() == ds_union.size())
       << "dg union & ds union of " << op << " shouldn't be empty and should have the same size";
@@ -302,6 +306,7 @@ void DefineAndRunGraph::DeduceShapePlan(ExecGraphPlan& exec_graph_plan,
   // *the logic of inferring the very first shape plan is in Instantiate()
   // that is because MakeOp can handle most of the cases automatically
   // InferShapePlan just aims to expand the shape plan pool for the data packing setting
+  HT_LOG_INFO << "DeduceShapePlan begin...";
   auto local_device = hetu::impl::comm::GetLocalDevice(); // debug use
   Tensor2ShapeMap shape_plan;
   Tensor2ShapeMap exec_shape_plan;
@@ -345,14 +350,18 @@ void DefineAndRunGraph::DeduceShapePlan(ExecGraphPlan& exec_graph_plan,
       // workaround: 强行转化为before zero的形式
       // 因为zero到before zero插入的optimize-compute bridge subgraph在define graph中并没有
       if (_parameter_ops.find(input->producer()->id()) != _parameter_ops.end()) {
-        auto before_zero_it = _ds_hierarchy_before_zero.find(input->id());
-        HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
-          << "cannot find " << input << " ds hierarchy before zero";
         auto transfer_param_it = exec_graph_plan.exec_graph->_transfer_map.find(exec_graph_plan.op_to_exec_op_mapping[input->producer()->id()]->id());
         HT_ASSERT(transfer_param_it != exec_graph_plan.exec_graph->_transfer_map.end())
           << "can't find the final transfer param of " << exec_graph_plan.op_to_exec_op_mapping[input->producer()->id()];
+        // if no need to use optimizer, then use the original ds
+        auto& cur_ds = const_cast<DistributedStates&>(input->ds_hierarchy().get(COMPUTE_STRATEGY_ID).get(transfer_param_it->second->inferred_local_placement_group_idx()));
+        if (!_ds_hierarchy_before_zero.empty()) {
+          auto before_zero_it = _ds_hierarchy_before_zero.find(input->id());
+          HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
+            << "cannot find " << input << " ds hierarchy before zero";
+          cur_ds = before_zero_it->second.get(COMPUTE_STRATEGY_ID).get(transfer_param_it->second->inferred_local_placement_group_idx());
+        }
         const auto& global_shape = dynamic_cast<ParallelVariableOpImpl&>(input->producer()->body()).global_shape();
-        auto& cur_ds = before_zero_it->second.get(COMPUTE_STRATEGY_ID).get(transfer_param_it->second->inferred_local_placement_group_idx());
         for (size_t d = 0; d < input_shape.size(); d++) {
           input_shape.at(d) = global_shape.at(d) / cur_ds.get_dim(d);
         } 
@@ -415,6 +424,7 @@ void DefineAndRunGraph::DeduceShapePlan(ExecGraphPlan& exec_graph_plan,
   // 需要再进行一次额外的推导
   CUR_STRATEGY_ID = COMPUTE_STRATEGY_ID;
   exec_graph_plan.exec_graph->CUR_STRATEGY_ID = COMPUTE_STRATEGY_ID;
+  exec_graph_plan.exec_graph->TopoSortExecTensors();
   for (const auto& exec_tensor : exec_graph_plan.exec_graph->_record_exec_tensors) {
     auto& exec_op = exec_tensor->producer();
     HTShapeList exec_input_shapes;
@@ -837,11 +847,17 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
                       // 在这里插入comm op实现param从OPTIMIZE_STRATEGY_ID到COMPUTE_STRATEGY_ID的转换
                       // 在zero情形下可能会被替换为allgather、splitallgather、batchedsendrecv算子
                       // 注意这里使用COMPUTE_STRATEGY_ID
-                      auto before_zero_it = _ds_hierarchy_before_zero.find(op->input(i)->producer()->id());
-                      HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
-                        << "cannot find the ds hierarchy of " << op->input(i)->producer() << " before zero"
-                        << ", note no zero should also have it";
-                      auto& transfer_param_ds_union = before_zero_it->second.get(COMPUTE_STRATEGY_ID);
+                      // if no need to use optimizer, then use the original ds
+                      DistributedStatesUnion transfer_param_ds_union;
+                      if (!_ds_hierarchy_before_zero.empty()) {
+                        auto before_zero_it = _ds_hierarchy_before_zero.find(op->input(i)->producer()->id());
+                        HT_ASSERT(before_zero_it != _ds_hierarchy_before_zero.end())
+                          << "cannot find the ds hierarchy of " << op->input(i)->producer() << " before zero"
+                          << ", note no zero should also have it";
+                        transfer_param_ds_union = before_zero_it->second.get(COMPUTE_STRATEGY_ID);
+                      } else {
+                        transfer_param_ds_union = op->input(i)->cur_ds_union();
+                      }
                       auto& transfer_param_pg_union = op->input(i)->producer()->device_group_hierarchy().get(COMPUTE_STRATEGY_ID);
                       if (transfer_param_pg_union.has(local_device)) {
                         exec_graph->CUR_HETERO_ID = transfer_param_pg_union.get_index(local_device);
@@ -992,9 +1008,16 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
     */
 
     Operator exec_op;
+    OpMeta exec_op_meta = op->op_meta();
+    if (exec_op_meta.fw_op_id != -1) {
+      auto it = op_to_exec_op_mapping.find(exec_op_meta.fw_op_id);
+      HT_ASSERT(it != op_to_exec_op_mapping.end())
+        << "cannot find define " << op << " corresponding fwd exec op";
+      exec_op_meta.fw_op_id = it->second->id();
+    }
     try {
       exec_op = Graph::MakeOp(op->_body, exec_inputs,
-        OpMeta().set(op->op_meta()).set_is_deduce_states(false).set_extra_deps(std::move(exec_in_deps)), *exec_graph);
+        OpMeta().set(exec_op_meta).set_is_deduce_states(false).set_extra_deps(std::move(exec_in_deps)), *exec_graph);
     } catch (const std::exception& e) {
       HTShapeList exec_input_shapes;
       exec_input_shapes.reserve(exec_inputs.size());
@@ -1149,7 +1172,7 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
 // 目前一个exec graph支持多个shape plan
 // 即允许feed_dict的shape（包括batch_size以及seq_len等）可变
 NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches,
-                                   const FeedDict& feed_dict, const int num_micro_batches,
+                                   const FeedDict& feed_dict, const IntSymbolDict& int_symbol_dict, const int num_micro_batches,
                                    const int compute_strategy_id, const int optimize_strategy_id, RunLevel run_level,
                                    bool save_checkpoint, const double grad_scale,
                                    const RuntimeContext& ctx) {
@@ -1172,7 +1195,8 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
         feed_dict_shape[kv.first] = micro_batches[0]->shape();
       }
     } else {
-      HT_ASSERT(kv.second.size() == num_micro_batches);
+      HT_ASSERT(kv.second.size() == num_micro_batches)
+        << kv.second.size() << " mismatches with num_micro_batches " << num_micro_batches;
       for (int i = 0; i < num_micro_batches; i++) {
         feed_dict_shape_list[i][kv.first] = kv.second[i]->shape();
       }
@@ -1244,6 +1268,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
         << "\nis_hetero:" << loss->cur_ds_union().is_hetero()
         << "\nhetero_dim:" << loss->cur_ds_union().hetero_dim();
     }
+    SetMicroBatchCtx(micro_batch_idx, int_symbol_dict);
     Instantiate(std::move(global_topo), std::move(shape_plan), pipeline_num);
     // 补上fetches（其在instantiate中不需要用到，但是plan需要进行记录）
     auto& new_plan = _exec_graph_plan_pool.back();
@@ -1295,6 +1320,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
     // 需要推导新的shape plan
     if (!in_shape_plan_pool) {
       HT_LOG_DEBUG << "DeduceShapePlan needed for micro batch " << idx;
+      SetMicroBatchCtx(idx, int_symbol_dict);
       DeduceShapePlan(exec_graph_plan, feed_dict, feed_dict_shape_list[idx]);
       // 新的shape plan就是shape plan pool中的最后一个
       next_active_shape_plan_list[idx] = exec_graph_plan.shape_plan_pool.size() - 1;
@@ -1313,6 +1339,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
   HT_LOG_DEBUG << exec_graph->name() << " use shape plan " << next_active_shape_plan_list;
   exec_graph->SetShapePlan(next_active_shape_plan_list[0]);
   exec_graph->SetShapePlanList(std::move(next_active_shape_plan_list));
+  exec_graph->set_num_tokens(num_tokens());
 
   exec_fetches.reserve(fetches.size());
   for (const auto& fetch : fetches) {
@@ -1336,8 +1363,9 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
   // 方便后面的热切换
   if (exec_graph->NeedRank(hetu::impl::comm::DeviceToWorldRank(local_device))) {
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
+    SetMicroBatchCtx(0, int_symbol_dict); // 为了保证exec graph内各pass用的是第一个micro batch
     exec_graph->Run(exec_loss, exec_fetches, 
-                    exec_feed_dict, num_micro_batches, 
+                    exec_feed_dict, int_symbol_dict, num_micro_batches, 
                     RunLevel::TOPO, grad_scale, ctx);
     Graph::pop_graph_ctx();
   }
@@ -1612,7 +1640,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
   if (exec_graph->NeedRank(hetu::impl::comm::DeviceToWorldRank(local_device))) {
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
     ret = exec_graph->Run(exec_loss, exec_fetches, 
-                          exec_feed_dict, num_micro_batches, 
+                          exec_feed_dict, int_symbol_dict, num_micro_batches, 
                           run_level, grad_scale, ctx);
     Graph::pop_graph_ctx();
   }

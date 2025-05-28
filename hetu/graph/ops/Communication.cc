@@ -484,7 +484,8 @@ std::tuple<size_t, std::vector<DeviceGroupList>> CommOpImpl::get_split_comm_grou
 }
 
 void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                const OpMeta& op_meta) const {
+                                const OpMeta& op_meta,
+                                const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   Tensor& output = outputs.at(0);
   const auto& ds_input = input->get_distributed_states();
@@ -507,7 +508,8 @@ void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void CommOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                   TensorList& outputs, const OpMeta& op_meta) const {
+                                   TensorList& outputs, const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   int32_t hetero_dim = NULL_HETERO_DIM;
   SplitPattern split_pattern = SplitPattern(true);
   if (_dst_ds_hierarchy.size() == 1) { // for comm op created in exec_graph, without multi ds
@@ -609,7 +611,7 @@ bool CommOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-CommOpImpl::DoInferMeta(const TensorList& inputs) const {
+CommOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   const HTShape& input_shape = input->shape();
   const DistributedStates& src_ds = input->get_distributed_states();
@@ -698,7 +700,7 @@ TensorList CommOpImpl::DoGradient(Operator& op,
       // row backward, no comm: ->dup->dup-> (forward op DoGradient())
       // sp:
       // col forward, all-gather: ->split0->dup-> (manually insert comm op in .py)
-      // col backward, reduces-scatter: ->partial->split0-> (forward op DoGradient())
+      // col backward, reduce-scatter: ->partial->split0-> (forward op DoGradient())
       // row forward, reduce-scatter: ->partial->split0-> (manually insert comm op in .py)
       // row backward, all-gather: ->split0->dup-> (forward op DoGradient())
       
@@ -747,7 +749,7 @@ bool AllReduceOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-AllReduceOpImpl::DoInferMeta(const TensorList& inputs) const {
+AllReduceOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {inputs[0]->meta()};
 }
 
@@ -761,7 +763,7 @@ NDArrayList AllReduceOpImpl::DoCompute(Operator& op,
                                        const NDArrayList& inputs,
                                        RuntimeContext& ctx) const {
   // NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
-  NDArrayList outputs = inputs; // just inplace here
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx); 
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
@@ -806,7 +808,7 @@ bool P2PSendOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-P2PSendOpImpl::DoInferMeta(const TensorList& inputs) const {
+P2PSendOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {};
 }
 
@@ -868,7 +870,7 @@ bool P2PRecvOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-P2PRecvOpImpl::DoInferMeta(const TensorList& inputs) const {
+P2PRecvOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {NDArrayMeta().set_dtype(_dtype).set_shape(get_shape())};
 }
 
@@ -911,7 +913,7 @@ bool BatchedISendIRecvOpImpl::DoInstantiate(Operator& op, const Device& placemen
 }
 
 std::vector<NDArrayMeta> 
-BatchedISendIRecvOpImpl::DoInferMeta(const TensorList& inputs) const {
+BatchedISendIRecvOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   HTShapeList outputs_shape = get_outputs_shape();
   if (outputs_shape.size() == 0)
     return {};
@@ -986,7 +988,7 @@ bool AllGatherOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-AllGatherOpImpl::DoInferMeta(const TensorList& inputs) const {
+AllGatherOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape gather_shape = input->shape();
@@ -1012,9 +1014,12 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   auto cur_buffer_shape = runtime_ctx.get_runtime_shape(op->output(0)->id());
   int64_t output_numel = std::accumulate(cur_buffer_shape.begin(), cur_buffer_shape.end(), 1, std::multiplies<int64_t>());
   // workaround: no buffer for allgather inside lora
-  if (op->name().find("lora") != op->name().npos) {
+  if (op->name().find("lora") != op->name().npos
+      || runtime_ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
-  } else if (_buffer_for_allgather.is_defined() && _buffer_for_allgather->numel() >= output_numel) {
+  } else if (!runtime_ctx.has_runtime_allocation(op->output(0)->id()) 
+             && _buffer_for_allgather.is_defined() 
+             && _buffer_for_allgather->numel() >= output_numel) {
     auto begin_pos = HTShape(cur_buffer_shape.size(), 0);
     NDArray _slice_buffer_for_all_gather = NDArray::slice(_buffer_for_allgather, begin_pos, cur_buffer_shape,
                                                           op->stream_index());
@@ -1061,7 +1066,7 @@ bool ReduceScatterOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-ReduceScatterOpImpl::DoInferMeta(const TensorList& inputs) const {
+ReduceScatterOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape scatter_shape = input->shape();
@@ -1092,21 +1097,21 @@ NDArrayList ReduceScatterOpImpl::DoCompute(Operator& op,
     << "Data type mismatched for ReduceScatter communication: " << inputs.at(0)->dtype()
     << " vs. " << op->input(0)->dtype();
 
-  // if (inplace()) {
-  // just inplace here
-  // NDArrayMeta meta = inputs.at(0)->meta();
-  // HTShape scatter_shape = inputs.at(0)->shape();
-  // scatter_shape[get_scatter_dim()] /= _comm_group.num_devices();
-  // meta.set_shape(scatter_shape);
-  // int rank = _comm_group.get_index(op->placement());
-  // size_t storage_offset = rank * (inputs.at(0)->numel() / _comm_group.num_devices());
-  // NDArray output = NDArray(meta, inputs.at(0)->storage(), inputs.at(0)->storage_offset() + storage_offset);
-  // outputs.emplace_back(output);
-  // }
-  // else {
-  // no inplace for reduce-scatter
-  outputs = DoAllocOutputs(op, inputs, ctx);
-  // }
+  if (inplace() && !ctx.has_runtime_allocation(op->output(0)->id())) {
+    // just inplace here
+    NDArrayMeta meta = inputs.at(0)->meta();
+    HTShape scatter_shape = inputs.at(0)->shape();
+    scatter_shape[get_scatter_dim()] /= _comm_group.num_devices();
+    meta.set_shape(scatter_shape);
+    int rank = _comm_group.get_index(op->placement());
+    size_t storage_offset = rank * (inputs.at(0)->numel() / _comm_group.num_devices());
+    NDArray output = NDArray(meta, inputs.at(0)->storage(), inputs.at(0)->storage_offset() + storage_offset);
+    outputs.emplace_back(output);
+  }
+  else {
+    // no inplace for reduce-scatter
+    outputs = DoAllocOutputs(op, inputs, ctx);
+  }
   
   // HT_LOG_INFO << "comm group " << _comm_group
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
@@ -1150,7 +1155,7 @@ bool SplitAllGatherOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-SplitAllGatherOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitAllGatherOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape gather_shape = input->shape();
@@ -1227,7 +1232,7 @@ bool SplitAllReduceOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-SplitAllReduceOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitAllReduceOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {inputs[0]->meta()};
 }
 
@@ -1249,7 +1254,7 @@ NDArrayList SplitAllReduceOpImpl::DoCompute(Operator& op,
     }
   }
   NDArrayList outputs = inputs;
-  if (!can_inplace) {
+  if (!can_inplace || ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = DoAllocOutputs(op, inputs, ctx);
   }
   // 目前只支持第0维切
@@ -1287,7 +1292,7 @@ bool SplitReduceScatterOpImpl::DoInstantiate(Operator& op, const Device& placeme
 }
 
 std::vector<NDArrayMeta> 
-SplitReduceScatterOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitReduceScatterOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape scatter_shape = input->shape();

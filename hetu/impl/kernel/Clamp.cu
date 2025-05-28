@@ -18,7 +18,9 @@ void ClampCuda(const NDArray& input, double min_val, double max_val, NDArray& ou
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "ClampCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
         [min_val, max_val] __device__ (spec_t in) {
           spec_t min_v = min_val, max_v = max_val;
           if (in < min_v)
@@ -42,7 +44,9 @@ void ClampElewiseCuda(const NDArray& input, const NDArray& min_val, const NDArra
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "ClampCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t, spec_t>(input, min_val, max_val, output, size, stream,
+      using InType = std::tuple<spec_t, spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, min_val, max_val}, {output}, size, stream,
         [] __device__ (spec_t in, spec_t min_v, spec_t max_v) {
           if (in < min_v)
             return min_v;

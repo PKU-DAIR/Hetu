@@ -3,7 +3,7 @@ import argparse
 import hetu as ht
 import numpy as np
 from trainer.utils import ModelWrapper, OptimizerWrapper, TrainerConfig
-from model import LLamaConfig, LLamaLMHeadModel, QKVFusedLLamaLMHeadModel
+from model import LLaMAConfig, LLaMALMHeadModel, QKVFusedLLaMALMHeadModel
 from profiler import Profiler
 from utils import distributed_init, convert_strategy, generate_lora_ds_parallel_config, read_ds_parallel_config, write_to_csv, read_from_csv
 
@@ -17,7 +17,7 @@ def run_benchmark_llama(args, seq_len_range, profile_mbs, max_tokens):
     generate_lora_ds_parallel_config(ngpus, layers_tp_groups, config_file_path)
     ds_parallel_configs = read_ds_parallel_config(config_file_path)
 
-    model_config = LLamaConfig(
+    model_config = LLaMAConfig(
         vocab_size=args.vocab_size,
         ffn_hidden_size=args.ffn_hidden_size,
         n_embd=args.hidden_size,
@@ -33,9 +33,9 @@ def run_benchmark_llama(args, seq_len_range, profile_mbs, max_tokens):
     # wrapper
     trainer_config = TrainerConfig(args.trainer_config_path)
     if trainer_config.variant == 'fused':
-        model_wrapper = ModelWrapper(QKVFusedLLamaLMHeadModel, model_config)
+        model_wrapper = ModelWrapper(QKVFusedLLaMALMHeadModel, model_config)
     elif trainer_config.variant == 'canonical':
-        model_wrapper = ModelWrapper(LLamaLMHeadModel, model_config)
+        model_wrapper = ModelWrapper(LLaMALMHeadModel, model_config)
     else:
         raise ValueError(f'Unsupported variant: {trainer_config.variant}')
     optimizer_wrapper = OptimizerWrapper(ht.AdamOptimizer)

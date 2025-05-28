@@ -9,7 +9,7 @@ import json
 import numpy as np
 import hetu as ht
 from torch.profiler import profile, ProfilerActivity
-from hetu_llama import LLamaLMHeadModel
+from hetu_llama import LLaMALMHeadModel
 from llama_config import LLaMAConfig
 from data_utils import LLaMAJsonDataset, build_data_loader, get_sorted_batch_and_len, build_fake_batch_and_len, get_input_and_label_buckets, LLaMaDatasetConfig, build_tokenizer, BlendedHetuDatasetBuilder
 from parallel_utils import read_ds_parallel_config, parse_multi_ds_parallel_config, convert_strategy, generate_ds_parallel_config
@@ -155,7 +155,7 @@ def pretrain(args):
         f'llama blocks range: {ranges} is conflict with num_hidden_layers: {config.num_hidden_layers}!'
 
     # Hetu model definition
-    model = LLamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
+    model = LLaMALMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
 
     input_ds_hierarchy, input_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'input')
     label_ds_hierarchy, label_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'label')

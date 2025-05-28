@@ -55,10 +55,14 @@ PyObject* PyInitializer_provided_initializer(PyTypeObject* type, PyObject* args,
   auto* self = reinterpret_cast<PyInitializer*>(unsafe_self);
   static PyArgParser parser({
     "provided_initializer(NDArray provided_data)",
+    "provided_initializer(numpy.array provided_data)",
   });
   auto parsed_args = parser.parse(args, kwargs);
   if (parsed_args.signature_index() == 0) {
     self->init = std::make_shared<ProvidedInitializer>(parsed_args.get_ndarray(0));
+  } else if (parsed_args.signature_index() == 1) {
+    auto* array_obj = parsed_args.get_numpy_array(0);
+    self->init = std::make_shared<ProvidedInitializer>(NDArrayFromNumpy(array_obj));
   } else {
     Py_TYPE(self)->tp_free(self);
     HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);

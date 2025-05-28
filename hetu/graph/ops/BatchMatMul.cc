@@ -77,7 +77,8 @@ HTShapeList BatchMatMulOpImpl::DoInferShape(Operator& op,
 }
 
 void BatchMatMulOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                       const OpMeta& op_meta) const {
+                                       const OpMeta& op_meta,
+                                       const InstantiationContext& inst_ctx) const {
   const Tensor& a = inputs.at(0);
   const Tensor& b = inputs.at(1);
   const DistributedStates& ds_a = a->get_distributed_states();

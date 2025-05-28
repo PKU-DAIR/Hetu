@@ -1,7 +1,7 @@
 #include "hetu/graph/headers.h"
 #include "hetu/graph/profiler.h"
 #include "hetu/graph/subgraph.h"
-#include "hetu/graph/ops/Concatenate.h"
+#include "hetu/graph/ops/Concat.h"
 #include "hetu/graph/ops/ParallelAttention.h"
 #include <queue>
 
@@ -40,7 +40,7 @@ void SubGraph::alloc_concat_memory(Operator& final_concat_op, RuntimeContext& ru
       << "cannot find the runtime allocation of " << cur_op
       << ", it should already generated";
     auto cur_ndarray = runtime_ctx.get_runtime_allocation(cur_op->output(0)->id());
-    auto concat_axis = dynamic_cast<ConcatenateOpImpl&>(cur_op->body()).get_axis();
+    auto concat_axis = dynamic_cast<ConcatOpImpl&>(cur_op->body()).get_axis();
     auto concat_num = cur_op->num_inputs();
     if (concat_axis >= 1) {
       // 无法处理在非第0维存在切分的情况
@@ -174,16 +174,6 @@ void SubGraph::run(Tensor2NDArrayMap& tensor2data, const Tensor2NDArrayMap& pres
     if (is_peer_to_peer_send_op(op) || is_peer_to_peer_recv_op(op)) {
       HT_RUNTIME_ERROR << "p2p op in subgraph is currently forbidden, because we can't know how to wrap them with ncclGroup";
     }
-    // parallel attn op算子手动实现且比较复杂
-    // 目前单独维护attn ctx
-    // 这里需要从外部传入micro batch id来确定 fwd存/bwd取 哪个attn ctx
-    if (is_parallel_attn_op(op) || is_parallel_attn_grad_op(op)) {
-      if (is_parallel_attn_op(op)) {
-        dynamic_cast<ParallelAttentionOpImpl&>(op->body()).set_attn_ctx_num(micro_batch_id);
-      } else {
-        dynamic_cast<ParallelAttentionGradientOpImpl&>(op->body()).set_attn_ctx_num(micro_batch_id);
-      }
-    }
 
     // 执行回调函数
     if (op_handler) {
@@ -228,6 +218,13 @@ void SubGraph::run(Tensor2NDArrayMap& tensor2data, const Tensor2NDArrayMap& pres
     NDArrayList output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
     checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
     // op->instantiation_ctx().stream().Sync();
+    /*
+    TensorIdList output_ids;
+    for (auto& output : op->outputs()) {
+      output_ids.emplace_back(output->id());
+    }
+    HT_LOG_INFO << op->outputs() << " ids are " << output_ids;
+    */
     // HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " end";
     // Note: The usage should be marked inside kernels, 
     // but we still mark here in case we forget to do so in some kernels. 

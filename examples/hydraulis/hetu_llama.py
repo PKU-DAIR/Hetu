@@ -1,7 +1,7 @@
 import hetu as ht
 import numpy as np
 
-from hetu.nn.modules.parallel_utils import get_multi_ds_parallel_config
+from hetu.utils.parallel import get_multi_ds_parallel_config
 
 def generate_cos_sin(seqlen, rotary_dim, dtype):
     assert rotary_dim % 2 == 0
@@ -302,10 +302,10 @@ class LLamaModel(ht.nn.Module):
         hidden_states = self.rmsnorm_f(hidden_states)
         return hidden_states
 
-class LLamaLMHeadModel(ht.nn.Module):
+class LLaMALMHeadModel(ht.nn.Module):
 
     def __init__(self, config, ds_parallel_configs):
-        super(LLamaLMHeadModel, self).__init__()
+        super(LLaMALMHeadModel, self).__init__()
         self.config = config
         self.ds_parallel_configs = ds_parallel_configs
         self.transformer = LLamaModel(config, get_multi_ds_parallel_config(ds_parallel_configs, 'llama'))

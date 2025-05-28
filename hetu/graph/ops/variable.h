@@ -71,7 +71,7 @@ class VariableOpImpl : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {NDArrayMeta().set_shape(shape()).set_dtype(dtype()).set_device(device())};
   }
 
@@ -190,7 +190,7 @@ class ParallelVariableOpImpl : public OpInterface {
   }
 
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     const auto& cur_ds_union = _ds_hierarchy.get(Graph::GetGraph(Graph::cur_graph_ctx()).CUR_STRATEGY_ID);
     // workaround 
     // 这里不得不使用CUR_HETERO_ID（就算外部没有进行USE_HETERO_ID）

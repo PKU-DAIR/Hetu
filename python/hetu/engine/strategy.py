@@ -5,7 +5,8 @@ import time
 from typing import List, Dict, Any
 from pulp import LpProblem, LpMinimize, LpVariable, LpStatus, lpSum
 from .utils import Args, TrainerCtxs, TrainerStrategyArgs
-from .parallel_config import generate_gpt_3d_config, config_spread_zero
+from hetu.utils.parallel.read_ds import config_spread_zero
+from hetu.models.gpt.generate_gpt_hetero_4d_config import generate_gpt_hetero_4d_config
 
 DEVICES_PER_NODE = 8
 INF_SR = 10000.0
@@ -259,12 +260,18 @@ class StrategyModel:
                 hetero_stages=hetero_stages,
                 hetero_micro_batch_num_list=m_values_list[strategy_id]
             )
+            accumulate_val = 0
+            accumulate_hetero_stages = [0,]
+            for val in hetero_stages:
+                accumulate_val += val
+                accumulate_hetero_stages.append(accumulate_val)
             ds_parallel_config = config_spread_zero(
-                generate_gpt_3d_config(
+                generate_gpt_hetero_4d_config(
+                    "null",
                     rank_to_device_mapping, 
                     suspended_rank_list + unused_rank_list, 
                     l_values_list[strategy_id], 
-                    hetero_stages,
+                    accumulate_hetero_stages,
                     self.pp * self.ctxs.normal_layers, 
                     self.dp * self.tp * self.pp, 
                     self.dp, 

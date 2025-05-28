@@ -20,7 +20,9 @@ void PowCuda(const NDArray& input, double exponent, NDArray& output,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "PowCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [exponent] __device__ (spec_t x) -> spec_t {
                                            return hetu::cuda::cuda_pow(x, static_cast<spec_t>(exponent));
                                          });

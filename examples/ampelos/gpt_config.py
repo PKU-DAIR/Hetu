@@ -30,6 +30,7 @@ class GPTConfig(object):
         reorder_and_upcast_attn=False,
         global_batch_size = 100,
         num_micro_batches = 1,
+        micro_batch_size = 4,
         dp = 1,
         use_flash_attn = False,
         lora_dtype="fp32",
@@ -64,6 +65,7 @@ class GPTConfig(object):
 
         self.global_batch_size = global_batch_size
         self.num_micro_batches = num_micro_batches
+        self.micro_batch_size = micro_batch_size
         self.dp = dp
         self.hidden_size = self.n_embd
         if ffn_hidden_size == -1:

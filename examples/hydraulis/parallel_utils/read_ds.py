@@ -1,7 +1,7 @@
 import json
 import fcntl
 from queue import Queue
-from hetu.nn.modules.parallel_multi_ds import config2ds
+from hetu.utils.parallel import config2ds
 
 def read_with_lock(file_path):
     with open(file_path, 'r') as f:

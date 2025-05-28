@@ -20,7 +20,8 @@ void AttentionOpImpl::DoCompute(Operator& op,
 }
 
 void AttentionOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ParallelAttentionOpImpl: distributed states for input must be valid!";
@@ -85,7 +86,8 @@ void AttentionGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
 }
 
 void AttentionGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                             const OpMeta& op_meta) const {
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "ParallelAttentionGradientOpImpl: distributed states for input must be valid!";

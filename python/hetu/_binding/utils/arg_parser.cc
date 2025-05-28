@@ -11,16 +11,24 @@ std::string ArgType2Str(ArgType type) {
   switch (type) {
     case ArgType::BOOL:
       return "bool";
+    case ArgType::INT32:
+      return "int32";
     case ArgType::INT64:
       return "int";
     case ArgType::FLOAT64:
       return "float";
     case ArgType::STRING:
       return "string";
+    case ArgType::BYTES:
+      return "bytes";
+    case ArgType::BYTEARRAY:
+      return "bytearray";
     case ArgType::BOOL_LIST:
       return "List[bool]";
     case ArgType::BOOL_LIST_LIST:
       return "List[List[bool]]";
+    case ArgType::INT32_LIST:
+      return "List[int32]";
     case ArgType::INT64_LIST:
       return "List[int]";
     case ArgType::FLOAT64_LIST:
@@ -59,6 +67,8 @@ std::string ArgType2Str(ArgType type) {
       return "List[hetu.Operator]";
     case ArgType::FEED_DICT:
       return "FeedDict";
+    case ArgType::INT_SYMBOL_DICT:
+      return "IntSymbolDict";
     case ArgType::PARAMETER_DICT:
       return "ParameterDict";
     case ArgType::STATE_DICT:
@@ -92,6 +102,8 @@ std::string ArgType2Str(ArgType type) {
 ArgType Str2ArgType(const std::string& type) {
   if (type == "bool") 
     return ArgType::BOOL;
+  if (type == "int32" || type == "int32_t")
+    return ArgType::INT32;
   if (type == "int" || type == "int64_t" || type == "int64")
     return ArgType::INT64;
   if (type == "float" || type == "double" || type == "float64")
@@ -99,6 +111,10 @@ ArgType Str2ArgType(const std::string& type) {
   if (type == "str" || type == "std::string" || type == "string" ||
       type == "OpName" || type == "TensorName")
     return ArgType::STRING;
+  if (type == "bytes")
+    return ArgType::BYTES;
+  if (type == "bytearray")
+    return ArgType::BYTEARRAY;
   if (type == "List[bool]" || type == "BoolList" ||
       type == "std::vector<bool>" || type == "vector<bool>" || 
       type == "HTKeepDims")
@@ -108,6 +124,9 @@ ArgType Str2ArgType(const std::string& type) {
     return ArgType::BOOL_LIST_LIST;
   if (type == "std::unordered_map<int,int>")
     return ArgType::DICT;
+  if (type == "List[int32]" || type == "Int32List" ||
+      type == "std::vector<int32_t>" || type == "vector<int32_t>")
+    return ArgType::INT32_LIST;
   if (type == "List[int]" || type == "IntList" ||
       type == "std::vector<int64_t>" || type == "vector<int64_t>" || 
       type == "HTShape" || type == "HTStride" || type == "HTAxes")
@@ -163,6 +182,8 @@ ArgType Str2ArgType(const std::string& type) {
     return ArgType::OPERATOR_LIST;
   if (type == "FeedDict" || type == "feed_dict")
     return ArgType::FEED_DICT;
+  if (type == "IntSymbolDict" || type == "int_symbol_dict")
+    return ArgType::INT_SYMBOL_DICT;
   if (type == "ParameterDict" || type == "parameter_dict")
     return ArgType::PARAMETER_DICT;
   if (type == "StateDict" || type == "state_dict")
@@ -244,6 +265,16 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
           _default_repr = _default_bool ? "True" : "False";
         }
         break;
+      case ArgType::INT32:
+        if (!_default_as_none) {
+          int64_t tmp;
+          if (!parse_int64_slow_but_safe(default_str, tmp))
+            HT_VALUE_ERROR << "Cannot parsed default value to int32: "
+                           << default_str;
+          _default_int32 = static_cast<int32_t>(tmp);
+          _default_repr = std::to_string(_default_int32);
+        }
+        break;
       case ArgType::INT64:
         if (!_default_as_none) {
           if (!parse_int64_slow_but_safe(default_str, _default_int64))
@@ -286,6 +317,15 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
           _default_repr = default_str;
         }
         break;
+      case ArgType::INT32_LIST:
+        if (!_default_as_none) {
+          auto err_msg = parse_int32_list_slow_but_safe(
+            default_str, _default_int32_list);
+          if (!err_msg.empty())
+            HT_VALUE_ERROR << "Cannot parse default List[int32]: " << err_msg;
+          _default_repr = default_str;
+        }
+        break;
       case ArgType::INT64_LIST:
         if (!_default_as_none) {
           auto err_msg = parse_int64_list_slow_but_safe(
@@ -321,6 +361,7 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
       case ArgType::OPERATOR:
       case ArgType::OPERATOR_LIST:
       case ArgType::FEED_DICT:
+      case ArgType::INT_SYMBOL_DICT:
       case ArgType::PARAMETER_DICT:
       case ArgType::RUNTIMECONTEXT:
       case ArgType::DISTRIBUTED_STATES:
@@ -345,12 +386,18 @@ bool FnArg::check_arg(PyObject* obj) const {
   switch (_arg_type) {
     case ArgType::BOOL:
       return CheckPyBool(obj);
+    case ArgType::INT32:
+      return CheckPyLong(obj);
     case ArgType::INT64:
       return CheckPyLong(obj);
     case ArgType::FLOAT64:
       return CheckPyFloat(obj);
     case ArgType::STRING:
       return CheckPyString(obj);
+    case ArgType::BYTES:
+      return CheckPyBytes(obj);
+    case ArgType::BYTEARRAY:
+      return CheckPyByteArray(obj);
     case ArgType::DICT:
       return true;
       // TODO:
@@ -359,6 +406,8 @@ bool FnArg::check_arg(PyObject* obj) const {
       return CheckPyBoolList(obj);
     case ArgType::BOOL_LIST_LIST:
       return CheckPyBoolListList(obj);
+    case ArgType::INT32_LIST:
+      return CheckPyIntList(obj);
     case ArgType::INT64_LIST:
       return CheckPyIntList(obj);
     case ArgType::FLOAT64_LIST:
@@ -397,6 +446,8 @@ bool FnArg::check_arg(PyObject* obj) const {
       return CheckPyOperatorList(obj);
     case ArgType::FEED_DICT:
       return CheckPyFeedDict(obj);
+    case ArgType::INT_SYMBOL_DICT:
+      return CheckPyIntSymbolDict(obj);
     case ArgType::PARAMETER_DICT:
       return CheckPyParameterDict(obj);
     case ArgType::RUNTIMECONTEXT:

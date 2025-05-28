@@ -169,7 +169,7 @@ class ArrayReshapeOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape output_shape = get_output_shape();
     if (inputs[0]->has_distributed_states()) {
       output_shape = get_local_output_shape(inputs[0]->global_shape(), 
@@ -188,10 +188,12 @@ class ArrayReshapeOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -202,6 +204,8 @@ class ArrayReshapeOpImpl final : public OpInterface {
   TensorList DoGradient(Operator& op, const TensorList& grad_outputs) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   // deprecated: only used in gpt inference, before symbolic shape is realized
   HTShapeList DoInferDynamicShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
@@ -240,46 +244,22 @@ Tensor MakeArrayReshapeOp(Tensor input, const HTShape& output_shape,
 class ArrayReshapeGradientOpImpl final : public OpInterface {
 
  public:
-  // symbolic shape constructor
-  ArrayReshapeGradientOpImpl(const SyShape& in_shape)
-  : OpInterface(quote(ArrayReshapeGradientOp)), 
-    _input_shape(in_shape),
-    _symbolic(true) {
-  }
-  // fixed shape constructor
-  ArrayReshapeGradientOpImpl(const HTShape& in_shape)
-  : OpInterface(quote(ArrayReshapeGradientOp)), 
-    _input_shape(in_shape.begin(), in_shape.end()),
-    _symbolic(false) {
-  }
-
-  HTShape get_input_shape() const {
-    return get_HTShape_from_SyShape(_input_shape);
-  }
-
-  const SyShape& get_symbolic_input_shape() const {
-    return _input_shape;
-  }
-
-  bool symbolic() const {
-    return _symbolic;
-  }
+  ArrayReshapeGradientOpImpl()
+  : OpInterface(quote(ArrayReshapeGradientOp)) {}
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
-    NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[1]->dtype())
-                                           .set_shape(get_input_shape())
-                                           .set_stride(inputs[1]->stride())
-                                           .set_device(inputs[1]->device());
-    return {output_meta};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const {};
@@ -289,8 +269,7 @@ class ArrayReshapeGradientOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  SyShape _input_shape;
-  bool _symbolic;
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
  public:
   inline bool require_contig_inputs() const override {
@@ -298,21 +277,12 @@ class ArrayReshapeGradientOpImpl final : public OpInterface {
   }
 
   bool operator==(const OpInterface& rhs) const override {
-    if (OpInterface::operator==(rhs)) {
-      const auto& rhs_ = reinterpret_cast<const ArrayReshapeGradientOpImpl&>(rhs);
-      return get_input_shape() == rhs_.get_input_shape();
-    }
+    return OpInterface::operator==(rhs);
   }
 
 };
 
-// fixed shape
-Tensor MakeArrayReshapeGradientOp(Tensor grad_output, Tensor ori_input, const HTShape& in_shape,
-                                  OpMeta op_meta = OpMeta());
-
-// symbolic shape
-Tensor MakeArrayReshapeGradientOp(Tensor grad_output, Tensor ori_input, const SyShape& in_shape,
-                                  OpMeta op_meta = OpMeta());
+Tensor MakeArrayReshapeGradientOp(Tensor grad_output, OpMeta op_meta = OpMeta());
 
 } // namespace graph
 } // namespace hetu

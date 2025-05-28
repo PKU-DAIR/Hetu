@@ -237,8 +237,10 @@ void AsStridedGradientCuda(const NDArray& grad_output, NDArray& grad_input,
         });
     HT_DISPATCH_FLOATING_TYPES(
       grad_input->dtype(), spec_t, "BinaryElewiseCuda", [&]() {
-        launch_loop_kernel<spec_t, spec_t, spec_t>(
-          grad_input, count, grad_input, storage_size, stream,
+        using InType = std::tuple<spec_t, spec_t>;
+        using OutType = thrust::tuple<spec_t>;
+        launch_loop_kernel<InType, OutType>({grad_input, count}, {grad_input}, 
+                                          storage_size, stream,
           kdivides<spec_t, spec_t>());
     });
     NDArray::MarkUsedBy({count, in_stride_contig_arr, in_stride_arr}, stream);

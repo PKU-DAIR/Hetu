@@ -5,47 +5,11 @@
 #include "hetu/impl/utils/common_utils.h"
 #include "hetu/impl/utils/cuda_utils.h"
 #include "hetu/impl/utils/offset_calculator.cuh"
+#include "hetu/impl/kernel/Vectorized.cuh"
 #include <mutex>
 
 namespace hetu {
 namespace impl {
-
-template <typename spec_t, typename mask_t>
-__global__ void dropout_kernel(const spec_t* input, spec_t* output, mask_t* mask,
-                               float drop_rate, size_t size,
-                               CUDARandomState rand_state,
-                               const OffsetCalculator* in_offset_calculator,
-                               const OffsetCalculator* out_offset_calculator,
-                               const OffsetCalculator* mask_offset_calculator) {
-  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= size)
-    return;
-  curandStatePhilox4_32_10_t state;
-  curand_init(rand_state.seed, idx, rand_state.offset, &state);
-  float temp = curand_uniform(&state);
-  mask_t keep_mask = (mask_t) (temp >= drop_rate);
-  auto in_offset = in_offset_calculator->get(idx);
-  auto out_offset = out_offset_calculator->get(idx);
-  auto mask_offset = mask_offset_calculator->get(idx);
-  output[out_offset] = input[in_offset] * keep_mask / (1 - drop_rate);
-  mask[mask_offset] = keep_mask;
-}
-
-template <typename spec_t, typename mask_t>
-__global__ void dropout_gradient_kernel(const spec_t* grad,
-                                        const mask_t* fw_mask, spec_t* output,
-                                        float drop_rate, size_t size,
-                                        const OffsetCalculator* grad_offset_calculator,
-                                        const OffsetCalculator* fw_mask_offset_calculator,
-                                        const OffsetCalculator* out_offset_calculator) {
-  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= size)
-    return;
-  auto mask_offset = fw_mask_offset_calculator->get(idx);
-  auto grad_offset = grad_offset_calculator->get(idx);
-  auto out_offset = out_offset_calculator->get(idx);
-  output[out_offset] = grad[grad_offset] * fw_mask[mask_offset] / (1 - drop_rate);
-}
 
 void DropoutCuda(const NDArray& input, double drop_rate, uint64_t seed,
                  NDArray& output, NDArray& mask, const Stream& stream) {
@@ -57,31 +21,21 @@ void DropoutCuda(const NDArray& input, double drop_rate, uint64_t seed,
   size_t size = input->numel();
   if (size == 0)
     return;
-  dim3 blocks, threads;
-  threads.x = MIN(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
-  blocks.x = DIVUP(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
   CUDAStream cuda_stream(stream);
   hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
-  NDArray in_offset_calculator_arr, out_offset_calculator_arr,
-          mask_offset_calculator_arr;
-  OffsetCalculator *in_offset_calculator, *out_offset_calculator,
-                   *mask_offset_calculator;
-  std::tie(in_offset_calculator_arr, in_offset_calculator) =
-    AllocOffsetCalculator(input, stream);
-  std::tie(out_offset_calculator_arr, out_offset_calculator) = 
-    AllocOffsetCalculator(output, stream);
-  std::tie(mask_offset_calculator_arr, mask_offset_calculator) =
-    AllocOffsetCalculator(mask, stream);
+  auto rand_state = GetCUDARandomState(cuda_stream.device_id(), seed, 4);
   HT_DISPATCH_FLOATING_TYPES(input->dtype(), spec_t, "DropoutCuda", [&]() {
-    dropout_kernel<spec_t, bool><<<blocks, threads, 0, cuda_stream>>>(
-      input->data_ptr<spec_t>(), output->data_ptr<spec_t>(),
-      mask->data_ptr<bool>(), static_cast<float>(drop_rate), size,
-      GetCUDARandomState(cuda_stream.device_id(), seed, 4),
-      in_offset_calculator, out_offset_calculator,
-      mask_offset_calculator);
+    using InType = std::tuple<spec_t>;
+    using OutType = thrust::tuple<spec_t, bool>;
+    launch_loop_kernel_with_idx<InType, OutType>({input}, {output, mask}, size, stream,
+      [drop_rate, rand_state] __device__ (int idx, spec_t input) -> thrust::tuple<spec_t, bool> {
+        curandStatePhilox4_32_10_t state;
+        curand_init(rand_state.seed, idx, rand_state.offset, &state);
+        float temp = curand_uniform(&state);
+        bool keep_mask = (temp >= drop_rate);
+        return thrust::tuple<spec_t, bool>(input * keep_mask / (1 - drop_rate), keep_mask);
+      });
   });
-  NDArray::MarkUsedBy({input, output, mask, in_offset_calculator_arr,
-                      out_offset_calculator_arr, mask_offset_calculator_arr}, stream);
 }
 
 void DropoutGradientCuda(const NDArray& grad, const NDArray& fw_mask,
@@ -92,33 +46,17 @@ void DropoutGradientCuda(const NDArray& grad, const NDArray& fw_mask,
   HT_ASSERT_SAME_DEVICE(grad, output);
   HT_ASSERT_SAME_SHAPE(grad, fw_mask);
   HT_ASSERT_SAME_SHAPE(grad, output);
-  size_t size = grad->numel();
+  size_t size = output->numel();
   if (size == 0)
     return;
-  dim3 blocks, threads;
-  threads.x = MIN(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
-  blocks.x = DIVUP(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
-  CUDAStream cuda_stream(stream);
-  hetu::cuda::CUDADeviceGuard guard(cuda_stream.device_id());
-  NDArray grad_offset_calculator_arr, fw_mask_offset_calculator_arr,
-          out_offset_calculator_arr;
-  OffsetCalculator *grad_offset_calculator, *fw_mask_offset_calculator,
-                   *out_offset_calculator;
-  std::tie(grad_offset_calculator_arr, grad_offset_calculator) =
-    AllocOffsetCalculator(grad, stream);
-  std::tie(fw_mask_offset_calculator_arr, fw_mask_offset_calculator) = 
-    AllocOffsetCalculator(fw_mask, stream);
-  std::tie(out_offset_calculator_arr, out_offset_calculator) = 
-    AllocOffsetCalculator(output, stream);
-  HT_DISPATCH_FLOATING_TYPES(
-    grad->dtype(), spec_t, "DropoutGradientCuda", [&]() {
-      dropout_gradient_kernel<spec_t, bool><<<blocks, threads, 0, cuda_stream>>>(
-        grad->data_ptr<spec_t>(), fw_mask->data_ptr<bool>(),
-        output->data_ptr<spec_t>(), static_cast<float>(drop_rate), size,
-        grad_offset_calculator, fw_mask_offset_calculator, out_offset_calculator);
-    });
-  NDArray::MarkUsedBy({grad, fw_mask, output, grad_offset_calculator_arr,
-                      fw_mask_offset_calculator_arr, out_offset_calculator_arr}, stream);
+  HT_DISPATCH_FLOATING_TYPES(grad->dtype(), spec_t, "DropoutGradientCuda", [&]() {
+    using InType = std::tuple<spec_t, bool>;
+    using OutType = thrust::tuple<spec_t>;
+    launch_loop_kernel<InType, OutType>({grad, fw_mask}, {output}, size, stream,
+      [drop_rate] __device__ (spec_t grad, bool fw_mask) -> spec_t {
+        return grad * fw_mask / (1 - drop_rate);
+      });
+  });
 }
 
 } // namespace impl

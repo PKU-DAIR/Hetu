@@ -1,14 +1,23 @@
-class GPTConfig(object):
+from hetu.models.utils import PreTrainedConfig
+
+class GPTConfig(PreTrainedConfig):
+    model_type = "gpt"
+    
+    attribute_map = {
+        "hidden_size": "n_embd",
+        "max_position_embeddings": "n_positions",
+        "num_attention_heads": "n_head",
+        "num_hidden_layers": "n_layer",
+    }
+
     def __init__(
         self,
         vocab_size=50257,
         n_positions=1024,
-        n_ctx=1024,
         n_embd=768,
         n_layer=12,
         n_head=12,
         n_inner=None,
-        seq_len=128,
         activation_function="relu",
         resid_pdrop=0.1,
         embd_pdrop=0.1,
@@ -26,19 +35,15 @@ class GPTConfig(object):
         eos_token_id=50256,
         scale_attn_by_inverse_layer_idx=False,
         reorder_and_upcast_attn=False,
-        global_batch_size = 100,
-        num_micro_batches = 1,
-        dp = 1,
-        use_flash_attn = False,
+        use_flash_attn = True,
+        **kwargs,
     ):
         self.vocab_size = vocab_size
-        self.n_ctx = n_ctx
         self.n_positions = n_positions
         self.n_embd = n_embd
         self.n_layer = n_layer
         self.n_head = n_head
         self.n_inner = n_inner
-        self.seq_len = seq_len
         self.activation_function = activation_function
         self.resid_pdrop = resid_pdrop
         self.embd_pdrop = embd_pdrop
@@ -54,21 +59,15 @@ class GPTConfig(object):
         self.use_cache = use_cache
         self.scale_attn_by_inverse_layer_idx = scale_attn_by_inverse_layer_idx
         self.reorder_and_upcast_attn = reorder_and_upcast_attn
+        self.use_flash_attn = use_flash_attn
 
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
 
-        self.global_batch_size = global_batch_size
-        self.num_micro_batches = num_micro_batches
-        self.dp = dp
-        self.hidden_size = self.n_embd
-        self.ffn_hidden_size = 4*self.n_embd
-        self.max_position_embeddings = self.n_positions
-        self.num_attention_heads = self.n_head
-        self.num_hidden_layers = self.n_layer
-
+        self.ffn_hidden_size = 4 * self.n_embd if self.n_inner is None else self.n_inner
         self.add_cross_attention = False
         self.use_return_dict = False
         self.output_attentions = False
         self.output_hidden_states= False
-        self.use_flash_attn = use_flash_attn
+        
+        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)

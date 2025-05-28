@@ -56,10 +56,12 @@ void transfer_device_to_device(const NDArray& from, NDArray& to, const Stream& s
     HT_DISPATCH_PAIRED_SIGNED_INTEGER_AND_FLOATING_TYPES(
       from->dtype(), to->dtype(), spec_a_t, spec_b_t, "DataTransferCuda",
       [&]() {
-        launch_loop_kernel<spec_a_t, spec_b_t>(from, to, numel, stream,
-                                               [] __device__ (spec_a_t x) -> spec_b_t {
-                                                 return static_cast<spec_b_t>(x);
-                                               });
+        using InType = std::tuple<spec_a_t>;
+        using OutType = thrust::tuple<spec_b_t>;
+        launch_loop_kernel<InType, OutType>({from}, {to}, numel, stream,
+                                           [] __device__ (spec_a_t x) -> spec_b_t {
+                                             return static_cast<spec_b_t>(x);
+                                           });
       });
     NDArray::MarkUsedBy({from, to}, stream);
   }

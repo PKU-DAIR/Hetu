@@ -128,13 +128,21 @@ class LLamaAttention(ht.nn.Module):
         '''
         
         assert self.use_flash_attn, "currently only support flash attn"
+        ctx_multi_seq_lens_symbol = []
+        for strategy_id, _ in enumerate(self.config.multi_seq_lens_symbol):
+            symbol_list = []
+            for i, symbol in enumerate(self.config.multi_seq_lens_symbol[strategy_id]):
+                symbol_list.append(symbol / self.config.micro_batch_size_symbol)
+            ctx_multi_seq_lens_symbol.append(symbol_list)
+
         # TODO: support packing api
         if self.use_packed_qkv:
             attn_output = ht.parallel_attn(
                 qkv,             
                 self.head_dim, 
                 1, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
-                self.config.multi_seq_lens_symbol, 
+                # self.config.multi_seq_lens_symbol, 
+                ctx_multi_seq_lens_symbol, 
                 self.config.multi_cp_group_symbol,
                 False,
                 None,
@@ -147,7 +155,8 @@ class LLamaAttention(ht.nn.Module):
                 q, k, v,             
                 self.head_dim, 
                 1, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
-                self.config.multi_seq_lens_symbol, 
+                # self.config.multi_seq_lens_symbol,
+                ctx_multi_seq_lens_symbol, 
                 self.config.multi_cp_group_symbol,
                 False,
                 None,

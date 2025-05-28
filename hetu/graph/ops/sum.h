@@ -16,7 +16,7 @@ class SumOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_VALUE_ERROR_IF(inputs.empty()) << "No inputs are provided";
     // TODO: support broadcast
     int len = inputs.size();
@@ -30,7 +30,8 @@ class SumOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                        const OpMeta& op_meta) const override {
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override {
     // TODO: care about broadcase case
     // allow partial sum
     DistributedStates default_ds;

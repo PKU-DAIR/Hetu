@@ -174,6 +174,7 @@ def pretrain(args):
         attn_pdrop=args.dropout_prob,
         activation_function=args.hidden_act,
         global_batch_size=args.global_batch_size,
+        micro_batch_size=args.micro_batch_size,
         use_flash_attn=args.use_flash_attn
     )
     
@@ -191,6 +192,7 @@ def pretrain(args):
     label_ds_hierarchy, label_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'label')
     
     config.multi_seq_lens_symbol = []
+    config.micro_batch_size_symbol = ht.IntSymbol(1)
     config.multi_cp_group_symbol = []
     for i in range(len(input_ds_hierarchy)):
         dcp_size = input_ds_hierarchy[i].get(0).get_dim(0)
@@ -210,7 +212,7 @@ def pretrain(args):
     masked_lm_labels = ht.parallel_placeholder(ht.int64, global_shape=[dcp_size], ds_hierarchy=label_ds_hierarchy, device_group_hierarchy=label_dg_hierarchy, name='masked_lm_labels')
 
     for i in range(len(input_ds_hierarchy)):
-        config.multi_seq_lens_symbol.append([input_ids.symbolic_shape[0] for _ in range(dcp_size)])
+        config.multi_seq_lens_symbol.append([(input_ids.symbolic_shape[0]) for _ in range(dcp_size)])
         config.multi_cp_group_symbol.append([ht.IntSymbol(i) for i in range(dcp_size)])
 
     print(f'{local_device}: build model begin...')
@@ -468,6 +470,7 @@ def pretrain(args):
         print("runtime seq_lens is", seq_lens, "and runtime cp list is", cp_list)    
         for i, symbol in enumerate(config.multi_seq_lens_symbol[strategy_id]):
             symbol.set_data(seq_lens[i])
+        config.micro_batch_size_symbol.set_data(args.micro_batch_size)
         accumulate_cp = cp_list[0]
         cp_cnt = 0
         for i, symbol in enumerate(config.multi_cp_group_symbol[strategy_id]):

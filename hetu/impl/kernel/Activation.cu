@@ -19,7 +19,9 @@ void EluCuda(const NDArray& input, double alpha, double scale, NDArray& output, 
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "EluCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                            return x > 0 ? scale * x
                                                         : scale * alpha * (hetu::cuda::cuda_exp(x) - 1);
@@ -41,8 +43,10 @@ void EluGradientCuda(const NDArray& output, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     output->dtype(), spec_t, "EluGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(output, output_grad, input_grad, 
-                                                size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({output, output_grad}, {input_grad}, 
+                                          size, stream,
         [=] __device__ (spec_t x, spec_t y) -> spec_t {
           return x <= 0 ? y * (x + alpha) * scale
                         : y * scale;
@@ -61,7 +65,9 @@ void HardshrinkCuda(const NDArray& input, double lambda, NDArray& output, const 
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "HardshrinkCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                            return (x >= -lambda && x <= lambda) ? spec_t(0)
                                                                                 : x;
@@ -83,7 +89,10 @@ void HardshrinkGradientCuda(const NDArray& output, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     output->dtype(), spec_t, "HardshrinkGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(output, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({output, output_grad}, {input_grad}, 
+                                          size, stream,
         [=] __device__ (spec_t x, spec_t y) -> spec_t {
           return (x == 0) ? spec_t(0)
                           : y;
@@ -104,7 +113,9 @@ void HardsigmoidCuda(const NDArray& input, NDArray& output, const Stream& stream
     input->dtype(), spec_t, "HardsigmoidCuda", [&]() {
       spec_t six_percent_one = spec_t(1.0 / 6.0);
       spec_t two_percent_one = spec_t(0.5);
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                             if (x < -3) 
                                               return 0;
@@ -131,7 +142,10 @@ void HardsigmoidGradientCuda(const NDArray& output, const NDArray& output_grad,
     output->dtype(), spec_t, "HardsigmoidGradientCuda", [&]() {
       spec_t six_percent_one = spec_t(1.0 / 6.0);
       spec_t zero = spec_t(0);
-      launch_loop_kernel<spec_t, spec_t, spec_t>(output, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({output, output_grad}, {input_grad}, 
+                                          size, stream,
         [=] __device__ (spec_t x, spec_t y) -> spec_t {
           return (x > 0 && x < 1) ? six_percent_one * y
                                   : zero;
@@ -151,7 +165,9 @@ void HardtanhCuda(const NDArray& input, double min_val, double max_val,
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "HardtanhCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                             return x < min_val ? spec_t(min_val)
                                                                : (x > max_val ? spec_t(max_val) : x);
@@ -174,8 +190,10 @@ void HardtanhGradientCuda(const NDArray& output, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     output->dtype(), spec_t, "HardtanhGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(output, output_grad,
-                                                 input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({output, output_grad}, {input_grad}, 
+                                          size, stream,
         [=] __device__ (spec_t x, spec_t y) -> spec_t {
           return (x > min_val && x < max_val) ? y
                                               : spec_t(0);
@@ -194,7 +212,9 @@ void HardswishCuda(const NDArray& input, NDArray& output, const Stream& stream) 
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "HardswishCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                             return x < -3 ? spec_t(0)
                                                           : (x > 3 ? x : (x * (x + 3) / 6));
@@ -216,7 +236,10 @@ void HardswishGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "HardswishGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, 
+                                          size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           return (x < -3) ? spec_t(0)
                           : (x > 3 ? y : y * (2 * x + 3) / 6);
@@ -237,7 +260,9 @@ void LogsigmoidCuda(const NDArray& input, NDArray& output, bool inverse, const S
     HT_DISPATCH_FLOATING_TYPES(
       input->dtype(), spec_t, "LogsigmoidCuda", [&]() {
         spec_t zero = spec_t(0);
-        launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+        using InType = std::tuple<spec_t>;
+        using OutType = thrust::tuple<spec_t>;
+        launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                           [=] __device__ (spec_t x) -> spec_t {
                                               spec_t min_x_0 = hetu::cuda::cuda_min(x, zero);
                                               spec_t z = hetu::cuda::cuda_exp(-hetu::cuda::cuda_abs(x));
@@ -249,7 +274,9 @@ void LogsigmoidCuda(const NDArray& input, NDArray& output, bool inverse, const S
     HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "LogsigmoidCuda", [&]() {
       spec_t zero = spec_t(0);
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                             spec_t min_x_0 = hetu::cuda::cuda_min(-x, zero);
                                             spec_t z = hetu::cuda::cuda_exp(-hetu::cuda::cuda_abs(-x));
@@ -273,7 +300,10 @@ void LogsigmoidGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "LogsigmoidGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, 
+                                          size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           spec_t z = hetu::cuda::cuda_exp(-hetu::cuda::cuda_abs(x));
           return x < 0 ? y * (1 - (z / (1 + z)))
@@ -293,7 +323,9 @@ void SiluCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "SiluCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                             return x / (1 / 1 + hetu::cuda::cuda_exp(-x));
                                          });
@@ -314,7 +346,10 @@ void SiluGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "SiluGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, 
+                                          size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           spec_t z = 1 / (1 + hetu::cuda::cuda_exp(-x));
           return y * z * (1 + x * (1 - z));
@@ -333,7 +368,9 @@ void MishCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "MishCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                             return x * hetu::cuda::cuda_tanh(
                                                        hetu::cuda::cuda_log(1 + hetu::cuda::cuda_exp(x)));
@@ -355,7 +392,10 @@ void MishGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "MishGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, 
+                                          size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           spec_t sigmoid = 1 / (1 + hetu::cuda::cuda_exp(-x));
           spec_t z = hetu::cuda::cuda_tanh(hetu::cuda::cuda_log(1 + hetu::cuda::cuda_exp(x)));
@@ -378,7 +418,9 @@ void SoftplusCuda(const NDArray& input, double beta, double threshold,
     input->dtype(), spec_t, "SoftplusCuda", [&]() {
       spec_t beta_ = spec_t(beta);
       spec_t one = spec_t(1);
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                             return x * beta > threshold ? x
                                                                         : hetu::cuda::cuda_log(
@@ -402,7 +444,10 @@ void SoftplusGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "SoftplusGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, 
+                                          size, stream,
         [=] __device__ (spec_t x, spec_t y) -> spec_t {
           spec_t z = hetu::cuda::cuda_exp(x * beta);
           return (x * beta > threshold) ? y
@@ -425,7 +470,9 @@ void SoftshrinkCuda(const NDArray& input, double lambda, NDArray& output,
     input->dtype(), spec_t, "SoftshrinkCuda", [&]() {
       spec_t lambda_ = spec_t(lambda);
       spec_t zero = spec_t(0);
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [=] __device__ (spec_t x) -> spec_t {
                                             return x < -lambda_ ? x + lambda_
                                                                : (x > lambda_ ? x - lambda_ : zero);
@@ -447,7 +494,10 @@ void SoftshrinkGradientCuda(const NDArray& output, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     output->dtype(), spec_t, "SoftshrinkGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(output, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({output, output_grad}, {input_grad}, 
+                                          size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           return (x == 0) ? spec_t(0) : y;
         });

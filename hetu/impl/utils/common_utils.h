@@ -9,6 +9,14 @@ namespace impl {
 template<typename spec_t, int vec_size>
 struct alignas(sizeof(spec_t) * vec_size) aligned_vector {
   spec_t val[vec_size];
+
+  __host__ __device__ spec_t& operator[](int idx) {
+    return val[idx];
+  }
+
+  __host__ __device__ const spec_t& operator[](int idx) const {
+    return val[idx];
+  }
 };
 
 inline size_t numel(const HTShape& shape) {
@@ -56,11 +64,13 @@ inline int GetThreadNum(int cnt) {
 
 inline int64_t get_index(int64_t idx, int64_t ndims, const int64_t* stride, const int64_t* c_shape) {
   int64_t i_idx = 0;
-  int64_t t = idx;
+  #pragma unroll
   for (int i = ndims - 1; i >= 0; --i) {
-    int64_t ratio = t % c_shape[i];
-    t /= c_shape[i];
-    i_idx += ratio * stride[i];
+    int64_t shape_i = c_shape[i];
+    auto div_idx = idx / shape_i;
+    auto mod_idx = idx - div_idx * shape_i;
+    i_idx += mod_idx * stride[i];
+    idx = div_idx;
   }
   return i_idx;
 }
@@ -79,6 +89,26 @@ template <class F, class Tuple>
 __host__ __device__ constexpr decltype(auto) apply(F&& f, Tuple&& t) {
   return apply_impl(
       std::forward<F>(f),
+      std::forward<Tuple>(t),
+      std::make_index_sequence<
+          std::tuple_size<std::remove_reference_t<Tuple>>::value>{});
+}
+
+template <class F, class Tuple, std::size_t... INDEX>
+__host__ __device__ constexpr decltype(auto) apply_with_idx_impl(
+    F&& f,
+    int idx,
+    Tuple&& t,
+    std::index_sequence<INDEX...>)
+{
+  return std::forward<F>(f)(idx, std::get<INDEX>(std::forward<Tuple>(t))...);
+}
+
+template <class F, class Tuple>
+__host__ __device__ constexpr decltype(auto) apply_with_idx(F&& f, int idx, Tuple&& t) {
+  return apply_with_idx_impl(
+      std::forward<F>(f),
+      idx,
       std::forward<Tuple>(t),
       std::make_index_sequence<
           std::tuple_size<std::remove_reference_t<Tuple>>::value>{});

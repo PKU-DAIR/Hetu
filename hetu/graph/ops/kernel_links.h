@@ -68,15 +68,8 @@ DECLARE_KERNEL_CPU_AND_CUDA(BroadcastShapeMul, const NDArray&, double, NDArray&,
 DECLARE_KERNEL_CPU_AND_CUDA(Ceil, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckFinite, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckNumeric, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(Concat, const NDArray&, const NDArray&, NDArray&,
-                            size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ConcatGradient, const NDArray&, NDArray&, size_t,
-                            size_t, const Stream&);
-DECLARE_KERNEL_CPU(Concatenate, const NDArrayList&, NDArray&, size_t, const Stream&);
-DECLARE_KERNEL_CUDA(Concatenate, const NDArray&, NDArray&, size_t,
-                    size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ConcatenateGradient, const NDArray&, NDArray&,
-                            size_t, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(Concat, const NDArrayList&, NDArray&, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(ConcatGradient, const NDArray&, NDArrayList&, size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Contiguous, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(ContiguousGradient, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CUDA(DynamicConcatenate, const NDArray&, NDArray&, size_t,
@@ -300,8 +293,16 @@ DECLARE_KERNEL_CPU_AND_CUDA(Reshape, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Roll, const NDArray&, const HTShape&, const HTAxes&,
                             NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(RollGradient, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CUDA(Rotary, const NDArray&, const NDArray&, const NDArray&, 
-                    const NDArray&, NDArray&, NDArray&, bool, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Rotary, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const int, const int, const int, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryGradient, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const int, const int, const int, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryVarlen, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const NDArray&, const int, const int*, const int*,
+                            const int, const Stream&);  
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryVarlenGradient, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const NDArray&, const int, const int*, const int*,
+                            const int, const Stream&);  
 DECLARE_KERNEL_CPU_AND_CUDA(Round, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(SGDUpdate, const NDArray&, NDArray&, NDArray&,
                             float, float, bool, const Stream&);

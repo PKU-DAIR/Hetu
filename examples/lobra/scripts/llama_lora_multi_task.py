@@ -1,7 +1,7 @@
 import argparse
 import hetu as ht
 from utils import distributed_init
-from model import LLamaConfig, LLamaLMHeadModel, QKVFusedLLamaLMHeadModel, PackedLLamaLMHeadModel
+from model import LLaMAConfig, LLaMALMHeadModel, QKVFusedLLaMALMHeadModel, PackedLLaMALMHeadModel
 from profiler.cost_model import CostModel
 from data_utils import GPTJsonDataset
 from utils import parse_strategy_config
@@ -15,7 +15,7 @@ def finetune(args, max_tokens_list=None):
     trainer_config = TrainerConfig(args.trainer_config_path)
     assert args.train_task_num == trainer_config.train_task_num, \
         f"args.train_task_num should be equal to that in trainer_config, but got {args.train_task_num} v.s. {trainer_config.train_task_num}"
-    model_config = LLamaConfig(
+    model_config = LLaMAConfig(
         vocab_size=args.vocab_size, 
         ffn_hidden_size=args.ffn_hidden_size,
         n_embd=args.hidden_size,
@@ -39,12 +39,12 @@ def finetune(args, max_tokens_list=None):
     # wrapper
     use_packing = False
     if trainer_config.variant == 'fused':
-        model_wrapper = ModelWrapper(QKVFusedLLamaLMHeadModel, model_config)
+        model_wrapper = ModelWrapper(QKVFusedLLaMALMHeadModel, model_config)
     elif trainer_config.variant == 'packed':
-        model_wrapper = ModelWrapper(PackedLLamaLMHeadModel, model_config)
+        model_wrapper = ModelWrapper(PackedLLaMALMHeadModel, model_config)
         use_packing = True
     elif trainer_config.variant == 'canonical':
-        model_wrapper = ModelWrapper(LLamaLMHeadModel, model_config)
+        model_wrapper = ModelWrapper(LLaMALMHeadModel, model_config)
     else:
         raise ValueError(f'Unsupported variant: {trainer_config.variant}')
     optimizer_wrapper = OptimizerWrapper(ht.AdamOptimizer)

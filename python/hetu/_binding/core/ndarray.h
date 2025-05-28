@@ -43,6 +43,8 @@ NDArray NDArrayCopyFromNumpyCtor(PyObject* obj, optional<DataType>&& dtype,
 NDArray NDArrayCopyFromSequenceCtor(PyObject* obj, optional<DataType>&& dtype,
                                     optional<Device>&& device);
 
+NDArray NDArrayFromBuffer(void* data, DataType dtype, const HTShape& shape);
+
 /******************************************************
  * ArgParser Utils
  ******************************************************/

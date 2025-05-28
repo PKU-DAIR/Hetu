@@ -27,7 +27,8 @@ HTShapeList TriuTrilOpImpl::DoInferShape(Operator& op,
 }
 
 void TriuTrilOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                    const OpMeta& op_meta) const {
+                                    const OpMeta& op_meta,
+                                    const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.check_pure_duplicate())
     << "Input tensor cannot be splited in any dimension!";

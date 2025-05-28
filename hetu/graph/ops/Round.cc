@@ -15,7 +15,7 @@ void RoundOpImpl::DoCompute(Operator& op,
 NDArrayList RoundOpImpl::DoCompute(Operator& op,
                                    const NDArrayList& inputs,
                                    RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }

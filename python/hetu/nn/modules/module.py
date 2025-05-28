@@ -7,6 +7,7 @@ from collections import OrderedDict, namedtuple
 
 from typing import Union, Tuple, List, Dict, Set, Any, Callable, Iterator, Optional, TypeVar
 from hetu import _tensor_type_t
+from hetu.utils.parallel import get_dg_from_union
 from ..parameter import _param_type_t
 
 _module_type_t = TypeVar('T', bound='Module')
@@ -14,27 +15,42 @@ _member_type_t = Union[_param_type_t, _module_type_t, _tensor_type_t]
 _member_t = Union[Optional[Parameter], Optional['Module'], Optional[Tensor]]
 
 
-def parallel_data_provider(global_data, ds, device_index):
-    order, states = ds.order, ds.states
-    local_map = hetu.map_to_local_data(ds, device_index)
-    local_data = global_data.copy()
-    dims = len(local_data.shape)
-    begin_pos = [0] * dims
+def parallel_data_provider(global_data, ds_union, dg_union, local_device):
+    device_group_index, device_group = get_dg_from_union(local_device, dg_union)
+    device_index = device_group.get_index(local_device)
+    ds = ds_union.get(device_group_index)
+    if ds.zero:
+        local_map = hetu.map_to_local_data(ds, device_index)
+        local_map[0] = local_map.get(0, 0) * ds.states.get(-1, 1) + local_map.get(-1, 0)
+        states = ds.combine_states([-1], 0)
+        order = ds.combine_order([-1], 0)
+        ds = hetu.DistributedStates(ds.device_num, states, order)
+    else:
+        local_map = hetu.map_to_local_data(ds, device_index)
+    
+    with hetu.graph("eager"):
+        with hetu.context(eager_device="cpu"):
+            local_data = global_data.copy()
+    begin_pos = [0] * len(local_data.shape)
     out_shape = local_data.shape
-    for dim in order:
+    for dim in ds.order:
         if dim < 0:
             continue
-        splits = states[dim]
+        splits = ds.states[dim]
         split_index = local_map[dim]
         start = int(split_index * (global_data.shape[dim] / splits))
         stop = min(int((split_index + 1) * (global_data.shape[dim] / splits)), global_data.shape[dim])
-        if isinstance(local_data, hetu.NDArray): 
+        if isinstance(local_data, (hetu.NDArray, hetu.Tensor)): 
             begin_pos[dim] = start
             out_shape[dim] = stop - start
         else:
             local_data = local_data.take(range(start, stop), axis=dim)
     if isinstance(local_data, hetu.NDArray):
         local_data = local_data.slice(begin_pos, out_shape)
+    elif isinstance(local_data, hetu.Tensor):
+        with hetu.graph("eager"):
+            with hetu.context(eager_device="cpu"):
+                local_data = local_data.slice(begin_pos, out_shape)
     return local_data
 
 
@@ -323,20 +339,33 @@ class Module(object):
                 mutli_recompute = [[False]]  
                 print(f"Warning: {self.__class__.__name__} does not have ds_parallel_configs attribute, undefined behavior may happen")
                 
+            # multi-strategies of cpu offload
+            if self._cpu_offload:
+                mutli_cpu_offload = [[True] for _ in range(1 if self.ds_parallel_configs is None else len(self.ds_parallel_configs))]
+            elif self.ds_parallel_configs is not None:
+                mutli_cpu_offload = [[False] if 'cpu_offload' not in self.ds_parallel_configs[i] else self.ds_parallel_configs[i]['cpu_offload'] for i in range(len(self.ds_parallel_configs))]
+            else:
+                mutli_cpu_offload = [[False]]
+                print(f"Warning: {self.__class__.__name__} does not have ds_parallel_configs attribute, undefined behavior may happen")
+                
             # for name, child in self.named_children():
             #     print("Sub:", name, ",", child)
             # print(self.module_name, self.ds_parallel_configs)
-            # stack.enter_context(hetu.recompute(mutli_recompute))
-            # TODO: support multi-strategies 
-            # stack.enter_context(hetu.cpu_offload() if self._cpu_offload else nullcontext())
+            stack.enter_context(hetu.recompute(mutli_recompute))
+            stack.enter_context(hetu.cpu_offload(mutli_cpu_offload))
 
             # 实际forward
             value = self.forward(*input, **kwargs)
             
             # block之间显式地插入了comm op从而阻隔了连续的recompute
             # 之前需要在这里手动设置block的output不做recompute
-            # if isinstance(value, hetu.Tensor):
-            #     value._make_recompute([False for i in range(1 if self.ds_parallel_configs is None else len(self.ds_parallel_configs))])
+            
+            # 手动设置module的output不做recompute，从ds config传入
+            if isinstance(value, hetu.Tensor):
+                value._make_recompute(
+                    [False] if self.ds_parallel_configs is None else
+                    [ds_parallel_config.get('output_recompute', [False]) for ds_parallel_config in self.ds_parallel_configs]
+                )
             return value
     
     def forward(self, *input: Any, **kwargs: Any) -> Any:
@@ -494,12 +523,14 @@ class Module(object):
                     else:
                         # Distributed Tensor
                         assert param.global_shape == list(param_data.shape), "global shape mismatched!"
-                        device_group = param.get_device_group()
+                        device_group_union = param.get_device_group_union()
+                        device_group_index, device_group = get_dg_from_union(local_device, device_group_union)
+                        if device_group is None:
+                            continue
                         assert device_group.num_devices > 0, f"device group has {device_group.num_devices} devices, which is illegal, please check your model initialization."
                         # 3D parallel: for pipeline situation, a device don't need to load all the checkpoint
                         if device_group.contains(local_device):
-                            device_index = device_group.get_index(local_device)
-                            data = parallel_data_provider(param_data, param.distributed_states, device_index)
+                            data = parallel_data_provider(param_data, param.get_ds_union(), device_group_union, local_device)
                             param.reset_data(data)
                             '''
                             if 'lm_head' in key:
@@ -556,7 +587,7 @@ class Module(object):
                     load(child, prefix + name + '.')
 
         load(self)
-        del load
+        del state_dict
 
         if strict:
             if len(unexpected_keys) > 0:

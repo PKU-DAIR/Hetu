@@ -6,7 +6,7 @@ import hetu as ht
 import numpy as np
 from tqdm import tqdm
 from trainer.utils import ModelWrapper, OptimizerWrapper, TrainerConfig
-from model import LLamaConfig, LLamaLMHeadModel, QKVFusedLLamaLMHeadModel
+from model import LLaMAConfig, LLaMALMHeadModel, QKVFusedLLaMALMHeadModel
 from utils import distributed_init, read_ds_parallel_config, parse_multi_ds_parallel_config, convert_strategy, generate_lora_ds_parallel_config, write_to_csv
 from trainer.batch_scheduler import make_micro_batches
 from peft.lora import MultiLoraModel
@@ -21,7 +21,7 @@ def llama_benchmark(args):
     generate_lora_ds_parallel_config(ngpus, layers_tp_groups, config_file_path)
     ds_parallel_configs = read_ds_parallel_config(config_file_path)
 
-    model_config = LLamaConfig(
+    model_config = LLaMAConfig(
         vocab_size=args.vocab_size,
         ffn_hidden_size=args.ffn_hidden_size,
         n_embd=args.hidden_size,
@@ -39,9 +39,9 @@ def llama_benchmark(args):
     assert args.train_task_num == trainer_config.train_task_num, \
         f"args.train_task_num should be equal to that in trainer_config, but got {args.train_task_num} v.s. {trainer_config.train_task_num}"
     if trainer_config.variant == 'fused':
-        pretrained_model_wrapper = ModelWrapper(QKVFusedLLamaLMHeadModel, model_config)
+        pretrained_model_wrapper = ModelWrapper(QKVFusedLLaMALMHeadModel, model_config)
     elif trainer_config.variant == 'canonical':
-        pretrained_model_wrapper = ModelWrapper(LLamaLMHeadModel, model_config)
+        pretrained_model_wrapper = ModelWrapper(LLaMALMHeadModel, model_config)
     else:
         raise ValueError(f'Unsupported variant: {trainer_config.variant}')
     optimizer_wrapper = OptimizerWrapper(ht.AdamOptimizer)

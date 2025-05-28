@@ -852,6 +852,8 @@ NDArray NDArray::reshape(const NDArray& input, const HTShape& new_shape,
 }
 
 NDArray NDArray::view(const NDArray& input, const HTShape& view_shape) {
+  HT_ASSERT(input->is_contiguous())
+    << "NDArray::view should guaurantee input is contiguous";
   NDArrayMeta output_meta = input->meta();
   output_meta.view(view_shape);
   return NDArray(output_meta, input->storage(), input->storage_offset());
@@ -1577,7 +1579,7 @@ NDArray NDArray::sin(const NDArray& input,
 NDArray NDArray::slice(const NDArray& input, const HTShape& begin_pos,
                        const HTShape& output_shape, StreamIndex stream_id) {
   HT_ASSERT(!input->is_dynamic())
-  << "Output definition doesn't support dynamic input in NDArray::slice.";
+    << "Output definition doesn't support dynamic input in NDArray::slice.";
 
   const auto& in_shape = input->shape();
   const auto& in_stride = input->stride();
@@ -1748,31 +1750,19 @@ NDArray NDArray::cat(const NDArrayList& inputs, int axis,
                      StreamIndex stream_id,
                      NDArray& output) {
   auto parsed_axis = NDArrayMeta::ParseAxis(axis, inputs.at(0)->ndim());
-  if (parsed_axis == 0) {
-    std::vector<HTShape> shapes;
-    shapes.reserve(inputs.size());
-    std::transform(inputs.begin(), inputs.end(), std::back_inserter(shapes),
-                   [](const NDArray& x) { return x->shape(); });
-    auto cat_shape = NDArrayMeta::Concat(shapes, 0);
-    // TODO: For axis 0, we can copy the inputs one-by-one,
-    // but it would be better to refine the concat kernel
-    // to accept multiple inputs.
-    NDArray ret = output.is_defined()
-      ? output
-      : NDArray::empty(cat_shape, inputs.at(0)->device(), inputs.at(0)->dtype(),
-                       stream_id);
-    HTShape chunks(inputs.size());
-    std::transform(inputs.begin(), inputs.end(), chunks.begin(),
-                   [](const NDArray& x) { return x->shape(0); });
-    auto splits = NDArray::split(ret, chunks, 0, stream_id);
-    for (size_t i = 0; i < inputs.size(); i++) {
-      NDArray::copy(inputs.at(i), stream_id, splits[i]);
-    }
-    return ret;
-  } else {
-    HT_NOT_IMPLEMENTED << "Currently we only support concat on axis 0.";
-    __builtin_unreachable();
-  }
+  std::vector<HTShape> shapes;
+  shapes.reserve(inputs.size());
+  std::transform(inputs.begin(), inputs.end(), std::back_inserter(shapes),
+                 [](const NDArray& x) { return x->shape(); });
+  auto cat_shape = NDArrayMeta::Concat(shapes, parsed_axis);
+  NDArray ret = output.is_defined()
+    ? output
+    : NDArray::empty(cat_shape, inputs.at(0)->device(), inputs.at(0)->dtype(),
+                     stream_id);
+  Stream stream(inputs.at(0)->device(), stream_id);
+  HT_DISPATCH_KERNEL_CUDA_ONLY(ret->device().type(), __FUNCTION__, hetu::impl::Concat,
+                               inputs, ret, parsed_axis, stream);
+  return ret;
 }
 
 // deprecated: dynamic shape at inference when using different seq_len
@@ -1838,6 +1828,68 @@ NDArray NDArray::copy(const NDArray& input, StreamIndex stream_id,
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(out_device.type(), __FUNCTION__,
                                   hetu::impl::DataTransfer, input, out, stream);
   return out;
+}
+
+// 在第一维取出indices（begin index和end index组成的很多的pair）中的slice然后拷贝成连续的一块
+// 目前只会用在CP + packing中
+// TODO: 实现一个kernel来完成这个功能
+NDArray NDArray::copy_multi_slices(const NDArray& input, const std::vector<std::pair<int32_t, int32_t>> indices,
+                                   int64_t axis, StreamIndex stream_id, NDArray& output) {
+  HTShape output_shape(input->shape());
+  int64_t total_span = 0;
+  for (const auto& begin_end_index : indices) {
+    total_span += begin_end_index.second - begin_end_index.first;
+  }
+  auto parsed_axis = NDArrayMeta::ParseAxis(axis, input->ndim());
+  output_shape.at(parsed_axis) = total_span;
+  NDArray out;
+  if (output.is_defined()) {
+    HT_ASSERT (output->shape() == output_shape)
+      << "output shape mismatches with input shape & indices";
+    out = output;
+  } else {
+    out = NDArray::empty(output_shape, input->device(), input->dtype(), stream_id);
+  }
+  int64_t acc_index = 0;
+  for (const auto& begin_end_index : indices) {
+    HTShape from_begin_pos(input->shape().size(), 0);
+    HTShape to_begin_pos(input->shape().size(), 0);
+    HTShape slice_shape(input->shape());
+    from_begin_pos.at(parsed_axis) = begin_end_index.first;
+    to_begin_pos.at(parsed_axis) = acc_index;
+    slice_shape.at(parsed_axis) = begin_end_index.second - begin_end_index.first;
+    auto from_slice = NDArray::slice(input, from_begin_pos, slice_shape, stream_id);
+    auto to_slice = NDArray::slice(out, to_begin_pos, slice_shape, stream_id);
+    NDArray::copy(from_slice, stream_id, to_slice);
+    acc_index += slice_shape.at(parsed_axis);
+  }
+  return out;
+}
+
+// copy_multi_slices的逆操作
+NDArray NDArray::revert_copy_multi_slices(const NDArray& input, const std::vector<std::pair<int32_t, int32_t>> indices,
+                                          int64_t axis, StreamIndex stream_id, NDArray& output) {
+  int64_t total_span = 0;
+  for (const auto& begin_end_index : indices) {
+    total_span += begin_end_index.second - begin_end_index.first;
+  }
+  auto parsed_axis = NDArrayMeta::ParseAxis(axis, input->ndim());
+  HT_ASSERT(output.is_defined() && total_span == input->shape(parsed_axis))
+    << "output should be defined and input axis " << parsed_axis << " should have length " << total_span << " but actual length is " << input->shape(parsed_axis);
+  int64_t acc_index = 0;
+  for (const auto& begin_end_index : indices) {
+    HTShape from_begin_pos(input->shape().size(), 0);
+    HTShape to_begin_pos(input->shape().size(), 0);
+    HTShape slice_shape(input->shape());
+    from_begin_pos.at(parsed_axis) = acc_index;
+    to_begin_pos.at(parsed_axis) = begin_end_index.first;
+    slice_shape.at(parsed_axis) = begin_end_index.second - begin_end_index.first;
+    auto from_slice = NDArray::slice(input, from_begin_pos, slice_shape, stream_id);
+    auto to_slice = NDArray::slice(output, to_begin_pos, slice_shape, stream_id);
+    NDArray::copy(from_slice, stream_id, to_slice);
+    acc_index += slice_shape.at(parsed_axis);
+  }
+  return output;
 }
 
 NDArray NDArray::contiguous(const NDArray& input, StreamIndex stream_id,

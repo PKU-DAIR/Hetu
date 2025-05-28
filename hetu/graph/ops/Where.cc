@@ -15,7 +15,7 @@ void WhereOpImpl::DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList
 NDArrayList WhereOpImpl::DoCompute(Operator& op,
                                    const NDArrayList& inputs,
                                    RuntimeContext& ctx) const {
-  NDArrayList outputs = inplace() ? NDArrayList{inputs.at(1)} : DoAllocOutputs(op, inputs, ctx);
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? NDArrayList{inputs.at(1)} : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }
