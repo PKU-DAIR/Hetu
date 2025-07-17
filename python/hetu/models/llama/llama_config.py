@@ -28,6 +28,7 @@ class LlamaConfig(PreTrainedConfig):
         head_dim=None,
         use_flash_attn=True,
         gated_linear_unit=True,
+        use_packed_qkv=True,
         **kwargs,
     ):
         self.sequence_parallel = kwargs.pop("sequence_parallel", True)
@@ -56,6 +57,7 @@ class LlamaConfig(PreTrainedConfig):
         self.head_dim = head_dim if head_dim is not None else self.hidden_size // self.num_attention_heads
         self.use_flash_attn = use_flash_attn
         self.gated_linear_unit = gated_linear_unit
+        self.use_packed_qkv = use_packed_qkv
 
         super().__init__(
             pad_token_id=pad_token_id,

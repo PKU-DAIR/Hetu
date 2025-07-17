@@ -14,6 +14,7 @@ logging.getLogger("paramiko").setLevel(logging.WARNING)
 
 DEVICES_PER_NODE = 8
 TIMEOUT = 5.0
+DS_CONFIG_PATH = "examples/ampelos/ds_parallel_config"
 
 def delete_argument(command_string, arg_name):
     args_list = shlex.split(command_string)
@@ -489,7 +490,7 @@ class ElasticStrategy:
         print(f"Strategy_dict:{self.strategy_dict}")
         return parallel_config, strategy_dict
     
-    def generate_parallel_config(self, log_path):
+    def generate_parallel_config(self, log_path, ini_cmd = None):
         hetu_dir = os.path.abspath(__file__)
         for i in range(4):
             hetu_dir = os.path.dirname(hetu_dir)
@@ -497,11 +498,11 @@ class ElasticStrategy:
         self.hetero = True
         if self.hetero:
             generator_path = hetu_dir + \
-                             "/examples/gpt/ds_parallel_config/generate_gpt_hetero_3d_config.py"
+                             "/" + DS_CONFIG_PATH + "/generate_gpt_hetero_4d_config.py"
         else:
             self.neglect_for_homo()
             generator_path = hetu_dir + \
-                             "/examples/gpt/ds_parallel_config/generate_gpt_3d_config.py"
+                             "/" + DS_CONFIG_PATH + "/generate_gpt_4d_config.py"
         generate_cmd = "python3 " + generator_path
         for k, v in self.parallel_config.items():
             if v is None:
@@ -530,10 +531,15 @@ class ElasticStrategy:
                 mkdir_cmd = "mkdir -p " + log_path
                 print(mkdir_cmd)
                 _, run_log, error_log = sys_pssh_client.exec_command(mkdir_cmd)
+                generate_cmd = ini_cmd + " && " + generate_cmd
                 _, run_log, error_log = sys_pssh_client.exec_command(generate_cmd)
-                sys_pssh_client.close()
-                # print(f"run_log:{run_log.read().decode('utf-8').strip()}\n"
-                #       f"error_log:{error_log.read().decode('utf-8').strip()}")
+                run_log = run_log.read().decode('utf-8').strip()
+                error_log  = error_log.read().decode('utf-8').strip()
+                # sys_pssh_client.close()
+                print(f"gen_cmd:{generate_cmd}")
+                # _, run_log, error_log = sys_pssh_client.exec_command("pwd")
+                print(f"run_log:{run_log}\n"
+                        f"error_log:{error_log}")
             except:
                 print(f"NODE:{v['addr']} disconnected.")
                 sys_pssh_client.close()
@@ -549,12 +555,12 @@ class ElasticStrategy:
                 self.parallel_config['cp_list'] = json.loads(self.parallel_config['cp_list'])
             dcp = sum(self.parallel_config['cp_list'])
             self.strategy_dict['ds_parallel_config'] = hetu_dir + \
-                                                       f"/examples/gpt/ds_parallel_config/hetero/" + \
+                                                       f"/"+ DS_CONFIG_PATH + "/hetero/" + \
                                                        f"dcp{dcp}_tp{tp}_pp{pp}.json"
         else:
             dcp = self.parallel_config['dp'] * self.parallel_config['cp']
             self.strategy_dict['ds_parallel_config'] = hetu_dir + \
-                                                       f"/examples/gpt/ds_parallel_config/homo/" + \
+                                                       f"/"+ DS_CONFIG_PATH + "/homo/" + \
                                                        f"dcp{dcp}_tp{tp}_pp{pp}.json"
         # print("RUN:", result.stdout)
         # print("CONFIG_PATH:", self.strategy_dict['ds_parallel_config'])

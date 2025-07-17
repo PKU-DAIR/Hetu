@@ -600,6 +600,7 @@ def server_launch(port, pssh_pool:PSSHHandlerPool, args):
     worker_path = os.environ['HETU_HOME'] + "/python/hetu/rpc/pssh_workers.py"
     cwd = os.getcwd()
     cmd = "cd " + cwd 
+    ini_cmd = cmd + f" && source {args.envs}"
     cmd += f" && source {args.envs} && " + "python3 " + worker_path + \
         " --server_addr " + args.server_addr + \
         " --server_port " + args.server_port + \
@@ -667,7 +668,7 @@ def server_launch(port, pssh_pool:PSSHHandlerPool, args):
             print(f"BASE_GPU_NUM:{base_gpu_num}")
             pssh_pool.alloc_workers(base_gpu_num)
             available_gpus = es.available_gpu_info()
-            es.generate_parallel_config(args.log_path)
+            es.generate_parallel_config(args.log_path, ini_cmd)
             ptr = 0
             addresses = []
             for k, v in available_gpus.items():

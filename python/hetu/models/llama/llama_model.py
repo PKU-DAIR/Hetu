@@ -118,14 +118,42 @@ class LlamaAttention(ht.nn.Module):
             name=f'rotary_embedding_{name}',
         )
 
-        self.qkv_dense = ht.nn.HtMultiColumnParallelLinear(
-            config.hidden_size,
-            (config.num_attention_heads + 2 * config.num_key_value_heads) * self.head_dim,
-            get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
-            bias=config.attention_bias,
-            gather_output=False,
-            name=f'colp_{name}'
-        )
+        if config.use_packed_qkv:
+            self.qkv_dense = ht.nn.HtMultiColumnParallelLinear(
+                config.hidden_size,
+                (config.num_attention_heads + 2 * config.num_key_value_heads) * self.head_dim,
+                get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
+                bias=config.attention_bias,
+                gather_output=False,
+                name=f'colp_{name}'
+            )
+        else:
+            self.q_dense = ht.nn.HtMultiColumnParallelLinear(
+                config.hidden_size,
+                config.num_attention_heads * self.head_dim,
+                get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
+                bias=config.attention_bias,
+                gather_output=False,
+                name=f'colp_{name}_q'
+            )
+
+            self.k_dense = ht.nn.HtMultiColumnParallelLinear(
+                config.hidden_size,
+                config.num_key_value_heads * self.head_dim,
+                get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
+                bias=config.attention_bias,
+                gather_output=False,
+                name=f'colp_{name}_k'
+            )
+
+            self.v_dense = ht.nn.HtMultiColumnParallelLinear(
+                config.hidden_size,
+                config.num_key_value_heads * self.head_dim,
+                get_multi_ds_parallel_config(ds_parallel_configs, 'qkv', layer_idx),
+                bias=config.attention_bias,
+                gather_output=False,
+                name=f'colp_{name}_v'
+            )
 
         self.dense = ht.nn.HtMultiRowParallelLinear(
             config.num_attention_heads * self.head_dim,
@@ -192,48 +220,70 @@ class LlamaAttention(ht.nn.Module):
         attention_mask=None,
     ):
         # column parallel, [micro_batch_size*seq_len, 3*embed_dim]
-        qkv = self.qkv_dense(hidden_states)
+        if self.config.use_packed_qkv:
+            qkv = self.qkv_dense(hidden_states)
 
-        # apply relative positional encoding (rotary embedding)
-        # TODO: 支持动态seq_len
-        # 注意此处传入generate_cos_sin的seq_len值要设置为不小于max_seqlen
-        cos_np, sin_np = self.rotary_embedding.get_cos_sin(self.config.max_seqlen_symbol.data)
-        ds_hierarchy = [
-            ht.DistributedStatesUnion([ht.DistributedStates(ds.device_num, {-1: ds.device_num}, [-1]) for ds in ds_union.ds_list], ds_union.hetero_dim)
-                for ds_union in self.dense.ds_union_map['dup']
-        ]
-        dg_hierarchy = self.qkv_dense.device_group_unions
-        sin_global = ht.from_numpy_parallel(sin_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'sin_attn')
-        cos_global = ht.from_numpy_parallel(cos_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'cos_attn')
-        qkv = ht.rotary(
-            qkv, cos_global, sin_global,
-            self.head_dim,
-            self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
-            self.config.multi_seq_lens_symbol,
-            self.config.multi_cp_group_symbol,
-            self.config.packing,
-            self.config.cu_seqlens_list[self.layer_idx],
-            self.config.cu_seqlens_list[self.layer_idx],
-            self.config.max_seqlen_symbol,
-            self.config.max_seqlen_symbol,
-            inplace=False
-        )
+            # apply relative positional encoding (rotary embedding)
+            # TODO: 支持动态seq_len
+            # 注意此处传入generate_cos_sin的seq_len值要设置为不小于max_seqlen
+            cos_np, sin_np = self.rotary_embedding.get_cos_sin(self.config.max_seqlen_symbol.data)
+            ds_hierarchy = [
+                ht.DistributedStatesUnion([ht.DistributedStates(ds.device_num, {-1: ds.device_num}, [-1]) for ds in ds_union.ds_list], ds_union.hetero_dim)
+                    for ds_union in self.dense.ds_union_map['dup']
+            ]
+            dg_hierarchy = self.qkv_dense.device_group_unions
+            sin_global = ht.from_numpy_parallel(sin_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'sin_attn')
+            cos_global = ht.from_numpy_parallel(cos_np, ds_hierarchy, device_group_hierarchy=dg_hierarchy, requires_grad=False, name=f'cos_attn')
+            qkv = ht.rotary(
+                qkv, cos_global, sin_global,
+                self.head_dim,
+                self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
+                self.config.multi_seq_lens_symbol,
+                self.config.multi_cp_group_symbol,
+                self.config.packing,
+                self.config.cu_seqlens_list[self.layer_idx],
+                self.config.cu_seqlens_list[self.layer_idx],
+                self.config.max_seqlen_symbol,
+                self.config.max_seqlen_symbol,
+                inplace=False
+            )
 
-        assert self.use_flash_attn, "currently only support flash attn"
-        # TODO: support packing api
-        attn_output = ht.parallel_attn(
-            qkv,             
-            self.head_dim, 
-            self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
-            self.config.multi_seq_lens_symbol, 
-            self.config.multi_cp_group_symbol,
-            self.config.packing,
-            self.config.cu_seqlens_list[self.layer_idx],
-            self.config.cu_seqlens_list[self.layer_idx],
-            self.config.max_seqlen_symbol,
-            self.config.max_seqlen_symbol,
-            self.attention_dropout
-        )[0]
+            assert self.use_flash_attn, "currently only support flash attn"
+            # TODO: support packing api
+            attn_output = ht.parallel_attn(
+                qkv,             
+                self.head_dim, 
+                self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
+                self.config.multi_seq_lens_symbol, 
+                self.config.multi_cp_group_symbol,
+                self.config.packing,
+                self.config.cu_seqlens_list[self.layer_idx],
+                self.config.cu_seqlens_list[self.layer_idx],
+                self.config.max_seqlen_symbol,
+                self.config.max_seqlen_symbol,
+                self.attention_dropout
+            )[0]
+        else:
+            q = self.q_dense(hidden_states)
+            k = self.k_dense(hidden_states)
+            v = self.v_dense(hidden_states)
+
+            #TODO: add rotary.
+
+            assert self.use_flash_attn, "currently only support flash attn"
+            # TODO: support packing api
+            attn_output = ht.flash_attn(
+                q, k, v,             
+                self.head_dim, 
+                self.num_key_value_groups, # group_query_ratio = q heads / k(v) heads, 1 means MHA and >1 means GQA
+                self.config.multi_seq_lens_symbol, 
+                self.config.multi_cp_group_symbol,
+                self.config.packing,
+                None,
+                None,
+                None,
+                None,
+            )[0]
         
         # row parallel, shape=[micro_batch_size*seq_len, num_heads*head_dim]
         attn_output = self.dense(attn_output)
@@ -381,6 +431,14 @@ class LlamaModel(LlamaPreTrainedModel):
                 hidden_states, # [b * seq_len, embed_dim]
                 attention_mask=attention_mask, # [b, 1, 1, seq_len]
             )
+            
+            # for hetero pipeline
+            if i != len(self.h) - 1:
+                next_block = self.h[i + 1]
+                if next_block.ln_1.sequence_parallel:
+                    hidden_states = ht.comm(hidden_states, next_block.ln_1.ds_union_map['split0'], next_block.ln_1.device_group_unions, name=f"pipeline_layer_{i}_comm")
+                else:
+                    hidden_states = ht.comm(hidden_states, next_block.attn.qkv_dense.ds_union_map['split0_dup'], next_block.ln_1.device_group_unions, name=f"pipeline_layer_{i}_comm")
         # layernorm
         hidden_states = self.ln_f(hidden_states)
         return hidden_states
@@ -427,7 +485,8 @@ class LlamaLMHeadModel(LlamaPreTrainedModel):
             # loss = ht.vocab_parallel_cross_entropy(lm_logits,
             #     labels, ignored_index = IGNORE_INDEX, reduction = "sum")
             loss_unreduce = ht.vocab_parallel_cross_entropy(lm_logits,
-                labels, ignored_index = IGNORE_INDEX, reduction = "none").reshape([-1])
+                labels, ignored_index = IGNORE_INDEX, reduction = "none")
+            # .reshape([-1])
             loss = ht.sum(loss_unreduce)
 
         return loss
