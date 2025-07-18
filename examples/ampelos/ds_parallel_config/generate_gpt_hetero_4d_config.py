@@ -2,10 +2,15 @@ import argparse
 import json
 import os
 import ast
+from hetu.utils.parallel import generate_recompute_config
 
-def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank, 
-                           hetero_layers, accumulate_hetero_stages, recompute_layers, 
-                           num_layers=32, num_gpus=8, dp=2, tp=2, pp=2, zero=True):
+def generate_gpt_4d_config(cp_list, rank_to_device_mapping, unused_rank, 
+                           hetero_layers, accumulate_hetero_stages,
+                           num_layers=32, num_gpus=8, dp=2, tp=2, pp=2, zero=True,
+                           recompute_granularity=None,
+                           recompute_method=None,
+                           recompute_num_layers=None,
+                           recompute_layer_idxs_list=None):
     if dp == 1:
         zero = False
     
@@ -34,10 +39,22 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
             hybrid_device_group.append([rank_to_device_mapping[rank] for rank in ranks if rank not in unused_rank])
         tp_union_list.append(hybrid_tp_degree)
         dg_union_list.append(hybrid_device_group)
+        
+    recompute_config = generate_recompute_config(
+        dp_cp,
+        num_layers,
+        hetero_layers,
+        recompute_granularity=recompute_granularity,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
+        recompute_layer_idxs_list=recompute_layer_idxs_list
+    )
 
     ds_parallel_config = {
         'zero': zero,
         'devices': list(range(num_gpus)),
+        'recompute_granularity': recompute_config.recompute_granularity,
+        'recompute_layer_idxs_list': recompute_config.recompute_layer_idxs_list,
         'input': {
             'split': {'0': dp_cp_union},
             'dup': tp_union_list[0],
@@ -51,21 +68,14 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
                 'device_group_union': dg_union_list[0],
                 'type': 'variable'
             },
-            'wpe': {
-                'split': {},
-                'dup': [tp_union_list[0][i] * dp_cp for i in range(dp_cp)],
-                'device_group_union': dg_union_list[0],
-                'type': 'variable'
-            },
             'blocks': {
 
             },
             'rmsnorm_final': {
-                # 'split': {'0': tp_union_list[-1]},
+                # 'split': {'0': tp_union_list[block_id]},
                 'split': {},
-                'dup': [tp_union_list[-1][i] * dp_cp for i in range(dp_cp)],
-                # 'split': {0: tp_union_list[-1]},
                 # 'dup': dp_cp_union,
+                'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[-1],
                 'type': 'variable'
             }
@@ -83,18 +93,19 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
             'type': 'placeholder'
         }
     }
-    print(f"tp_union_list:{tp_union_list}")
+    
     for block_id in range(num_layers):
         blocks_json = ds_parallel_config['llama']['blocks']
         blocks_json[f'blocks{block_id}'] = {
             'range': [block_id,],
-            'recompute': [(True if block_id in recompute_layers[i] else False) for i in range(dp_cp)],
+            'recompute': recompute_config.blocks_recompute[block_id],
+            'output_recompute': recompute_config.blocks_output_recompute[block_id],
+            'cpu_offload': [False for _ in range(dp_cp)],
             'rmsnorm1': {
                 # 'split': {'0': tp_union_list[block_id]},
                 'split': {},
-                'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
-                # 'split': {0: tp_union_list[block_id]},
                 # 'dup': dp_cp_union,
+                'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },
@@ -115,9 +126,8 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
             'rmsnorm2': {
                 # 'split': {'0': tp_union_list[block_id]},
                 'split': {},
-                'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
-                # 'split': {0: tp_union_list[block_id]},
                 # 'dup': dp_cp_union,
+                'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },
@@ -133,6 +143,8 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
                     'dup': dp_cp_union,
                     'device_group_union': dg_union_list[block_id],
                     'type': 'variable'
+                },
+                'activation_func': {
                 }
             }
         }
@@ -217,7 +229,9 @@ if __name__ == '__main__':
     recompute_layers = ast.literal_eval(args.recompute_layers)
     assert len(recompute_layers) == sum(cp_list), "recompute layers state should align to dp&cp num"  
         
-    ds_parallel_config = generate_gpt_3d_config(cp_list, rank_to_device_mapping, ast.literal_eval(args.unused_rank), hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers, args.num_gpus, args.dp, args.tp, args.pp, args.zero)
+    ds_parallel_config = generate_gpt_4d_config(cp_list, rank_to_device_mapping, ast.literal_eval(args.unused_rank), 
+                                                hetero_layers, accumulate_hetero_stages, 
+                                                num_layers, args.num_gpus, args.dp, args.tp, args.pp, args.zero)
     
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     save_folder = cur_dir + "/hetero"
