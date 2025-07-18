@@ -279,10 +279,10 @@ class LLamaBlock(ht.nn.Module):
         self.layer_idx = layer_idx
         hidden_size = config.hidden_size
 
-        # sequence parallel: layernorm前做reduce-scatter(这一部分由row prallel的reduce-scatter完成); layernorm后做allgather
-        self.rmsnorm_1 = ht.nn.HtMultiParallelRMSNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm1', layer_idx), sequence_parallel=True, name=f'rmsnorm1_block{layer_idx}')
+        # sequence parallel: rmsnorm前做reduce-scatter(这一部分由row prallel的reduce-scatter完成); rmsnorm后做allgather
+        self.rmsnorm_1 = ht.nn.HtMultiParallelRMSNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'rmsnorm1', layer_idx), sequence_parallel=True, name=f'rmsnorm1_block{layer_idx}')
         self.attn = LLamaAttention(config, get_multi_ds_parallel_config(ds_parallel_configs, "attn", layer_idx), layer_idx=layer_idx, name=f'attn_block{layer_idx}')
-        self.rmsnorm_2 = ht.nn.HtMultiParallelRMSNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm2', layer_idx), sequence_parallel=True, name=f'rmsnorm2_block{layer_idx}')
+        self.rmsnorm_2 = ht.nn.HtMultiParallelRMSNorm(hidden_size, get_multi_ds_parallel_config(ds_parallel_configs, 'rmsnorm2', layer_idx), sequence_parallel=True, name=f'rmsnorm2_block{layer_idx}')
         self.mlp = LLamaMLP(config, get_multi_ds_parallel_config(ds_parallel_configs, "mlp", layer_idx), layer_idx=layer_idx, name=f'mlp_block{layer_idx}')
         self.ds_hierarchy_input = None
         self.ds_hierarchy_output = None
@@ -320,7 +320,7 @@ class LLamaBlock(ht.nn.Module):
         # if sp:
         #     with ht.recompute(self.mutli_recompute):
         #         hidden_states = ht.comm(hidden_states, self.ds_hierarchy_output, 
-        #                                 name="allgather_after_layernorm1")
+        #                                 name="allgather_after_rmsnorm1")
         attn_output = self.attn(
             hidden_states, # [b, seq_len, hidden_size]
             attention_mask=attention_mask # [b, 1, 1, seq_len]
@@ -333,7 +333,7 @@ class LLamaBlock(ht.nn.Module):
         # if sp:
         #     with ht.recompute(self.mutli_recompute):
         #         hidden_states = ht.comm(hidden_states, self.ds_hierarchy_output, 
-        #                                 name="allgather_after_layernorm2")
+        #                                 name="allgather_after_rmsnorm2")
         feed_forward_hidden_states = self.mlp(hidden_states)
         # residual connection
         hidden_states = residual + feed_forward_hidden_states
@@ -358,7 +358,7 @@ class LLamaModel(ht.nn.Module):
         for i in range(config.num_hidden_layers):
             blocks.append(LLamaBlock(config, get_multi_ds_parallel_config(ds_parallel_configs, f'blocks{i}'), layer_idx=i))
         self.h = ht.nn.ModuleList(blocks)
-        self.rmsnorm_f = ht.nn.HtMultiParallelRMSNorm(self.embed_dim, get_multi_ds_parallel_config(ds_parallel_configs, 'layernorm_final'), sequence_parallel=True, name='rmsnorm_final')
+        self.rmsnorm_f = ht.nn.HtMultiParallelRMSNorm(self.embed_dim, get_multi_ds_parallel_config(ds_parallel_configs, 'rmsnorm_final'), sequence_parallel=True, name='rmsnorm_final')
 
     def forward(
         self,
@@ -427,7 +427,7 @@ class LLamaModel(ht.nn.Module):
                     hidden_states = ht.comm(hidden_states, next_block.rmsnorm_1.ds_union_map['split0'], next_block.rmsnorm_1.device_group_unions, name=f"pipeline_layer_{i}_comm")
                 else:
                     hidden_states = ht.comm(hidden_states, next_block.attn.qkv_dense.ds_union_map['split0_dup'], next_block.rmsnorm_1.device_group_unions, name=f"pipeline_layer_{i}_comm")
-        # layernorm
+        # rmsnorm
         hidden_states = self.rmsnorm_f(hidden_states)
         return hidden_states
 
@@ -452,13 +452,13 @@ class Loss(ht.nn.Module):
             loss = ht.sum(loss_unreduced)
         return loss
 
-class LLamaLMHeadModel(ht.nn.Module):
+class LlamaLMHeadModel(ht.nn.Module):
 
     def __init__(self, config, ds_parallel_configs):
-        super(LLamaLMHeadModel, self).__init__()
+        super(LlamaLMHeadModel, self).__init__()
         self.config = config
         self.ds_parallel_configs = ds_parallel_configs
-        self.transformer = LLamaModel(config, get_multi_ds_parallel_config(ds_parallel_configs, 'gpt'))
+        self.transformer = LLamaModel(config, get_multi_ds_parallel_config(ds_parallel_configs, 'llama'))
         self.lm_head = ht.nn.HtMultiColumnParallelLinear(
             config.n_embd,
             config.vocab_size,

@@ -236,12 +236,6 @@ class DynamicMixBuffer(DynamicBuffer):
         test_encoder = GPT2BPEEncoder(args=args)
         test_processor = JsonPreProcessor(json_file, key, test_encoder, max_seq_len)
         self.preprocessors.append(test_processor)
-        # for i in range (8):
-        #     test_encoder = LlamaEncoder(args=args)
-        #     # test_processor = JsonPreProcessor(json_file, key, test_encoder, max_seq_len)
-        #     plain_text_path = "/home/wangxuanyu/mlsys/wxy/dit-10.14/examples/gpt/data/test_ready.txt"
-        #     test_processor = PlainTextPreProcessor(plain_text_path, test_encoder, max_seq_len)
-        #     self.preprocessors.append(test_processor)
 
         self.skip_first_items(skip_items)
         self.total_len = skip_items

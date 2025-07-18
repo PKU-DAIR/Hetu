@@ -5,7 +5,8 @@ import sys
 import multiprocessing
 print(sys.version)
 import hetu as ht
-from hetu_llama import LLamaLMHeadModel
+from hetu.models.llama.llama_model import LlamaLMHeadModel
+from hetu.models.llama.llama_config import LlamaConfig
 from hetu.nn.modules.parallel_multi_ds import config2ds
 from gpt_config import GPTConfig
 from data_utils import GPTJsonDataset, get_mask_and_position_ids, build_pretraining_data_loader
@@ -160,7 +161,7 @@ def get_dg_from_union(device, dg_union):
 def pretrain(args):
     ds_parallel_configs = read_ds_parallel_config(args)
 
-    config = GPTConfig(
+    config = LlamaConfig(
         vocab_size=args.vocab_size, 
         n_positions=args.global_seq_len,
         n_ctx=args.global_seq_len,
@@ -175,25 +176,31 @@ def pretrain(args):
         activation_function=args.hidden_act,
         global_batch_size=args.global_batch_size,
         micro_batch_size=args.micro_batch_size,
-        use_flash_attn=args.use_flash_attn
+        use_flash_attn=args.use_flash_attn,
+        use_packed_qkv=False
     )
+
+    config.packing = False
     
     # simple check for gpt blocks range
     ranges = []
-    for _, block_config in ds_parallel_configs[0]['gpt']['blocks'].items():
+    for _, block_config in ds_parallel_configs[0]['llama']['blocks'].items():
         ranges.append(block_config['range'])
     assert ranges[0][0] == 0 and ranges[-1][-1] == config.num_hidden_layers-1, \
-        f'gpt blocks range: {ranges} is conflict with num_hidden_layers: {config.num_hidden_layers}!'
+        f'llama blocks range: {ranges} is conflict with num_hidden_layers: {config.num_hidden_layers}!'
 
     # Hetu model definition
-    model = LLamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
+    # model = LLamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
+    model = LlamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
     
     input_ds_hierarchy, input_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'input')
     label_ds_hierarchy, label_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'label')
     
     config.multi_seq_lens_symbol = []
+    config.max_seqlen_symbol = ht.IntSymbol(1)
     config.micro_batch_size_symbol = ht.IntSymbol(1)
     config.multi_cp_group_symbol = []
+    # config.cu_seqlens_list = []
     for i in range(len(input_ds_hierarchy)):
         dcp_size = input_ds_hierarchy[i].get(0).get_dim(0)
         # 例如[32, 32, 32, 48, 48, 32, 32, 32]
@@ -226,7 +233,7 @@ def pretrain(args):
         # attention_mask=attention_mask,
         # token_type_ids=token_type_ids,
         labels=masked_lm_labels,
-        per_gbs_tokens=per_gbs_tokens,
+        # per_gbs_tokens=per_gbs_tokens,
     )
     print(f'{local_device}: build model end...')
 
@@ -470,6 +477,7 @@ def pretrain(args):
         print("runtime seq_lens is", seq_lens, "and runtime cp list is", cp_list)    
         for i, symbol in enumerate(config.multi_seq_lens_symbol[strategy_id]):
             symbol.set_data(seq_lens[i])
+        config.max_seqlen_symbol.set_data(seq_lens[i])
         config.micro_batch_size_symbol.set_data(args.micro_batch_size)
         accumulate_cp = cp_list[0]
         cp_cnt = 0
