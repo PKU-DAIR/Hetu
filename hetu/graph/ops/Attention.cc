@@ -11,7 +11,6 @@ void AttentionOpImpl::DoCompute(Operator& op,
                                 const NDArrayList& inputs, NDArrayList& outputs,
                                 RuntimeContext& ctx) const {
   
-  std::cout << "start compute attn " << std::endl;
   double softmax_scale_ = softmax_scale() >= 0 ? softmax_scale() : std::pow(inputs.at(0)->shape(3), -0.5);
   HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(), hetu::impl::FlashAttn,
                                inputs.at(0), inputs.at(1), inputs.at(2), outputs.at(0), outputs.at(1),

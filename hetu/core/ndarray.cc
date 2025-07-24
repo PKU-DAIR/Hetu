@@ -1612,7 +1612,7 @@ NDArray NDArray::slice(const NDArray& input, const HTShape& begin_pos,
   const auto& in_shape = input->shape();
   const auto& in_stride = input->stride();
   HTShape out_shape = output_shape;
-  
+
   HT_ASSERT(begin_pos.size() == in_shape.size()
          && output_shape.size() == in_shape.size());
 
@@ -1697,6 +1697,7 @@ NDArray NDArray::sceloss(const NDArray& preds, const NDArray& labels, const int6
                          ReductionType reduction,
                          StreamIndex stream_id,
                          NDArray& output) {
+  std::cout << "in sceloss" << std::endl;
   NDArray out;
   HTShape output_shape = HTShape(preds->shape().begin(), preds->shape().end() - 1);
   if (output.is_defined()) 
@@ -1708,13 +1709,17 @@ NDArray NDArray::sceloss(const NDArray& preds, const NDArray& labels, const int6
       out = NDArray::empty(output_shape, preds->device(), preds->dtype(),
                            stream_id);
   }
+  std::cout << "out done" << std::endl;
   Stream stream(preds->device(), stream_id);
   NDArray unreduced = reduction == kNONE
     ? out
     : NDArray::empty(output_shape, preds->device(), preds->dtype(), stream_id);
+  std::cout << "kernel compute" << std::endl;
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(preds->device().type(), __FUNCTION__,
                                   hetu::impl::SoftmaxCrossEntropySparse, preds,
                                   labels, unreduced, ignored_index, stream);
+  stream.Sync();
+  std::cout << "kernel done" << std::endl;
   if (reduction != kNONE) {
     NDArray::reduce(unreduced, reduction, HTAxes(), false, stream_id, out);
   }

@@ -482,6 +482,11 @@
   args: Tensor input
   self: input
 
+- name: gelu
+  op: GeluOp
+  args: Tensor input
+  self: input
+
 - name: leakyrelu
   op: LeakyReluOp
   args: Tensor input, double alpha
@@ -645,6 +650,11 @@
 - name: comm
   op: CommOp
   args: Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_dg_hierarchy, bool is_pipeline_op=True
+
+
+- name: comm
+  op: CommOp
+  args: Tensor input, DistributedStatesHierarchy src_ds_hierarchy, DeviceGroupHierarchy src_dg_hierarchy, DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_dg_hierarchy, List[List[List[IntSymbol]]] packing_slice_list, bool is_cross_modal_comm_op=True, bool is_forward_op=True
 
 - name: comm
   op: CommOp

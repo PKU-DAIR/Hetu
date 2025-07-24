@@ -25,11 +25,13 @@ DistributedStates conv2d_deduce_states(
   };
   update_res_states(res_states, ds_l, l2res_map);
   update_res_states(res_states, ds_r, r2res_map);
+  std::cout << "res_states: " << res_states << std::endl;
   int32_t total_splits = 1;
   for (auto& state : res_states) {
     total_splits *= state.second;
   }
   res_states[-1] = device_num / total_splits;
+  std::cout << "after res_states: " << res_states << std::endl;
   // deduce order
   std::vector<int32_t> lorder = ds_l.get_order();
   std::vector<int32_t> rorder = ds_r.get_order();
@@ -46,8 +48,12 @@ DistributedStates conv2d_deduce_states(
     HT_ASSERT(it != _order.end()) << "dimension " << val << " is not in order!";
     return it - _order.begin();
   };
+  std::cout << "lorder: " << lorder << std::endl;
+  std::cout << "rorder: " << rorder << std::endl;
   auto new_lorder = get_new_order(l2res_map, lorder);
   auto new_rorder = get_new_order(r2res_map, rorder);
+  std::cout << "new_lorder: " << new_lorder << std::endl;
+  std::cout << "new_rorder: " << new_rorder << std::endl;
   // few cases
   if(new_lorder.size() != new_rorder.size()){
     if(new_lorder.size() + 1 == new_rorder.size()){
@@ -62,8 +68,14 @@ DistributedStates conv2d_deduce_states(
   }
   else if (new_lorder != new_rorder) {
     if(new_lorder.size() == 1){
-      new_lorder[get_index(new_lorder, 1)] = -1;
-      new_rorder[get_index(new_rorder, 0)] = -1;
+      if(new_lorder[0] == 1){
+        new_lorder[get_index(new_lorder, 1)] = -1;
+        new_rorder[get_index(new_rorder, 0)] = -1;
+      }
+      else{
+        new_lorder[get_index(new_lorder, 0)] = -1;
+        new_rorder[get_index(new_rorder, 1)] = -1;
+      }
     }
     else if(new_lorder.size() == 2){
       new_lorder[get_index(new_lorder, 0)] = -1;
@@ -154,10 +166,18 @@ void Conv2dGradientofFilterOpImpl::DoCompute(Operator& op,
                                              const NDArrayList& inputs,
                                              NDArrayList& outputs,
                                              RuntimeContext& ctx) const {
+  std::cout << "Conv2dGradientofFilterOpImpl::DoCompute" << std::endl;
+  std::cout << "inputs.at(0): " << inputs.at(0)->shape() << std::endl;
+  std::cout << "inputs.at(1): " << inputs.at(1)->shape() << std::endl;
+  std::cout << "outputs.at(0): " << outputs.at(0)->shape() << std::endl;
+  std::cout << "get_padding(): " << get_padding() << std::endl;
+  std::cout << "get_stride(): " << get_stride() << std::endl;
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(
     op->instantiation_ctx().placement.type(), type(), hetu::impl::Conv2dGradientofFilter,
     inputs.at(0), inputs.at(1), outputs.at(0), get_padding()[0],
     get_padding()[1], get_stride()[0], get_stride()[1], op->instantiation_ctx().stream());
+  op->instantiation_ctx().stream().Sync();
+  std::cout << "Conv2dGradientofFilterOpImpl::DoCompute done" << std::endl;
 }
 
 HTShapeList
@@ -179,6 +199,11 @@ void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
   std::unordered_map<int32_t, int32_t> l2res_map = {{-1, 0}, {0, -2}, {1, 1}};
   std::unordered_map<int32_t, int32_t> r2res_map = {{-1, 1}, {0, -2}, {1, 0}};
+  std::cout << "ds filter: " << ds_filter.ds_info() << std::endl;
+  std::cout << "ds grad output: " << ds_grad_output.ds_info() << std::endl;
+  std::cout << "l2res_map: " << l2res_map << std::endl;
+  std::cout << "r2res_map: " << r2res_map << std::endl;
+  std::cout << "ds input: " << ds_input.ds_info() << std::endl;
   auto ds_filter_grad = conv2d_deduce_states(l2res_map, r2res_map, ds_input, ds_grad_output);
   // HT_ASSERT(ds_filter.check_equal(ds_filter_grad)) 
     // << "Distributed states for filter_grad should be equal to filter!";
@@ -188,7 +213,6 @@ void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
 void Conv2dGradientofFilterOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                         TensorList& outputs, const OpMeta& op_meta) const {
-  std::cout << "Conv2dGradientofFilterOpImpl DoDeduceHeterProp " << inputs_hetero_dim << std::endl;
   outputs.at(0)->cur_ds_union().set_hetero_dim(-2);
 }
 
@@ -221,6 +245,11 @@ void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 
   std::unordered_map<int32_t, int32_t> l2res_map = {{-1, 0}, {0, -2}, {1, 1}};
   std::unordered_map<int32_t, int32_t> r2res_map = {{-1, 1}, {0, 0}, {1, -2}};
+  std::cout << "ds data: " << std::endl;
+  std::cout << "ds_filter: " << ds_filter.ds_info() << std::endl;
+  std::cout << "ds_grad_output: " << ds_grad_output.ds_info() << std::endl;
+  std::cout << "l2res_map: " << l2res_map << std::endl;
+  std::cout << "r2res_map: " << r2res_map << std::endl;
   auto ds_input_grad = conv2d_deduce_states(l2res_map, r2res_map, ds_filter, ds_grad_output);
   HT_ASSERT(ds_input.check_equal(ds_input_grad))
     << "Distributed states for input_grad should be equal to input!";
@@ -229,7 +258,6 @@ void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 
 void Conv2dGradientofDataOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                         TensorList& outputs, const OpMeta& op_meta) const {
-  std::cout << "Conv2dGradientofDataOpImpl DoDeduceHeterProp " << inputs_hetero_dim << std::endl;
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 

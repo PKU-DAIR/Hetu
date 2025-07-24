@@ -73,7 +73,9 @@ class MaskedScatterGradientOpImpl : public OpInterface {
 
  public:
   MaskedScatterGradientOpImpl()
-  : OpInterface(quote(MaskedScatterGradientOpImpl)) {}
+  : OpInterface(quote(MaskedScatterGradientOpImpl)) {
+    _inputs_dont_need_for_computation.insert(2);
+  }
 
   inline bool require_contig_inputs() const override {
     return false;

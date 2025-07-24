@@ -4,37 +4,6 @@ parser = argparse.ArgumentParser()
 
 
 
-'''
-  "_class_name": "AutoencoderKL",
-  "_diffusers_version": "0.4.2",
-  "act_fn": "silu",
-  "block_out_channels": [
-    128,
-    256,
-    512,
-    512
-  ],
-  "down_block_types": [
-    "DownEncoderBlock2D",
-    "DownEncoderBlock2D",
-    "DownEncoderBlock2D",
-    "DownEncoderBlock2D"
-  ],
-  "in_channels": 3,
-  "latent_channels": 4,
-  "layers_per_block": 2,
-  "norm_num_groups": 32,
-  "out_channels": 3,
-  "sample_size": 256,
-  "up_block_types": [
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D",
-    "UpDecoderBlock2D"
-  ]
-'''
-
-
 def _add_model_args(parser):
     group = parser.add_argument_group(title='model')
     # LLM
@@ -68,12 +37,14 @@ def _add_data_args(parser):
     group.add_argument("--fake_seqlens", type=str, default="[]", help="seqlen list of fake data")
     group.add_argument("--patch_size", type=int, default=2, help="patch size")
     group.add_argument("--in_channels", type=int, default=3, help="input image channels")
+    group.add_argument("--vision_max_seqlen", type=int, default=16384, help="maximum sequence length of vision")
+    group.add_argument("--text_max_seqlen", type=int, default=32 * 1024, help="maximum sequence length of text")
     return parser
 
 
 def _add_training_args(parser):
     group = parser.add_argument_group(title='training')
-    group.add_argument("--global_batch_size", type=int, default=64, help="global training batch size")
+    group.add_argument("--global_batch_size", type=int, default=64, help="global training batch size") 
     group.add_argument("--batching_method", type=int, default=4, help="batching method")
     group.add_argument("--epochs", type=int, default=4, help="number of epochs")
     group.add_argument("--steps", type=int, default=20, help="number of steps for each epoch")

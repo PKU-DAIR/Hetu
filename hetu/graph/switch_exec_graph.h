@@ -169,6 +169,10 @@ class ParamBuffer {
       return _dtype;
     }
 
+    const std::string name() const {
+      return _name;
+    }
+
     Stream stream() const {
       HT_ASSERT(_is_allocated == true)
         << "please ensure you've alloc the buffer " << _name << " in advance";
@@ -370,13 +374,30 @@ class ParamSlice {
     const Tensor& OwnedSliceInst(size_t idx) const {
       HT_ASSERT(idx < _owned_slice_instances.size())
         << "idx out of range";
-      return _owned_slice_instances[0];
+      return _owned_slice_instances[idx];
+    }
+
+    const TensorList& OwnedSliceInstList() const {
+      return _owned_slice_instances;
+    }
+
+    const TensorList& NeededSliceInstList() const {
+      return _needed_slice_instances;
+    }
+
+
+    const std::vector<Device>& OwnedDevices() const {
+      return _owned_devices;
+    }
+
+    const std::vector<Device>& NeededDevices() const {
+      return _needed_devices;
     }
 
     const Tensor& NeededSliceInst(size_t idx) const {
       HT_ASSERT(idx < _needed_slice_instances.size())
         << "idx out of range";
-      return _needed_slice_instances[0];
+      return _needed_slice_instances[idx];
     }
 
     void AddOwnedSliceInst(const Device& device, const Tensor& tensor);
@@ -410,12 +431,24 @@ class ParamBlock {
   public:
     ParamBlock(const TensorName& block_name, 
                const std::vector<int32_t>& block_shape,
-               const SyShape& sy_slice_shape,
-               SwitchExecGraph* switcher):
+               SwitchExecGraph* switcher,
+               const SyShape& sy_slice_shape = {},
+               const SyShapeList& sy_slice_shape_list = {}):
       _block_name(block_name), 
       _block_shape(block_shape),
       _sy_slice_shape(sy_slice_shape),
+      _sy_slice_shape_list(sy_slice_shape_list),
       _switcher(switcher) {
+        // When using sy_slice_shape, it means all slices have same shapes
+        // When using sy_slice_shape_list, it means each slice can have different shapes
+        if (sy_slice_shape.size() > 0) {
+          HT_ASSERT(sy_slice_shape_list.size() == 0)
+            << "sy_slice_shape and sy_slice_shape_list cannot both be non-empty";
+        }
+        if (sy_slice_shape_list.size() > 0) {
+          HT_ASSERT(sy_slice_shape.size() == 0)
+            << "sy_slice_shape and sy_slice_shape_list cannot both be non-empty";
+        }
     }
 
     const std::string name() const {
@@ -426,8 +459,20 @@ class ParamBlock {
       return _block_shape;
     }
 
-    const SyShape& SySliceShape() const {
-      return _sy_slice_shape;
+    const SyShape& SySliceShape(int idx = -1) const {
+      if (idx == -1) {
+        HT_ASSERT(_sy_slice_shape.size() > 0)
+          << "sy_slice_shape is empty";
+        HT_ASSERT(_sy_slice_shape_list.size() == 0)
+          << "sy_slice_shape_list is not empty";
+        return _sy_slice_shape;
+      } else {
+        HT_ASSERT(_sy_slice_shape.size() == 0)
+          << "sy_slice_shape is not empty";
+        HT_ASSERT(idx < _sy_slice_shape_list.size())
+          << "idx is out of range";
+        return _sy_slice_shape_list[idx];
+      }
     }
 
     std::vector<std::shared_ptr<ParamSlice>>& GetParamSlices() {
@@ -456,6 +501,7 @@ class ParamBlock {
   protected:
     std::vector<int32_t> _block_shape; // # of the abstract slices
     SyShape _sy_slice_shape; // # of the actual elements
+    SyShapeList _sy_slice_shape_list; // # of the actual elements for each slice
     TensorName _block_name;
     SwitchExecGraph* _switcher;
 
@@ -637,6 +683,13 @@ class SwitchExecGraph {
                      const DistributedStatesUnion& dst_ds_union, const DeviceGroupUnion& dst_group_union,
                      const Tensor& comm_input, const Tensor& after_param, const SyShape& sy_global_shape,
                      const StreamIndex comp_stream_idx, bool ignore_shape_mismatch = false);
+
+
+    void SwitchParam(const SyShapeList& packing_slice,
+                    const DistributedStatesUnion& src_ds_union, const DeviceGroupUnion& src_group_union,
+                    const DistributedStatesUnion& dst_ds_union, const DeviceGroupUnion& dst_group_union,
+                    const Tensor& comm_input, const Tensor& after_param, const SyShape& sy_global_shape, 
+                    const StreamIndex comp_stream_idx);
 
     void ProfileRunningDetails();
 

@@ -71,7 +71,7 @@ def convert_strategy(vision_tp_pp_list, llm_tp_pp_list, ngpus, layers):
     return vision_layers_tp_groups, llm_layers_tp_groups, gpu_pos
 
 
-def generate_mllm_model_ds_parallel_config(ngpus, vision_layers, llm_layers, vision_layer_tp_groups, llm_layers_tp_groups, ds_parallel_config_path, zero=False):
+def generate_mllm_model_ds_parallel_config(ngpus, vision_layers, llm_layers, vision_layer_tp_groups, llm_layers_tp_groups, ds_parallel_config_path, zero=True):
 
 
     vision_dp = len(vision_layer_tp_groups[0])

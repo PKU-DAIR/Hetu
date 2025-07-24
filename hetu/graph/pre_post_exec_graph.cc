@@ -135,6 +135,7 @@ NDArray& ExecutableGraph::AllocVariableDataInner(const Tensor& tensor,
     // mempool debug use
     HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << ": on-the-fly alloc variable " << tensor
       << ", shape = " << tensor->shape() << ", placement = " << tensor->placement();
+    RECORD_CUSTOM_SCOPE("alloc_variable_" + tensor->name());
     _preserved_data[tensor->id()] = NDArray::empty(tensor->shape(), 
                                                    tensor->placement(), 
                                                    tensor->dtype(), 
@@ -180,6 +181,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
       for (const auto& bucket : buckets) {
         if (!bucket->IsEmpty() && !bucket->IsAllocated()) {
           // alloc origin param and opt var
+          RECORD_CUSTOM_SCOPE("alloc_origin_param_and_opt_var_bucket_" + DataType2Str(it->first) + "_" + bucket->name());
           bucket->Alloc(Stream(local_device, kBlockingStream));
           HT_LOG_DEBUG << local_device << ": alloc origin param and opt var bucket"
             << ", the size is " << bucket->size();
@@ -191,6 +193,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
        it != _transfer_param_buffer_map.end(); ++it) {
     if (!it->second->IsEmpty() && !it->second->IsAllocated()) {
       // alloc transfer param
+      RECORD_CUSTOM_SCOPE("alloc_transfer_param_buffer_" + DataType2Str(it->first));
       it->second->Alloc(Stream(local_device, kBlockingStream));
       HT_LOG_DEBUG << local_device << ": alloc transfer param buffer"
         << ", the size is " << it->second->size();
@@ -239,9 +242,9 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
         tensor2data[param_op->output(0)->id()] = param_op->Compute({}, runtime_ctx_list[0])[0];
       }
       // 实际执行
-      // HT_LOG_INFO << cur_subgraph->global_name() << " run begin";
+      HT_LOG_DEBUG << cur_subgraph->global_name() << " run begin";
       cur_subgraph->run(tensor2data, {}, runtime_ctx_list[0]);
-      // HT_LOG_INFO << cur_subgraph->global_name() << " run end";
+      HT_LOG_DEBUG << cur_subgraph->global_name() << " run end";
       // subgraph彻底为空
       if (!is_param_local && !is_transfer_param_local) {
         HT_ASSERT(cur_subgraph->ops_topo().empty())
@@ -288,7 +291,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
       }
     }
   }
-  // 其余var直接正常compute
+  // 其余var直接正常compute_
   for (const auto& op_ref : _execute_plan.local_placeholder_variable_ops) {
     auto& op = op_ref.get();
     if (is_variable_op(op) && _parameter_ops.find(op->id()) == _parameter_ops.end()) {
@@ -318,6 +321,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
            it != _current_grad_buffer_map.end(); ++it) {
         if (!it->second->IsEmpty() && !it->second->IsAllocated()) {
           // alloc current grad
+          RECORD_CUSTOM_SCOPE("alloc_current_grad_buffer_" + DataType2Str(it->first));
           it->second->Alloc(Stream(local_device, kBlockingStream));
           HT_LOG_DEBUG << local_device << ": alloc current grad buffer "
             << ", the size is " << it->second->size();
@@ -343,6 +347,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
         for (auto it = _accumulate_grad_buffer_map.begin();
              it != _accumulate_grad_buffer_map.end(); ++it) {
           if (!it->second->IsEmpty() && !it->second->IsAllocated()) {
+            RECORD_CUSTOM_SCOPE("alloc_accumulate_grad_buffer_" + DataType2Str(it->first));
             it->second->Alloc(Stream(local_device, kBlockingStream));
             HT_LOG_DEBUG << "accumulate_grad_buffer alloc.";
             auto accumulate_grad_buffer_data = it->second->AsNDArray();

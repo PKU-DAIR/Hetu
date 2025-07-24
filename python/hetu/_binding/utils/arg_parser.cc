@@ -58,6 +58,8 @@ std::string ArgType2Str(ArgType type) {
       return "List[hetu.Operator]";
     case ArgType::FEED_DICT:
       return "FeedDict";
+    case ArgType::INT_SYMBOL_DICT:
+      return "IntSymbolDict";
     case ArgType::PARAMETER_DICT:
       return "ParameterDict";
     case ArgType::STATE_DICT:
@@ -80,6 +82,8 @@ std::string ArgType2Str(ArgType type) {
       return "List[List[hetu.IntSymbol]]";
     case ArgType::INITIALIZER:
       return "hetu.Initializer";
+    case ArgType::SYMBOLIC_SHAPE_LIST_LIST:
+      return "List[List[List[hetu.IntSymbol]]]";
     default:
       HT_VALUE_ERROR << "Unknown argument type: " << static_cast<int>(type);
       __builtin_unreachable();
@@ -160,6 +164,8 @@ ArgType Str2ArgType(const std::string& type) {
     return ArgType::OPERATOR_LIST;
   if (type == "FeedDict" || type == "feed_dict")
     return ArgType::FEED_DICT;
+  if (type == "IntSymbolDict" || type == "int_symbol_dict")
+    return ArgType::INT_SYMBOL_DICT;
   if (type == "ParameterDict" || type == "parameter_dict")
     return ArgType::PARAMETER_DICT;
   if (type == "StateDict" || type == "state_dict")
@@ -182,6 +188,8 @@ ArgType Str2ArgType(const std::string& type) {
     return ArgType::SYMBOLIC_SHAPE;
   if (type == "List[List[hetu.IntSymbol]]" || type == "List[List[IntSymbol]]" || type == "List[SyShape]")
     return ArgType::SYMBOLIC_SHAPE_LIST;
+  if (type == "List[List[List[hetu.IntSymbol]]]" || type == "List[List[List[IntSymbol]]]" || type == "List[List[SyShape]]")
+    return ArgType::SYMBOLIC_SHAPE_LIST_LIST;
   if (type == "hetu.Initializer" || type == "Initializer")
     return ArgType::INITIALIZER;
   HT_VALUE_ERROR << "Unknown argument type: " << type;
@@ -316,6 +324,7 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
       case ArgType::OPERATOR:
       case ArgType::OPERATOR_LIST:
       case ArgType::FEED_DICT:
+      case ArgType::INT_SYMBOL_DICT:
       case ArgType::PARAMETER_DICT:
       case ArgType::DISTRIBUTED_STATES:
       case ArgType::DISTRIBUTED_STATES_LIST:
@@ -324,6 +333,7 @@ FnArg::FnArg(const std::string& fmt, size_t equal_sign_hint) {
       case ArgType::SYMBOLIC_SHAPE:
       case ArgType::SYMBOLIC_SHAPE_LIST:
       case ArgType::INITIALIZER:
+      case ArgType::SYMBOLIC_SHAPE_LIST_LIST:
         if (!_default_as_none) {
           HT_VALUE_ERROR << "Default " << _arg_type << " can only be None";
         }
@@ -391,6 +401,8 @@ bool FnArg::check_arg(PyObject* obj) const {
       return CheckPyOperatorList(obj);
     case ArgType::FEED_DICT:
       return CheckPyFeedDict(obj);
+    case ArgType::INT_SYMBOL_DICT:
+      return CheckPyIntSymbolDict(obj);
     case ArgType::PARAMETER_DICT:
       return CheckPyParameterDict(obj);
     case ArgType::SGDOPTIMIZER:
@@ -411,6 +423,8 @@ bool FnArg::check_arg(PyObject* obj) const {
       return CheckPySyShapeList(obj);
     case ArgType::INITIALIZER:
       return CheckPyInitializer(obj);
+    case ArgType::SYMBOLIC_SHAPE_LIST_LIST:
+      return CheckPySyShapeListList(obj);
     default:
       HT_VALUE_ERROR << "Unknown argument type: " 
         << static_cast<int>(_arg_type);

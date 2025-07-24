@@ -114,7 +114,6 @@ void OpInterface::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& 
   graph.USE_HETERO_ID = true;
   for (size_t cur_hetero_id = 0; cur_hetero_id < hetero_size; cur_hetero_id++) {
     graph.CUR_HETERO_ID = cur_hetero_id;
-    std::cout << "start deduce states for " << op_meta.name << " hetero id " << cur_hetero_id << std::endl;
     DeduceStates(inputs, outputs, op_meta);
   }
   /*
@@ -209,6 +208,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
                                         RuntimeContext& runtime_ctx) const {
   NDArrayList outputs;
   auto output_size = op->num_outputs();
+
   if (output_size > 0) {
     outputs.reserve(output_size);
     // 动态图

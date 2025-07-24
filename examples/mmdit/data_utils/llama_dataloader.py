@@ -14,7 +14,7 @@ def build_data_loader(dataset, consumed_samples, global_batch_size):
         dataset,
         batch_sampler=batch_sampler,
         shuffle=False,
-        num_workers=0,
+        num_workers=16,
         pin_memory=False
     )
 

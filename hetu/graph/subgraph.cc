@@ -3,6 +3,7 @@
 #include "hetu/graph/subgraph.h"
 #include "hetu/graph/ops/Concatenate.h"
 #include "hetu/graph/ops/ParallelAttention.h"
+// #include "hetu/impl/profiler/profiler.h"
 #include <queue>
 
 namespace hetu {
@@ -224,11 +225,19 @@ void SubGraph::run(Tensor2NDArrayMap& tensor2data, const Tensor2NDArrayMap& pres
     }
     // 调用op计算
     // debug stuck bug use
-    // HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " begin";
+    HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " begin";
+    RECORD_OP(op->name(), op->id());
+    std::cout << "compute " << op << " " << op->instantiation_ctx().stream().stream_index() << std::endl;
+    for(auto &input : op->inputs()){
+      std::cout << "input " << input->id() << std::endl;
+    }
     NDArrayList output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
-    checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
+    for(auto &output: op->outputs()){
+      std::cout << "output " << output->id() << std::endl;
+    }
+    // checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
     // op->instantiation_ctx().stream().Sync();
-    // HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " end";
+    HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " end";
     // Note: The usage should be marked inside kernels, 
     // but we still mark here in case we forget to do so in some kernels. 
     NDArray::MarkUsedBy(input_vals, op->instantiation_ctx().stream());

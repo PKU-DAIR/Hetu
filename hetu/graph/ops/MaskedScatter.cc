@@ -44,18 +44,11 @@ TensorList MaskedScatterOpImpl::DoGradient(Operator& op,
                                                            g_op_meta.set_name(op->grad_name(2)))
                                         : Tensor();
 
-  std::cout << "grad_outputs.at(0) " << grad_outputs.at(0)->shape() << std::endl;
-  std::cout << "op->input(0) " << op->input(0)->shape() << std::endl;
-  std::cout << "op->input(1) " << op->input(1)->shape() << std::endl;
-  std::cout << "op->input(2) " << op->input(2)->shape() << std::endl;
-  std::cout << "grad_input0 " << grad_input0->shape() << std::endl;
-  std::cout << "grad_input2 " << grad_input2->shape() << std::endl;
   return {grad_input0, Tensor(), grad_input2};
 }
 
 void MaskedScatterGradientOpImpl::DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                 RuntimeContext& ctx) const{
-  std::cout << "scatter " << outputs.at(0)->shape() << std::endl;
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), hetu::impl::MaskedSelect,
                                   inputs.at(0), inputs.at(1),
                                   outputs.at(0), op->instantiation_ctx().stream());
@@ -65,7 +58,6 @@ NDArrayList MaskedScatterGradientOpImpl::DoCompute(Operator& op,
                                                const NDArrayList& inputs,
                                                RuntimeContext& ctx) const {
   NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
-  std::cout << "scatter " << outputs.at(0)->shape() << std::endl;
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }

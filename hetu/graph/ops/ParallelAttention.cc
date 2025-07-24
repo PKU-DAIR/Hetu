@@ -988,7 +988,7 @@ void ParallelAttentionOpImpl::DoCompute(Operator& op,
     << "ParallelFlashAttention forward only supports head dimension at most 256 and must be divided by 8";
   auto stream_idx = op->instantiation_ctx().stream_index;
   auto reshaped_qkv = NDArray::view(qkv, {batch_size, seq_len, total_num_heads, _head_dim});
-  HT_LOG_WARN << op << " reshaped_qkv shape is " << reshaped_qkv->shape() << ", sum is " << NDArray::sum(reshaped_qkv) << ", data is " << reshaped_qkv;
+  // HT_LOG_WARN << op << " reshaped_qkv shape is " << reshaped_qkv->shape() << ", sum is " << NDArray::sum(reshaped_qkv) << ", data is " << reshaped_qkv;
   auto reshaped_output = NDArray::view(output, {batch_size, seq_len, q_num_heads, _head_dim});
   // self-attn
   HTShape q_shape = {batch_size, seq_len, q_num_heads, _head_dim};

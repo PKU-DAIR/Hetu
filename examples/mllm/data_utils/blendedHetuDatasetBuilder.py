@@ -42,17 +42,12 @@ class BlendedHetuDatasetBuilder(object):
                 return self._build_hetu_dataset_splits(blend[0], split, self.sizes)
 
             # Blend consists of multiple weights and prefixes
-            print("blend", blend)
-            print("sizes", self.sizes)
             (
                 prefix_per_dataset,
                 weight_per_dataset,
                 sizes_per_dataset,
             ) = _get_prefixes_weights_and_sizes_for_blend(blend, self.sizes)
 
-            print("prefix_per_dataset", prefix_per_dataset)
-            print("weight_per_dataset", weight_per_dataset)
-            print("sizes_per_dataset", sizes_per_dataset)
             hetu_datasets = [[] for _ in range(len(Split))]
 
             for i in range(len(prefix_per_dataset)):

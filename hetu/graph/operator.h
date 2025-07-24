@@ -327,6 +327,10 @@ class OpInterface : public shared_ptr_target {
     return _type;
   }
 
+  bool is_need_for_computation(int64_t idx) const { // 第idx个输入是否需要参与computation
+    return _inputs_dont_need_for_computation.find(idx) == _inputs_dont_need_for_computation.end();
+  }
+
   virtual bool require_contig_inputs() const {
     return true;
   }
@@ -424,6 +428,7 @@ class OpInterface : public shared_ptr_target {
   }
 
  protected:
+
   virtual std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs) const = 0;
 
@@ -480,6 +485,9 @@ class OpInterface : public shared_ptr_target {
     return outputs;
   }
 
+  // Tracks which inputs are needed for actual computation vs. just infer ds and shape.   
+  // Some inputs are only used for shape/ds inference but not computation, allowing early memory release (e.g., AddElewiseGradientOp)
+  std::unordered_set<int64_t> _inputs_dont_need_for_computation;
   const OpType _type;
 };
 
@@ -565,24 +573,24 @@ class OpDef : public shared_ptr_target {
       << ", the inputs are " << this->inputs() << " and the input shapes are " << input_shapes << ", strides are " << input_strides;
     */
     // precision debug
-    NDArrayList input_sums;
-    for (auto& input : inputs) {
-      input_sums.push_back(NDArray::sum(input));
-    }
-    HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
-      << ", inputs are " << _inputs << ", and the input vals are " << input_sums;
+    // NDArrayList input_sums;
+    // for (auto& input : inputs) {
+    //   input_sums.push_back(NDArray::sum(input));
+    // }
+    // HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
+      // << ", inputs are " << _inputs << ", and the input vals are " << input_sums;
     instantiation_ctx().start[micro_batch_id]->Record(stream());
     auto rets = _body->Compute(get_self(), inputs, runtime_ctx);
     instantiation_ctx().stop[micro_batch_id]->Record(stream());
-    stream().Sync();
+    // stream().Sync();
     // precision debug
     
-    NDArrayList ret_sums;
-    for (auto& ret : rets) {
-      ret_sums.push_back(NDArray::sum(ret));
-    }
-    HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
-      << ", the result is " << ret_sums;
+    // NDArrayList ret_sums;
+    // for (auto& ret : rets) {
+    //   ret_sums.push_back(NDArray::sum(ret));
+    // }
+    // HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
+      // << ", the result is " << ret_sums;
     
     // correctness debug
     /*
@@ -647,6 +655,10 @@ class OpDef : public shared_ptr_target {
   OpInterface& body() {
     return *_body;
   }  
+
+  bool is_need_for_computation(int64_t idx) const { // 第idx个输入是否需要参与computation
+    return _body->is_need_for_computation(idx);
+  }
 
   const OpName& name() const noexcept {
     return _op_meta.name;
@@ -882,7 +894,6 @@ class OpDef : public shared_ptr_target {
   OpId _fw_op_id{-1}; // only used for bw op
   OpMeta _op_meta;
   OpInstantiationContext _inst_ctx;
-
   size_t _suggested_hetero_id{0}; // suggest which hetero id should use for non-local op
 };
 

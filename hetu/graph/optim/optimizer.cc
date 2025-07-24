@@ -74,16 +74,20 @@ void Optimizer::ApplyZero(const GradAndVarList& grads_and_vars) {
         }
         for (size_t cur_hetero_id = 0; cur_hetero_id < ds_union.size(); cur_hetero_id++) {
           // 直接把所有的-1维度转化成0
-          std::pair<std::vector<int32_t>, int32_t> src2dst = {{-1}, 0};
-          auto new_states = ds_union.get(cur_hetero_id).combine_states(src2dst);
-          auto new_order = ds_union.get(cur_hetero_id).combine_order(src2dst);
-          DistributedStates new_ds({ds_union.get(cur_hetero_id).get_device_num(), new_states, new_order});
-          ds_union.get(cur_hetero_id) = new_ds;
+          // std::pair<std::vector<int32_t>, int32_t> src2dst = {{-1}, 0};
+          // auto new_states = ds_union.get(cur_hetero_id).combine_states(src2dst);
+          // auto new_order = ds_union.get(cur_hetero_id).combine_order(src2dst);
+          // DistributedStates new_ds({ds_union.get(cur_hetero_id).get_device_num(), new_states, new_order});
+          // ds_union.get(cur_hetero_id) = new_ds;
+          // ds_union.raw_data() = target_ds_union.raw_data();
+          bool split_pattern = ds_union.split_pattern().is_contiguous();
+          ds_union = DistributedStatesUnion(target_ds_union.raw_data(), target_ds_union.hetero_dim());
+          ds_union.set_split_pattern(SplitPattern{split_pattern});
         }
-        HT_ASSERT(ds_union.check_equal(target_ds_union))
-          << "currently final var (after apply zero) and final grad ds should be equal, but found "
-          << ds_union.ds_union_info() << " vs " << target_ds_union.ds_union_info()
-          << ", for var " << var << " on strategy " << cur_strategy_id;
+        // HT_ASSERT(ds_union.check_equal(target_ds_union)) << "var " << var 
+        //   << " currently final var (after apply zero) and final grad ds should be equal, but found "
+        //   << ds_union.ds_union_info() << " vs " << target_ds_union.ds_union_info()
+        //   << ", for var " << var << " on strategy " << cur_strategy_id;
       }
     }
     var->graph().CUR_STRATEGY_ID = 0;

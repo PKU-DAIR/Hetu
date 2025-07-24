@@ -449,6 +449,8 @@ std::string DistributedStates::ds_info() const {
     }
   }
 
+  if(order.size() == 0) os << "]";
+
   std::sort(order.begin(), order.end());
   os << ", states = {";
   for (auto d = order.begin(); d != order.end(); d++) {
@@ -459,6 +461,7 @@ std::string DistributedStates::ds_info() const {
       os << "}";
     }
   }
+  if(order.size() == 0) os << "}";
   os << ", zero = " << _zero;
   return os.str();    
 }

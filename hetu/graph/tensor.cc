@@ -167,6 +167,7 @@ DistributedStatesUnion& TensorDef::cur_ds_union() {
 }
 
 void TensorDef::set_cur_ds_union(const DistributedStatesUnion& ds_union) {
+  std::cout << "set_cur_ds_union " << name() << " " << ds_union.ds_union_info() << std::endl;
   // 2024.9.25 Update
   // 限制executable graph只有一个strategy
   if (graph().type() == GraphType::EXECUTABLE) {
@@ -218,6 +219,7 @@ DistributedStates& TensorDef::inferred_cur_ds() {
   // 给定了hetero id
   // 说明是在DeduceStates
   // 或者是保证InferMeta具有明确的指向
+
   if (graph().USE_HETERO_ID) {
     if (graph().CREATE_HETERO) {
       while (cur_hetero_id() >= ds_union.size()) {

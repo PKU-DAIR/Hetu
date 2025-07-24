@@ -36,11 +36,21 @@ def resize(image: np.ndarray, size: Tuple[int, int]):
     return image
 
 
-def normalize(image: np.ndarray, mean: float, std: float):
-
+def normalize(image: np.ndarray, mean: List[float], std: List[float]):
     if not np.issubdtype(image.dtype, np.floating):
         image = image.astype(np.float32)
 
+    # 先去掉 NaN 和 Inf
+    image = np.nan_to_num(image)
+
+    # 防止除以0
+    image_max = np.max(image)
+    if image_max > 0:
+        image = image / image_max
+    else:
+        print("Warning: image max is 0, skipping normalization")
+        return image  # 返回原始 image，避免 NaN
+    
     mean = np.array(mean)[:, None, None]
     std = np.array(std)[:, None, None]
 
@@ -51,7 +61,7 @@ def normalize(image: np.ndarray, mean: float, std: float):
 class HetuImageProcessor():
     def __init__(self, do_resize = True, do_normalize = True, image_mean = [0.48145466, 0.4578275, 0.40821073], 
                 image_std = [0.26862954, 0.26130258, 0.27577711], patch_size = 14, min_pixels =  56 * 56, 
-                max_pixels = 28 * 28 * 1280, temporal_patch_size = 1):
+                max_pixels = 28 * 28 * 1280, temporal_patch_size = 2):
         self.do_resize = do_resize
         self.do_normalize = do_normalize
         self.image_mean = image_mean
@@ -60,7 +70,6 @@ class HetuImageProcessor():
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
         self.temporal_patch_size = temporal_patch_size
-        assert(temporal_patch_size == 1)
 
     def _preprocess(self, images, do_resize, do_normalize, image_mean, image_std):
 
@@ -92,10 +101,13 @@ class HetuImageProcessor():
             # Replace the image in the list
             images[idx] = image
         
-        height, width = images[0].shape[1], images[0].shape[2]
+        if images[0].ndim == 3:
+            height, width = images[0].shape[1], images[0].shape[2]
+        else:
+            height, width = images[0].shape[0], images[0].shape[1]
         resized_height, resized_width = height, width
+        processed_images = []
         for image in images:
-            processed_images = []
             if do_resize:
                 resized_height, resized_width = smart_resize(
                     height,
@@ -113,9 +125,11 @@ class HetuImageProcessor():
 
         
         patches = np.array(processed_images)    
-        if patches.shape[0] == 1:  
-            patches = np.tile(patches, (self.temporal_patch_size, 1, 1, 1))
+
+        while patches.shape[0] % self.temporal_patch_size != 0:
+            patches = np.concatenate([patches, patches[-1:]], axis=0)
         channel = patches.shape[1]
+        assert patches.shape[0] % self.temporal_patch_size == 0, "patches.shape[0] must be divisible by temporal_patch_size"
         grid_t = patches.shape[0] // self.temporal_patch_size
         grid_h, grid_w = resized_height // self.patch_size, resized_width // self.patch_size
         patches = patches.reshape(
@@ -157,7 +171,6 @@ class HetuImageProcessor():
         
         video_pixel_values, video_grid_thws = [], []
         if videos is not None:
-            pixel_values, vision_grid_thws = [], []
             for images in videos:
                 patches, video_grid_thw = self._preprocess(
                     images,
@@ -166,7 +179,8 @@ class HetuImageProcessor():
                     image_mean=image_mean,
                     image_std=image_std,
                 )
-                video_pixel_values.extend(patches)
+                # video_pixel_values.extend(patches)
+                video_pixel_values.append(patches)
                 video_grid_thws.append(video_grid_thw)
             video_grid_thws = np.array(video_grid_thws)
         

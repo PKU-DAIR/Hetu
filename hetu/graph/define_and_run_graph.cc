@@ -160,10 +160,8 @@ void DefineAndRunGraph::MergeGraph(DefineAndRunGraph& another_graph) {
 void DefineAndRunGraph::DeducePipeline(size_t compute_strategy_id, int32_t pipeline_num) {
   auto old_strategy_id = CUR_STRATEGY_ID;
   CUR_STRATEGY_ID = compute_strategy_id;
-  std::unordered_map<Device, int32_t> device_to_pipeline_idx_map;
-  std::vector<DeviceGroupList> pipelines(pipeline_num);
-  int32_t total_p2pline = -1;
-  int32_t total_pipeline = std::numeric_limits<int32_t>::max();
+  
+  
   // 得到所有pipeline
   // 以dp2tp2pp2为例
   // bias的dup为4但weight的dup为2
@@ -192,6 +190,9 @@ void DefineAndRunGraph::DeducePipeline(size_t compute_strategy_id, int32_t pipel
     pipeline_num = std::max(pipeline_num, union_size);
   }
 
+  std::unordered_map<Device, int32_t> device_to_pipeline_idx_map;
+  std::vector<DeviceGroupList> pipelines(pipeline_num);
+
   for (const auto& op : _ops_with_device_group_hierarchy) {
     // deduce pipeline的stages时只需要用到模型的parameters
     if (_parameter_ops.find(op->id()) == _parameter_ops.end()) {
@@ -211,7 +212,6 @@ void DefineAndRunGraph::DeducePipeline(size_t compute_strategy_id, int32_t pipel
         stages[i].emplace_back(device);  
       }
     }
-    std::cout << "op " << op << " " << dg_union << std::endl;
     for (size_t i = 0; i < pipeline_num; i++) {
       if (!stages[i].empty()) {
         auto cur_stage_device_group = DeviceGroup(stages[i]);
@@ -289,7 +289,7 @@ void DefineAndRunGraph::DeduceShapePlan(ExecGraphPlan& exec_graph_plan,
     HTShapeList input_shapes;
     input_shapes.reserve(op->num_inputs());
     for (size_t i = 0; i < op->num_inputs(); i++) {
-      const auto& input = op->input(i);
+      const auto& input = op->input(i);      
       auto it = shape_plan.find(input->id());
       HT_ASSERT(it != shape_plan.end()) 
         << "Something wrong, can't find the input shape from the current shape plan"
@@ -325,7 +325,24 @@ void DefineAndRunGraph::DeduceShapePlan(ExecGraphPlan& exec_graph_plan,
     }
     HTShapeList exec_output_shapes;
     try {
+      std::cout << "InferShape " << exec_op << std::endl;
       exec_output_shapes = exec_op->InferShape(input_shapes, runtime_ctx);
+      std::cout << "input_shapes " << input_shapes << std::endl;
+      std::cout << "exec_output_shapes " << exec_output_shapes << std::endl;
+      // exec_output_shapes = op->InferShape(input_shapes, runtime_ctx);
+      // if(is_comm_op(op) && op->has_placement_group()) {
+      //   auto& comm_op_impl = dynamic_cast<CommOpImpl&>(op->body());
+      //   auto comm_type = comm_op_impl.get_comm_type(op, local_device);
+      //   if ((comm_type & UNUSED_OP) != 0) {
+      //     exec_output_shapes = input_shapes;
+      //   }
+      //   else{
+      //     exec_output_shapes = exec_op->InferShape(input_shapes, runtime_ctx);
+      //   }
+      // }
+      // else{
+      //   exec_output_shapes = exec_op->InferShape(input_shapes, runtime_ctx);
+      // }
     } catch (const std::exception& e) {
       HT_RUNTIME_ERROR << "During deducing shape of exec op " << exec_op << " with inputs " << exec_op->inputs()
         << " and shapes " << input_shapes << ", an error occurs: " << e.what();
@@ -662,7 +679,7 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
 
   HT_LOG_DEBUG << "Instantiating a " << type() << " graph with global topo " << global_topo;
   OpRefList deq_global_topo;
-  
+  size_t OLD_COMPUTE_SUGGESTED_HETERO_ID = -1;
   for (auto& op_ref : global_topo) {
     auto& op = op_ref.get();
     if (op->num_outputs() > 0 && _paramter_to_absmax.find(op->output(0)->id()) != _paramter_to_absmax.end()) {
@@ -704,6 +721,10 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
     // HT_LOG_WARN << local_device << ": deduce placement group union for " << op;
     auto pg_union = DeducePlacementGroup(op, op_to_pg_union_mapping);
     HT_LOG_TRACE << local_device << ": placement group union for " << op << " is " << pg_union;
+    if(pg_union.size() <= exec_graph->COMPUTE_SUGGESTED_HETERO_ID) {
+      OLD_COMPUTE_SUGGESTED_HETERO_ID = exec_graph->COMPUTE_SUGGESTED_HETERO_ID;
+      exec_graph->COMPUTE_SUGGESTED_HETERO_ID = 0;
+    }
 
     std::shared_ptr<SubGraph> exec_subgraph = nullptr;
     std::shared_ptr<SubGraph> define_subgraph = GetSubGraph(op);
@@ -1036,6 +1057,10 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
     if (_optimizer_variable_ops.find(op->id()) != _optimizer_variable_ops.end()) {
       Graph::MarkAsOptimizerVariable(exec_op);
     }
+
+    if(OLD_COMPUTE_SUGGESTED_HETERO_ID != -1){
+      exec_graph->COMPUTE_SUGGESTED_HETERO_ID = OLD_COMPUTE_SUGGESTED_HETERO_ID;
+    }
     HT_LOG_TRACE << "Creating an executable version of op " << op << " end...";
   }
 
@@ -1102,7 +1127,7 @@ void DefineAndRunGraph::Instantiate(OpRefList&& global_topo,
 // 目前一个exec graph支持多个shape plan
 // 即允许feed_dict的shape（包括batch_size以及seq_len等）可变
 NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches,
-                                   const FeedDict& feed_dict, const int num_micro_batches,
+                                   const FeedDict& feed_dict, const IntSymbolDict& int_symbol_dict, const int num_micro_batches,
                                    const int compute_strategy_id, const int optimize_strategy_id, RunLevel run_level,
                                    bool save_checkpoint, const double grad_scale) {
   _run_level = run_level;
@@ -1187,12 +1212,13 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
     int32_t pipeline_num = 0;
     if (!loss->cur_ds_union().is_hetero()) {
       pipeline_num = loss->cur_ds_union().get(0).states(-2);
-    } else if (loss->cur_ds_union().hetero_dim() == 0) {
+    } else if (loss->cur_ds_union().hetero_dim() == -2) {
       pipeline_num = loss->cur_ds_union().size();
     } else {
       HT_RUNTIME_ERROR << "Currently we use the ds of loss to deduce pipeline num"
-        << ", so the ds union of loss shouldn't be hetero on other dim except for 0";
+        << ", so the ds union of loss shouldn't be hetero on other dim except for -2";
     }
+    SetMicroBatchCtx(micro_batch_idx, int_symbol_dict);
     Instantiate(std::move(global_topo), std::move(shape_plan), pipeline_num);
     // 补上fetches（其在instantiate中不需要用到，但是plan需要进行记录）
     auto& new_plan = _exec_graph_plan_pool.back();
@@ -1244,6 +1270,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
     // 需要推导新的shape plan
     if (!in_shape_plan_pool) {
       HT_LOG_DEBUG << "DeduceShapePlan needed for micro batch " << idx;
+      SetMicroBatchCtx(idx, int_symbol_dict);
       DeduceShapePlan(exec_graph_plan, feed_dict, feed_dict_shape_list[idx]);
       // 新的shape plan就是shape plan pool中的最后一个
       next_active_shape_plan_list[idx] = exec_graph_plan.shape_plan_pool.size() - 1;
@@ -1286,7 +1313,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
   if (exec_graph->NeedRank(hetu::impl::comm::DeviceToWorldRank(local_device))) {
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
     exec_graph->Run(exec_loss, exec_fetches, 
-                    exec_feed_dict, num_micro_batches, 
+                    exec_feed_dict, int_symbol_dict, num_micro_batches, 
                     RunLevel::TOPO, grad_scale);
     Graph::pop_graph_ctx();
   }
@@ -1561,7 +1588,7 @@ NDArrayList DefineAndRunGraph::Run(const Tensor& loss, const TensorList& fetches
   if (exec_graph->NeedRank(hetu::impl::comm::DeviceToWorldRank(local_device))) {
     Graph::push_graph_ctx(exec_graph->id()); // 防止exec graph run内部MakeOp时忘记加
     ret = exec_graph->Run(exec_loss, exec_fetches, 
-                          exec_feed_dict, num_micro_batches, 
+                          exec_feed_dict, int_symbol_dict, num_micro_batches, 
                           run_level, grad_scale);
     Graph::pop_graph_ctx();
   }

@@ -183,10 +183,6 @@ void Conv3dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
   std::unordered_map<int32_t, int32_t> l2res_map = {{-1, 0}, {0, -2}, {1, 1}};
   std::unordered_map<int32_t, int32_t> r2res_map = {{-1, 1}, {0, -2}, {1, 0}};
   auto ds_filter_grad = conv3d_deduce_states(l2res_map, r2res_map, ds_input, ds_grad_output);
-  std::cout << "ds_input: " << ds_input.ds_info() << std::endl;
-  std::cout << "ds_grad_output: " << ds_grad_output.ds_info() << std::endl;
-  std::cout << "ds_filter_grad: " << ds_filter_grad.ds_info() << std::endl;
-  std::cout << "ds_filter: " << ds_filter.ds_info() << std::endl;
   // HT_ASSERT(ds_filter.check_equal(ds_filter_grad)) 
     // << "Distributed states for filter_grad should be equal to filter!";
   outputs.at(0)->set_distributed_states(ds_filter_grad);
@@ -195,7 +191,6 @@ void Conv3dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
 void Conv3dGradientofFilterOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                         TensorList& outputs, const OpMeta& op_meta) const {
-  std::cout << "Conv3dGradientofFilterOpImpl DoDeduceHeterProp " << inputs_hetero_dim << std::endl;
   outputs.at(0)->cur_ds_union().set_hetero_dim(-2);
 }
 
@@ -236,7 +231,6 @@ void Conv3dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 
 void Conv3dGradientofDataOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                         TensorList& outputs, const OpMeta& op_meta) const {
-  std::cout << "Conv3dGradientofDataOpImpl DoDeduceHeterProp " << inputs_hetero_dim << std::endl;
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 

@@ -317,6 +317,7 @@ class TensorDef : public shared_ptr_target {
   DistributedStates get_local_distributed_states();
 
   void set_distributed_states(const DistributedStates& distributed_states) {
+    std::cout << "set_distributed_states " << name() << " " << distributed_states.ds_info() << std::endl;
     inferred_cur_ds() = distributed_states;
   }
 

@@ -34,13 +34,15 @@ class CommOpInfo {
   DistributedStates dst_ds;
   DistributedStates local_src_ds;
   DistributedStates local_dst_ds;
+
+  SyShapeListList packing_slice_list;
   
   CommOpInfo()
     : is_empty(true) {}
 
   CommOpInfo(const DeviceGroupUnion& src_group_union_, const DeviceGroupUnion& dst_group_union_,
              const DistributedStatesUnion& src_ds_union_, const DistributedStatesUnion& dst_ds_union_,
-             size_t src_union_idx_, size_t dst_union_idx_, int32_t placement_pos_)
+             size_t src_union_idx_, size_t dst_union_idx_, int32_t placement_pos_, SyShapeListList packing_slice_list_ = {})
     : is_empty(false),
       src_group_union(src_group_union_),
       dst_group_union(dst_group_union_),
@@ -48,7 +50,8 @@ class CommOpInfo {
       dst_ds_union(dst_ds_union_),
       src_union_idx(src_union_idx_),
       dst_union_idx(dst_union_idx_),
-      placement_pos(placement_pos_) {
+      placement_pos(placement_pos_),
+      packing_slice_list(packing_slice_list_) {
     src_group = src_group_union.get(src_union_idx);
     dst_group = dst_group_union.get(dst_union_idx);
     src_ds = src_ds_union.get(src_union_idx);
@@ -65,8 +68,11 @@ class CommOpImpl final: public OpInterface {
   // dst_group is only for exec graph instantiate, at this time there will only exists one ds strategy
   // also, dst_ds_hierarchy should contains only one dst_ds_union for comm op which created in exec graph instantiate
   CommOpImpl(DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_group_hierarchy = DeviceGroupHierarchy(), 
-             ReductionType red_type = kSUM) : OpInterface(quote(CommOp)), 
-             _dst_ds_hierarchy(std::move(dst_ds_hierarchy)), _dst_group_hierarchy(std::move(dst_group_hierarchy)), _red_type(red_type) {
+             ReductionType red_type = kSUM, SyShapeListList packing_slice_list = {}, DistributedStatesHierarchy src_ds_hierarchy = DistributedStatesHierarchy(), 
+             DeviceGroupHierarchy src_group_hierarchy = DeviceGroupHierarchy()) : OpInterface(quote(CommOp)), 
+             _dst_ds_hierarchy(std::move(dst_ds_hierarchy)), _dst_group_hierarchy(std::move(dst_group_hierarchy)), _red_type(red_type), 
+             _packing_slice_list(std::move(packing_slice_list)), _src_ds_hierarchy(std::move(src_ds_hierarchy)), 
+             _src_group_hierarchy(std::move(src_group_hierarchy)) {
     auto& graph = Graph::GetGraph(Graph::cur_graph_ctx());
     if (graph.type() == GraphType::DEFINE_AND_RUN) {
       HT_ASSERT(_dst_ds_hierarchy.size() == graph.NUM_STRATEGY)
@@ -98,6 +104,9 @@ class CommOpImpl final: public OpInterface {
                        TensorList& outputs, const OpMeta& op_meta) const;
 
  protected:
+
+
+
   bool DoMapToParallelDevices(Operator& op,
                               const DeviceGroupUnion& pg_union) const override;
 
@@ -129,6 +138,11 @@ class CommOpImpl final: public OpInterface {
                  RuntimeContext& runtime_ctx) const {}
 
  public: 
+
+  void SetIsCrossModalCommOp(bool is_cross_modal_comm_op_) {
+    _is_cross_modal_comm_op = is_cross_modal_comm_op_;
+  }
+
   const DistributedStatesHierarchy& dst_ds_hierarchy() {
     return _dst_ds_hierarchy;
   }
@@ -190,9 +204,8 @@ class CommOpImpl final: public OpInterface {
   const DeviceGroupHierarchy& dst_group_hierarchy() {
     return _dst_group_hierarchy;
   }
-
-
-
+  
+  
   // only used in exec graph
   const DeviceGroupUnion& get_src_group_union(Operator& op) const {
     HT_ASSERT(op->graph().type() == GraphType::EXECUTABLE && op->input(0)->has_placement_group())
@@ -222,6 +235,10 @@ class CommOpImpl final: public OpInterface {
   DistributedStatesHierarchy _dst_ds_hierarchy;
   DeviceGroupHierarchy _dst_group_hierarchy;
   ReductionType _red_type{kNONE}; // only used for AllReduce, ReduceScatter
+  SyShapeListList _packing_slice_list; // only used for pipeline inter diff model
+  DistributedStatesHierarchy _src_ds_hierarchy; // only used for cross modal comm op
+  DeviceGroupHierarchy _src_group_hierarchy; // only used for cross modal comm op
+  bool _is_cross_modal_comm_op{false};
 };
 
 Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, 
@@ -232,6 +249,10 @@ Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy,
 
 Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, 
                   DeviceGroupHierarchy dst_group_hierarchy, bool is_pipeline_op=true, OpMeta op_meta = OpMeta());
+
+Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy src_ds_hierarchy, DeviceGroupHierarchy src_group_hierarchy, 
+                  DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_group_hierarchy, SyShapeListList packing_slice_list, 
+                  bool is_cross_modal_comm_op = true, bool is_forward_op = true, OpMeta op_meta = OpMeta());
 
 Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, 
                   OpMeta op_meta = OpMeta());

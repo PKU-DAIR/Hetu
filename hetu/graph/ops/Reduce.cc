@@ -185,7 +185,6 @@ void ReduceGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& 
 void ReduceGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
                                              TensorList& outputs, const OpMeta& op_meta) const {
   
-  // std::cout << inputs_hetero_dim << std::endl;
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(2));
 
 }

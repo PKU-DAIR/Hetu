@@ -89,6 +89,7 @@ CUDACachingMemoryPool::CUDACachingMemoryPool(DeviceIndex device_id, size_t _max_
   _data_ptr_info.reserve(8192);
   _available_for_single_stream.reserve(HT_NUM_STREAMS_PER_DEVICE); 
   _available_for_all_streams.reset(new DataPtrLookupTable());
+  std::cout << "pre_allocate_size: " << pre_allocate_size << std::endl;
   if (pre_allocate_size > 0) {
     void* ptr;
     TIK(pre_allocate);
@@ -115,7 +116,8 @@ CUDACachingMemoryPool::~CUDACachingMemoryPool() {
 // 先会从available table中找
 // 没有匹配项再AllocPtr
 DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
-                                              const Stream& stream) {                         
+                                              const Stream& stream) {        
+  std::cout << "start AllocDataSpace" << std::endl;                 
   HT_VALUE_ERROR_IF(!stream.device().is_cuda())
     << "Cuda arrays must be allocated on cuda streams. Got " << stream;
   if (num_bytes == 0)
@@ -225,6 +227,48 @@ DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
   // Cannot find any avaiable memory to re-use, then AllocPtr from system.
   // *只有这种情况会AllocPtr并将新分配的data ptr放入到info中
   else {
+    // 输出所有cache住的显存情况，帮助调试为什么没有找到合适的cache显存
+    HT_LOG_INFO << "无法找到合适的cache显存，当前cache情况如下:";
+    HT_LOG_INFO << "请求分配大小: " << static_cast<double>(aligned_num_bytes) / (1024 * 1024) << " MiB";
+    
+    // 输出当前流的cache情况
+    if (curr_stream_table) {
+      size_t curr_stream_cache_count = curr_stream_table->table.size();
+      HT_LOG_INFO << "当前流cache数量: " << curr_stream_cache_count;
+      if (curr_stream_cache_count > 0) {
+        HT_LOG_INFO << "当前流cache详情:";
+        for (const auto& data_ptr : curr_stream_table->table) {
+          auto info_it = _data_ptr_info.find(data_ptr.id);
+          HT_ASSERT(info_it != _data_ptr_info.end())
+            << "Cannot find the info of data ptr " << data_ptr;
+          HT_LOG_INFO << "  - 大小: " << static_cast<double>(data_ptr.size) / (1024 * 1024) 
+                      << " MiB, ID: " << data_ptr.id
+                      << ", 状态: " << info_it->second->status;
+        }
+      }
+    } else {
+      HT_LOG_INFO << "当前流没有cache表";
+    }
+
+    // 输出所有流共享的cache情况
+    size_t all_stream_cache_count = _available_for_all_streams->table.size();
+    HT_LOG_INFO << "所有流共享cache数量: " << all_stream_cache_count;
+    if (all_stream_cache_count > 0) {
+      HT_LOG_INFO << "所有流共享cache详情:";
+      for (const auto& data_ptr : _available_for_all_streams->table) {
+        auto info_it = _data_ptr_info.find(data_ptr.id);
+        HT_ASSERT(info_it != _data_ptr_info.end())
+          << "Cannot find the info of data ptr " << data_ptr;
+        HT_LOG_INFO << "  - 大小: " << static_cast<double>(data_ptr.size) / (1024 * 1024) 
+                    << " MiB, ID: " << data_ptr.id
+                    << ", 状态: " << info_it->second->status;
+      }
+    }
+    
+    // 输出总体内存使用情况
+    HT_LOG_INFO << "总内存使用: 已分配=" << static_cast<double>(_allocated) / (1024 * 1024) 
+                << " MiB, 已预留=" << static_cast<double>(_reserved) / (1024 * 1024) 
+                << " MiB, 峰值=" << static_cast<double>(_peak_reserved) / (1024 * 1024) << " MiB";
     void* ptr;
     // Now use aligned_num_bytes
     // size_t malloc_size = GetAlignedMallocSize(aligned_num_bytes); 
@@ -331,6 +375,7 @@ DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
   }
   _allocated += data_ptr.size;
   _alloc_cnt++;
+  hetu::impl::reportCudaMemoryToProfiler(data_ptr.ptr, data_ptr.size, _allocated, _reserved, device());
   HT_LOG_TRACE << "ptr: " << data_ptr.id << ", alloc: " << data_ptr.size << ", stream: " << stream << ", is new malloc: " << data_ptr.is_new_malloc;
   return data_ptr;
 }
@@ -479,6 +524,7 @@ void CUDACachingMemoryPool::ReleaseAll() {
     _reserved -= it->size;
     it = lookup_table.erase(it);
     _data_ptr_info.erase(info_it); 
+    hetu::impl::reportCudaMemoryToProfiler(it->ptr, -it->size, _allocated, _reserved, device());
   }
 }
 
@@ -508,6 +554,7 @@ bool CUDACachingMemoryPool::ReleaseAndAlloc(void*& ptr, size_t request_size) {
     _reserved -= it->size;
     lookup_table.erase(it);
     _data_ptr_info.erase(info_it); 
+    hetu::impl::reportCudaMemoryToProfiler(it->ptr, -it->size, _allocated, _reserved, device());
     HT_ASSERT(AllocPtr(ptr, request_size))
       << "Can't alloc request_size";
     return true;
@@ -537,6 +584,7 @@ bool CUDACachingMemoryPool::ReleaseAndAlloc(void*& ptr, size_t request_size) {
     }
     FreePtr(it->ptr);
     _reserved -= it->size;
+    hetu::impl::reportCudaMemoryToProfiler(it->ptr, -it->size, _allocated, _reserved, device());
     it = lookup_table.erase(it);
     _data_ptr_info.erase(info_it); 
     if (AllocPtr(ptr, request_size)) {
@@ -653,6 +701,7 @@ DataPtr CUDACachingMemoryPool::BorrowDataSpace(void* ptr, size_t num_bytes,
   _peak_reserved = MAX(_peak_reserved, _reserved);
   _allocated += num_bytes;
   _alloc_cnt++;
+  hetu::impl::reportCudaMemoryToProfiler(data_ptr.ptr, data_ptr.size, _allocated, _reserved, device());
   return data_ptr;
 }
 
@@ -728,6 +777,7 @@ void CUDACachingMemoryPool::FreeDataSpace(DataPtr data_ptr) {
     info->free_at = free_at;
     _free_cnt++;
     _allocated -= info->num_bytes;
+    hetu::impl::reportCudaMemoryToProfiler(data_ptr.ptr, -1 * data_ptr.size, _allocated, _reserved, device());
     // blocking stream上释放的东西所有stream之后都能用
     if (stream.is_blocking()) {
       info->status = OccupationStatus::AVAILABLE_FOR_ALL_STREAM;
@@ -1043,6 +1093,8 @@ void CUDACachingMemoryPool::WatchEvents() {
           _reserved -= info->num_bytes;
           _allocated -= info->num_bytes;
           _free_cnt++;
+          hetu::impl::reportCudaMemoryToProfiler(info->ptr, -1 * info->num_bytes, _allocated, _reserved, device());
+
         } 
         // alloc data
         else {
@@ -1050,6 +1102,7 @@ void CUDACachingMemoryPool::WatchEvents() {
             << "Info status should be " << OccupationStatus::UNAVAILABLE_UNTIL_FREE
             << ", but found " << info->status;
           _allocated -= info->num_bytes;
+          hetu::impl::reportCudaMemoryToProfiler(info->ptr, -1 * info->num_bytes, _allocated, _reserved, device());
           _free_cnt++;
           // 优先考虑放到all stream available table中cache住
           DataPtrLookupTable* target_table = _available_for_all_streams.get();

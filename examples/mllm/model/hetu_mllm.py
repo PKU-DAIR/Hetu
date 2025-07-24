@@ -38,6 +38,7 @@ class MLLMModel(ht.nn.Module):
         video_mask=None,
         attention_mask=None,
         token_type_ids=None,
+        loss_mask=None,
         labels=None
     ):
         
@@ -45,10 +46,13 @@ class MLLMModel(ht.nn.Module):
         # print("over vision forward")
 
         text_embedding = self.llm.wte(text_ids)
-        print("vision_hidden_states", vision_hidden_states.ds_hierarchy)
-        print("text_embedding", text_embedding.ds_hierarchy)    
-        print("self.llm.h[0].rmsnorm_1.device_group_unions", self.llm.h[0].rmsnorm_1.device_group_unions)
-        vision_hidden_states = ht.comm(vision_hidden_states, text_embedding.ds_hierarchy, self.llm.h[0].rmsnorm_1.device_group_unions, name="vision_hidden_states_comm")
+        
+        print('vision_hidden_states.ds_hierarchy: ', vision_hidden_states.ds_hierarchy)
+        print("self.vision.h[self.vision_config.num_hidden_layers - 1].rmsnorm_1.device_group_unions", self.vision.h[self.vision_config.num_hidden_layers - 1].rmsnorm_1.device_group_unions)
+        print("text_embedding.ds_hierarchy: ", text_embedding.ds_hierarchy)
+        print("self.llm.h[0].rmsnorm_1.device_group_unions: ", self.llm.h[0].rmsnorm_1.device_group_unions)
+        vision_hidden_states = ht.comm(vision_hidden_states, vision_hidden_states.ds_hierarchy, self.vision.h[self.vision_config.num_hidden_layers - 1].rmsnorm_1.device_group_unions, text_embedding.ds_hierarchy, self.llm.h[0].rmsnorm_1.device_group_unions, 
+                                        self.llm_config.packing_slice_list, True, True, name="vision_hidden_states_comm")
 
         # image_mask_repeat = ht.repeat(image_mask, text_embedding.shape)
         llm_inputs_embedding = ht.masked_scatter(text_embedding, image_mask, vision_hidden_states)
@@ -74,7 +78,11 @@ class MLLMModel(ht.nn.Module):
 
         loss = None
         if labels is not None:
-            loss = ht.vocab_parallel_cross_entropy(lm_logits,
-                labels, ignored_index = -1, reduction = "mean")
+            # print(f"lm_logits shape {lm_logits.shape}, labels shape {labels.shape}")
+            loss_unreduced = ht.vocab_parallel_cross_entropy(lm_logits, labels, ignored_index = -1, reduction = "none").reshape([-1])
+            loss_sum = ht.sum(ht.mul(loss_unreduced, loss_mask))
+            loss_valid_tokens = ht.sum(loss_mask)
+            loss = ht.div(loss_sum, loss_valid_tokens)
+            
 
         return loss

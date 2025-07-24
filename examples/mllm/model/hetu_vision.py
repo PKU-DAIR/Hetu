@@ -9,12 +9,13 @@ class PatchEmbed(ht.nn.Module):
         super(PatchEmbed, self).__init__()
         self.config = config
         self.patch_size = config.patch_size
-        # self.temporal_patch_size = config.temporal_patch_size
+        self.temporal_patch_size = config.temporal_patch_size
+        # self.temporal_patch_size = 1
         self.in_channels = config.in_channels
         self.embed_dim = config.embed_dim
 
         kernel_size = self.patch_size
-        self.proj = ht.nn.HtParallelConv2d(in_channels = self.in_channels, 
+        self.proj = ht.nn.HtParallelConv2d(in_channels = self.in_channels * self.temporal_patch_size, 
                                    out_channels = self.embed_dim, 
                                    kernel_size = kernel_size, 
                                    stride=kernel_size, 
@@ -24,9 +25,17 @@ class PatchEmbed(ht.nn.Module):
                                    name="proj")
 
     def  forward(self, x):
-        assert(x.shape[1] == self.in_channels * self.patch_size * self.patch_size)
+        print(f"x shape is {x.shape}")
+        print(f"x global shape is {x.global_shape}")
+        print(f"self.in_channels is {self.in_channels}")
+        print(f"self.patch_size is {self.patch_size}")
+        print(f"self.temporal_patch_size is {self.temporal_patch_size}")
+        assert(x.shape[1] == self.in_channels * self.patch_size * self.patch_size * self.temporal_patch_size)
         target_type = self.proj.weight.dtype
-        x = ht.reshape(x, [-1, self.in_channels, self.patch_size, self.patch_size])
+        x = ht.reshape(x, [-1, self.in_channels * self.temporal_patch_size, self.patch_size, self.patch_size])
+        print(f"x shape is {x.shape}")
+        print("type", target_type)
+        print("device", x.device)
         ht.data_transfer(target_type, x, x.device)
         x = self.proj(x)
         x = ht.reshape(x, [-1, self.embed_dim])
@@ -56,7 +65,7 @@ class PatchMerger(ht.nn.Module):
             self.embed_dim,
             self.hidden_size,
             get_multi_ds_parallel_config(ds_parallel_configs, 'dense_embed_dim_to_hidden_size'),
-            sequence_parallel=True,
+            sequence_parallel=False,
             bias=self.add_bias,
             name=f'rowp_{name}'
             # init_method=output_layer_init_method

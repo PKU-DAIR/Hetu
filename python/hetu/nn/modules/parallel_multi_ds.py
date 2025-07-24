@@ -85,7 +85,6 @@ def get_multi_ds_parallel_config(ds_parallel_configs, module_name, _range=-1):
     assert len(multi_ds_parallel_config) == len(ds_parallel_configs), \
         f'ds_parallel_configs parse error, cannot find {module_name}' if _range == -1 else \
         f'ds_parallel_configs parse error, cannot find {module_name} with range id {_range}'   
-    print("ds_config", module_name, multi_ds_parallel_config)
     return multi_ds_parallel_config
 
 # walkaround: just give order by type(placeholder/varibale), may not include all cases
@@ -99,7 +98,6 @@ def config2ds(config):
     else:
         raise RuntimeError(f"unsupported type {config['type']}!")  
     hetero_sum = len(config['device_group_union'])
-    print("config['device_group_union']", config['device_group_union'])
     if hetero_sum == 1:
         hetero_dim = -3
     for hetero_num in range(hetero_sum):
@@ -302,6 +300,7 @@ class HtMultiParallelLayerNorm(Module):
             ds_union_split0 = hetu.DistributedStatesUnion(ds_list_split0, 0 if hetero_dim != -3 else -3)
             self.ds_union_map['dup'].append(ds_union_dup)
             self.ds_union_map['split0'].append(ds_union_split0)
+        
             
         self.weight = hetu.parallel_parameter(eval(f'hetu.ones_initializer()'), 
                                               self.normalized_shape, self.ds_union_map['dup'], 
@@ -593,9 +592,6 @@ class HtParallelConv3d(Module):
 
 
 
-        
-
-    
 # process: x->split1, w->split0 => y->partial => y->dup    
 class HtMultiRowParallelLinear(Module):
     """Linear layer with row parallelism.

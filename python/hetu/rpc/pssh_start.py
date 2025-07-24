@@ -3,7 +3,7 @@ import argparse
 import yaml
 import time
 from pssh.clients import ParallelSSHClient
-from pssh.utils import enable_host_logger
+# from pssh.utils import enable_host_logger
 # from heturpc_polling_server import server_launch
 from heturpc_async_server import server_launch
 import multiprocessing.spawn
@@ -57,7 +57,9 @@ def pssh(args):
     outputs = []
     for hostname, port, password, cmd in zip(hostnames, ports, passwords, cmd_list):
         client = ParallelSSHClient([hostname], port=port, password=password)
+        print(f"{hostname} run command:")
         output = client.run_command(cmd)
+        print(f"{hostname} run command done")
         clients.append(client)
         outputs.append(output)
     for client in clients:
@@ -102,8 +104,12 @@ if __name__ == '__main__':
         "--log_path", type=str, help="log folder path"
     )
     args = parser.parse_args()
+    print("server_launch")
     p = multiprocessing.Process(target=server_launch, args=(args.server_port,))
+    print("Server started, listening on", args.server_port)
     p.start()
-    time.sleep(3)
+    time.sleep(5)
+    print("start pssh")
     pssh(args)
+    print("pssh done")
     p.join()

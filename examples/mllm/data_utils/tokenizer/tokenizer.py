@@ -131,9 +131,6 @@ class _GPT2BPETokenizer(HetuTokenizer):
         return self.tokenizer.decoder
 
     def tokenize(self, text):
-
-        print("tokenizer ", text)
-
         special_tokens_regex = re.compile(
             "|".join(re.escape(token) for token in self.special_tokens)
         )

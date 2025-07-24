@@ -56,6 +56,17 @@ void Graph::Init() {
     Graph::_make_new_graph<DefineAndRunGraph>("default_define_and_run");
 }
 
+void Graph::SetMicroBatchCtx(size_t micro_batch_id, const IntSymbolDict& int_symbol_dict) {
+  CUR_MICRO_BATCH_ID = micro_batch_id;
+  for (const auto& kv : int_symbol_dict) {
+    const IntSymbol& int_symbol = kv.first;
+    const std::vector<int64_t>& int_list = kv.second;
+    HT_ASSERT(micro_batch_id < int_list.size())
+      << "Micro batch id " << micro_batch_id << " is out of range";
+    int_symbol->set_val(int_list.at(micro_batch_id));
+  }
+}
+
 Operator& Graph::MakeOp(std::shared_ptr<OpInterface> body, TensorList inputs,
                         OpMeta op_meta) {
   Graph::InitOnce();
@@ -430,6 +441,18 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
         grad_inputs = op->Gradient(grad_outputs);
       } 
       HT_LOG_TRACE << "Gradient op outputs are " << grad_inputs;
+
+      for(auto& grad_output : grad_outputs){
+        if(grad_output.is_defined()){
+          HT_LOG_TRACE << "Gradient op output is " << grad_output << ' ' << grad_output->cur_ds_union().ds_union_info() << std::endl;
+        }
+      }      
+      for(auto& grad_input : grad_inputs){
+        if(grad_input.is_defined()){
+          HT_LOG_TRACE << "Gradient op input is " << grad_input << ' ' << grad_input->cur_ds_union().ds_union_info() << std::endl;
+        }
+      }
+
 
       // states deduce
       // 如出现partial需要自动将其转化为dup或split

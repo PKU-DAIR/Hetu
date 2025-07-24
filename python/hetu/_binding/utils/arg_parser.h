@@ -58,6 +58,7 @@ enum class ArgType : uint8_t {
   OPERATOR,
   OPERATOR_LIST,
   FEED_DICT,
+  INT_SYMBOL_DICT,
   PARAMETER_DICT,
   STATE_DICT,
   DISTRIBUTED_STATES,
@@ -66,9 +67,11 @@ enum class ArgType : uint8_t {
   INT_SYMBOL,
   SYMBOLIC_SHAPE,
   SYMBOLIC_SHAPE_LIST,
+  SYMBOLIC_SHAPE_LIST_LIST,
   INITIALIZER,
   SGDOPTIMIZER,
   ADAMOPTIMIZER,
+  
 };
 
 std::string ArgType2Str(ArgType);
@@ -407,6 +410,14 @@ class ParsedPyArgs {
     return has(i) ? get_feed_dict(i) : FeedDict();
   }
 
+  inline IntSymbolDict get_int_symbol_dict(size_t i) const {
+    return IntSymbolDict_FromPyObject(_args[i]);
+  }
+
+  inline IntSymbolDict get_int_symbol_dict_or_empty(size_t i) const {
+    return has(i) ? get_int_symbol_dict(i) : IntSymbolDict();
+  }
+
   inline ParameterDict get_parameter_dict(size_t i) const {
     return ParameterDict_FromPyObject(_args[i]);
   }
@@ -477,6 +488,14 @@ class ParsedPyArgs {
 
   inline SyShapeList get_symbolic_shape_list(size_t i) {
     return SyShapeList_FromPyObject(_args[i]);
+  }
+
+  inline SyShapeListList get_symbolic_shape_list_list_or_empty(size_t i) {
+    return has(i) ? SyShapeListList_FromPyObject(_args[i]) : SyShapeListList();
+  }
+
+  inline SyShapeListList get_symbolic_shape_list_list(size_t i) {
+    return SyShapeListList_FromPyObject(_args[i]);
   }
 
   inline std::shared_ptr<Initializer> get_initializer(size_t i) {

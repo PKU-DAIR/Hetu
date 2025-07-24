@@ -8,7 +8,7 @@ import threading
 import time
 import multiprocessing
 
-MAX_UNFOUND_TIMES = 10000
+MAX_UNFOUND_TIMES = 1000000
 
 class DeviceController(heturpc_pb2_grpc.DeviceControllerServicer):
     def __init__(self, arr, exit_arr, last_heartbeat) -> None:

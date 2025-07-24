@@ -13,6 +13,7 @@ using namespace hetu::impl::comm;
 
 void AllReduceCuda(const NDArray& input, NDArray& output, ReductionType red_type,
                    const DeviceGroup& device_group, const Stream& stream) {
+  std::cout << "execute AllReduceCuda" << std::endl;
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = NCCLCommunicationGroup::GetOrCreate(ranks, stream);
   comm_group->AllReduce(input, output, red_type);
@@ -21,6 +22,7 @@ void AllReduceCuda(const NDArray& input, NDArray& output, ReductionType red_type
 
 void AllGatherCuda(const NDArray& input, NDArray& output,
                    const DeviceGroup& device_group, int32_t gather_dim, const Stream& stream) {
+  std::cout << "execute AllGatherCuda" << std::endl;
   auto ranks = DeviceGroupToWorldRanks(device_group);
   auto& comm_group = NCCLCommunicationGroup::GetOrCreate(ranks, stream);
   comm_group->AllGather(input, output, gather_dim); 
@@ -53,6 +55,7 @@ void BatchedISendIRecvCuda(const NDArrayList& send_datas,
   const std::vector<Device>& dsts, NDArrayList& recv_datas, 
   const std::vector<Device>& srcs, const std::vector<Device>& comm_deivces, 
   const Stream& stream) {
+  // std::cout << "start batched isend irecv" << std::endl;
   std::vector<int> ranks(comm_deivces.size());
   std::transform(comm_deivces.begin(), comm_deivces.end(), ranks.begin(), [&](const Device& device) { return DeviceToWorldRank(device); });
   std::sort(ranks.begin(), ranks.end());
@@ -60,9 +63,19 @@ void BatchedISendIRecvCuda(const NDArrayList& send_datas,
   std::vector<CommTask> tasks;
   tasks.reserve(send_datas.size() + recv_datas.size());
   for (int i = 0; i < send_datas.size(); i++) {
+    if(send_datas[i]->numel() == 0) {
+      std::cout << "ignore send to " << dsts[i] << " send data " << send_datas[i] << std::endl;
+      continue;
+    }
+    std::cout << "send to " << dsts[i] << " send data " << send_datas[i] << std::endl;
     tasks.push_back(comm_group->ISend(send_datas[i], DeviceToWorldRank(dsts[i])));
   }
   for (int i = 0; i < recv_datas.size(); i++) {
+    if(recv_datas[i]->numel() == 0) {
+      std::cout << "ignore recv from " << srcs[i] << " recv data " << recv_datas[i] << std::endl;
+      continue;
+    }
+    std::cout << "recv from " << srcs[i] << " recv data " << recv_datas[i] << std::endl;
     tasks.push_back(comm_group->IRecv(recv_datas[i], DeviceToWorldRank(srcs[i])));
   }
   comm_group->BatchedISendIRecv(tasks);

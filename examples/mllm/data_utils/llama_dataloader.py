@@ -15,7 +15,7 @@ def build_data_loader(dataset, consumed_samples, global_batch_size):
         batch_sampler=batch_sampler,
         shuffle=False,
         num_workers=0,
-        pin_memory=False
+        pin_memory=False,
     )
 
 # directly return the whole global batch, will be split into chunks later

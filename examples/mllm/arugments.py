@@ -6,7 +6,7 @@ parser = argparse.ArgumentParser()
 def _add_model_args(parser):
     group = parser.add_argument_group(title='model')
     # LLM
-    group.add_argument("--vocab_size", type=int, default=30522, help="total number of vocab")
+    group.add_argument("--vocab_size", type=int, default=50304, help="total number of vocab")
     group.add_argument("--hidden_size", type=int, default=768, help="hidden size of transformer model")
     group.add_argument("--ffn_hidden_size", type=int, default=-1, help="ffn hidden size of transformer model")
     group.add_argument("--num_hidden_layers", type=int, default=12, help="number of layers")
@@ -19,6 +19,7 @@ def _add_model_args(parser):
     group.add_argument("--vision_embed_dim", type=int, default=768, help="embed dim")
     group.add_argument("--vision_num_heads", type=int, default=12, help="num heads")
     group.add_argument("--vision_mlp_dim", type=int, default=3072, help="mlp dim")
+    group.add_argument("--temporal_patch_size", type=int, default=2, help="temporal patch size")
     group.add_argument("--vision_num_layers", type=int, default=12, help="num layers")
     group.add_argument("--vision_dropout", type=float, default=0.1, help="dropout")
     group.add_argument("--patch_size", type=int, default=16, help="patch size")
@@ -36,6 +37,8 @@ def _add_data_args(parser):
     group.add_argument("--vocab_file", type=str, help="gpt vocab file path")
     group.add_argument("--merge_file", type=str, help="gpt merge file path")
     group.add_argument("--max_seq_len", type=int, default=4096, help="maximum sequence length in the whole dataset")
+    group.add_argument("--text_max_seqlen", type=int, default=4096, help="maximum sequence length in the text dataset")
+    group.add_argument("--vision_max_seqlen", type=int, default=16384, help="maximum sequence length in the vision dataset")
     group.add_argument("--fake_seqlens", type=str, default="[]", help="seqlen list of fake data")
     return parser
 
