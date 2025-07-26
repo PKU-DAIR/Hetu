@@ -464,6 +464,7 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
       } 
       HT_LOG_TRACE << "Gradient op outputs are " << grad_inputs;
 
+
       // states deduce
       // 如出现partial需要自动将其转化为dup或split
       for (size_t i = 0; i < op->num_inputs(); i++) {

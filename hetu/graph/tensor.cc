@@ -225,6 +225,7 @@ DistributedStates& TensorDef::inferred_cur_ds() {
   // 给定了hetero id
   // 说明是在DeduceStates
   // 或者是保证InferMeta具有明确的指向
+
   if (graph().USE_HETERO_ID) {
     if (graph().CREATE_HETERO) {
       while (cur_hetero_id() >= ds_union.size()) {

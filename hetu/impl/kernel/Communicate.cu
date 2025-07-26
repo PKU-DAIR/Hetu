@@ -86,9 +86,15 @@ void BatchedISendIRecvCuda(const NDArrayList& send_datas,
   std::vector<CommTask> tasks;
   tasks.reserve(send_datas.size() + recv_datas.size());
   for (int i = 0; i < send_datas.size(); i++) {
+    if(send_datas[i]->numel() == 0) {
+      continue;
+    }
     tasks.push_back(comm_group->ISend(send_datas[i], DeviceToWorldRank(dsts[i])));
   }
   for (int i = 0; i < recv_datas.size(); i++) {
+    if(recv_datas[i]->numel() == 0) {
+      continue;
+    }
     tasks.push_back(comm_group->IRecv(recv_datas[i], DeviceToWorldRank(srcs[i])));
   }
   comm_group->BatchedISendIRecv(tasks);

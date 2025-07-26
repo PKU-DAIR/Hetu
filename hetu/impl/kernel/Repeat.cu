@@ -56,7 +56,8 @@ void RepeatCuda(const NDArray& input, NDArray& output, const Stream& stream) {
   dim3 blocks, threads;
   threads.x = MIN(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
   blocks.x = DIVUP(size, HT_DEFAULT_NUM_THREADS_PER_BLOCK);
-  HT_DISPATCH_FLOATING_TYPES(input->dtype(), spec_t, "RepeatCuda", [&]() {
+  HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(input->dtype(), spec_t, "RepeatCuda", [&]() {
+  // HT_DISPATCH_FLOATING_TYPES(input->dtype(), spec_t, "RepeatCuda", [&]() {
     repeat_kernel<spec_t><<<blocks, threads, 0, cuda_stream>>>(
       input->data_ptr<spec_t>(), output->data_ptr<spec_t>(), size, 
       stride_in_arr->data_ptr<int64_t>(), 

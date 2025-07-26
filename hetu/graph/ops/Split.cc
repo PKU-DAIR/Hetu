@@ -338,6 +338,7 @@ Tensor MakeSplitOp(Tensor input, const HTShape& indices,
 TensorList MakeSplitOp(Tensor input, int64_t num_chunks, int64_t dim,
                        bool remain, OpMeta op_meta) {
   HT_ASSERT(input->has_shape());
+  HT_ASSERT(input->shape()[dim] % num_chunks == 0) << "Split dim should be divisible by num_chunks.";
   dim = NDArrayMeta::ParseAxis(dim, input->ndim());
 
   if (!input->symbolic()) {
@@ -353,8 +354,9 @@ TensorList MakeSplitOp(Tensor input, int64_t num_chunks, int64_t dim,
   for (int i = 0; i < num_chunks; ++i) {
     SyShape begin_pos(input->ndim(), 0);
     SyShape output_shape(ori_shape);
-    output_shape[dim] = (i == num_chunks - 1 && !remain) ? (ori_shape[dim] - 1) % chunk_size + 1
-                                                         : chunk_size;
+    // output_shape[dim] = (i == num_chunks - 1 && !remain) ? (ori_shape[dim] - 1) % chunk_size + 1
+                                                        //  : chunk_size;
+    output_shape[dim] = chunk_size;                                                    
     begin_pos[dim] = chunk_sum;
     chunk_sum = chunk_sum + chunk_size;
     begin_pos_list.emplace_back(begin_pos);
@@ -424,13 +426,15 @@ TensorList MakeSplitOp(Tensor input, int64_t num_chunks, int64_t dim,
   HT_ASSERT(dim != padding_axis) << "Split dim can't be the padding dim.";
   int64_t chunk_sum = 0;
   chunk_sum = 0;
+  HT_ASSERT((input->shape(dim) % num_chunks) == 0) << "Split dim should be divisible by num_chunks.";
   int64_t chunk_size = DIVUP(input->shape(dim), num_chunks);
   HTShape begin_pos(input->ndim());
   HTShape output_shape = input->shape();
   TensorList outputs = {};
   for (int i = 0; i < num_chunks; ++i) {
-    output_shape[dim] = i == (num_chunks - 1 && !remain) ? (input->shape(dim) - 1) % chunk_size + 1
-                                                         : chunk_size;
+    // output_shape[dim] = i == (num_chunks - 1 && !remain) ? (input->shape(dim) - 1) % chunk_size + 1
+                                                        //  : chunk_size;
+    output_shape[dim] = chunk_size;
     begin_pos[dim] = chunk_sum;
     chunk_sum += chunk_size;
     outputs.emplace_back(Graph::MakeOp(

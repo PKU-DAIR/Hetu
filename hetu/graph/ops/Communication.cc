@@ -103,7 +103,7 @@ CommOpInfo CommOpImpl::get_comm_info(Operator& op, const Device& inferred) const
     HT_ASSERT(src_ds_union.size() == dst_ds_union.size() && src_ds_union.size() == 1)
       << "Double check fault";
   }
-  return CommOpInfo(src_group_union, dst_group_union, src_ds_union, dst_ds_union, src_union_idx, dst_union_idx, placement_pos);
+  return CommOpInfo(src_group_union, dst_group_union, src_ds_union, dst_ds_union, src_union_idx, dst_union_idx, placement_pos, _packing_slice_list);
 }
 
 uint64_t CommOpImpl::get_comm_type(Operator& op, const Device& inferred, const CommOpInfo& comm_info) {
@@ -488,15 +488,25 @@ void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
                                 const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   Tensor& output = outputs.at(0);
-  const auto& ds_input = input->get_distributed_states();
   HT_ASSERT(input->graph().USE_HETERO_ID == true)
     << "comm op DoDeduceStates can only use when using hetero id";
   const auto& ds_dst = get_dst_distributed_states(input->producer());
   // TODO: check states/order between src and dst
-  HT_ASSERT(ds_input.is_valid() && ds_dst.is_valid())
-          << "distributed states for input and dst tensor must be valid"
-          << ", but found ds_input " << ds_input.ds_info()
-          << ", and ds dst " << ds_dst.ds_info();
+  // update:因为comm op输入和输出的的hetero size可能不一样，例如mllm中，vision encoder和llm的dp值不一样
+  // 所以只在hetero size内时检查是否合法
+  size_t input_hetero_size = inputs.at(0)->cur_ds_union().size();
+  size_t output_hetero_size = outputs.at(0)->cur_ds_union().size();
+  if(input->graph().CUR_HETERO_ID < input_hetero_size){
+    const auto& ds_input = input->get_distributed_states();
+    HT_ASSERT(ds_input.is_valid())
+      << "distributed states for src tensor must be valid"
+      << ", but found ds input " << ds_input.ds_info();
+  }
+  if(output->graph().CUR_HETERO_ID < output_hetero_size){
+    HT_ASSERT(ds_dst.is_valid())
+      << "distributed states for dst tensor must be valid"
+      << ", but found ds dst " << ds_dst.ds_info();  
+  }
   // now support hetero settings
   // device num could be different
   // sounds cool~
@@ -505,6 +515,11 @@ void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
           << "cannot convert src distributed states to unpaired dst distributed states!";
   */
   output->set_distributed_states(ds_dst);
+}
+
+void CommOpImpl::DeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                            TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
+  return DoDeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
 }
 
 void CommOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
@@ -524,6 +539,75 @@ void CommOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim
   // set split pattern here
   // only here
   outputs.at(0)->cur_ds_union().set_split_pattern(split_pattern);
+}
+
+
+// 因为comm op的输入和输出的hetero size可能不一样,而operator中DoDeduceStatesHierarchy将所有的输入和输出的hetero size都设置为一样
+// 所以需要重载DoDeduceStatesHierarchy，根绝comm op的dst_ds_hierarchy来给output设置hetero size
+void CommOpImpl::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
+                                      const OpMeta& op_meta, const InstantiationContext& inst_ctx, Graph& graph) const{
+  
+  int32_t hetero_size = 1;
+  std::vector<int32_t> inputs_hetero_dim;
+  for (const auto& input : inputs) {
+    HT_ASSERT(input->has_cur_ds_union())
+      << "Ds union of inputs should be created before deducing hetero dim"
+      <<  ", but cur strategy id is " << input->cur_strategy_id() 
+      << ", and size of its ds hierarchy is " << input->ds_hierarchy().size();
+    const auto& cur_ds_union = input->cur_ds_union();
+    inputs_hetero_dim.emplace_back(cur_ds_union.hetero_dim());
+    int32_t cur_hetero_size = cur_ds_union.size();
+    if (cur_hetero_size == 1) {
+      HT_ASSERT(cur_ds_union.hetero_dim() == NULL_HETERO_DIM)
+        << "Union size = 1 means homo";
+      continue;
+    }
+    if (hetero_size == 1) {
+      hetero_size = cur_hetero_size;
+    }
+    HT_ASSERT(cur_ds_union.hetero_dim() != NULL_HETERO_DIM)
+      << "Op input " << input << " has an illegal hetero ds";
+    HT_ASSERT(hetero_size == cur_hetero_size)
+      << "Op " << op_meta.name << " has an unaligned hetero ds size";
+  }
+  for (auto& output : outputs) {
+    HT_ASSERT(!output->has_cur_ds_union())
+      << "Ds union of outputs shouldn't be created before deducing hetero dim";
+  }
+  // 创建所有outputs的ds union并确定hetero dim
+  graph.CREATE_STRATEGY = true;
+  // HT_LOG_WARN << "DeduceHeterProp for " << op_meta.name;
+  DeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
+  graph.CREATE_STRATEGY = false;
+  // 依据是否为hetero
+  // 创建所有outputs的ds union中的ds
+  auto output_hetero_size = get_dst_ds_union(graph).size();
+  for (auto& output : outputs) {
+    auto& ds_union = output->cur_ds_union();
+    if (ds_union.hetero_dim() == NULL_HETERO_DIM) {
+      ds_union.add(DistributedStates());
+    } else {
+      HT_ASSERT(output_hetero_size != 1)
+        << "There is a hetero dim, so the hetero size shouldn't equal to 1";
+      for (int32_t i = 0; i < output_hetero_size; i++) {
+        ds_union.add(DistributedStates());
+      }
+    }
+  }
+  // 推导所有outputs的ds union中的ds
+  graph.USE_HETERO_ID = true;
+  for (size_t cur_hetero_id = 0; cur_hetero_id < output_hetero_size; cur_hetero_id++) {
+    graph.CUR_HETERO_ID = cur_hetero_id;
+    DeduceStates(inputs, outputs, op_meta, inst_ctx);
+  }
+  /*
+  for (auto& output : outputs) {
+    HT_LOG_WARN << output << " ds union is " << output->cur_ds_union().ds_union_info();
+  }
+  */
+  graph.CUR_HETERO_ID = 0;
+  graph.USE_HETERO_ID = false;
+
 }
 
 bool CommOpImpl::DoMapToParallelDevices(Operator& op,
@@ -629,9 +713,52 @@ CommOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& in
     << ", dst ds union is " << get_dst_ds_union(input->producer()).ds_union_info()
     << ", dst ds is " << dst_ds.ds_info();
   */
-  for (size_t d = 0; d < input_shape.size(); d++) {
-    shape[d] = input_shape[d] * src_ds.get_dim(d) / dst_ds.get_dim(d);
+  if(_is_cross_modal_comm_op) {
+    HT_ASSERT(_dst_group_hierarchy.size() == 1)
+    << "only support single strategy";
+    int64_t output_pipeline_num = -1;
+    auto& local_device = hetu::impl::comm::GetLocalDevice();
+    for(int i = 0; i < _dst_group_hierarchy.size(); i++) {
+      auto& device_group_union = _dst_group_hierarchy.get(i);
+      if(device_group_union.has(local_device) ){
+        output_pipeline_num = device_group_union.get_index(local_device);
+        break;
+      }
+    }
+
+    if(output_pipeline_num == -1){
+      for(int i = 0; i < _src_group_hierarchy.size(); i++){
+        auto& device_group_union = _src_group_hierarchy.get(i);
+        if(device_group_union.has(local_device)){
+          output_pipeline_num = device_group_union.get_index(local_device);
+          break;
+        }
+      }
+      if(output_pipeline_num == -1 || !(output_pipeline_num != -1 && output_pipeline_num < _dst_group_hierarchy.get(0).size())){
+         output_pipeline_num = 0;
+      }
+    }
+
+    // if(output_pipeline_num != -1){
+    HT_ASSERT(input_shape.size() == 2)
+      << "only support 2D input for cross modal comm op";
+    shape[0] = 0;
+    shape[1] = input_shape[1];
+    
+    HT_ASSERT(_packing_slice_list.size() == 1)
+      << "only support single strategy for cross modal comm op";
+    auto& packing_slice_list_one_strategy = _packing_slice_list.at(0);
+
+    for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
+      shape[0] += packing_slice_list_one_strategy[i][output_pipeline_num + 1]->get_val() - packing_slice_list_one_strategy[i][output_pipeline_num]->get_val();
+    }
   }
+  else{
+    for (size_t d = 0; d < input_shape.size(); d++) {
+      shape[d] = input_shape[d] * src_ds.get_dim(d) / dst_ds.get_dim(d);
+    }
+  }
+
   return {NDArrayMeta().set_dtype(input->dtype()).set_device(input->device()).set_shape(shape)};
 }
 
@@ -639,6 +766,51 @@ CommOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& in
 HTShapeList CommOpImpl::DoInferShape(Operator& op, 
                                      const HTShapeList& input_shapes,
                                      RuntimeContext& runtime_ctx) const {
+  
+  if(_is_cross_modal_comm_op) {
+    HT_ASSERT(_dst_group_hierarchy.size() == 1)
+    << "only support single strategy";
+    int64_t output_pipeline_num = -1;
+    auto& local_device = hetu::impl::comm::GetLocalDevice();
+    for(int i = 0; i < _dst_group_hierarchy.size(); i++) {
+      auto& device_group_union = _dst_group_hierarchy.get(i);
+      if(device_group_union.has(local_device) ){
+        output_pipeline_num = device_group_union.get_index(local_device);
+        break;
+      }
+    }
+
+    if(output_pipeline_num == -1){
+      for(int i = 0; i < _src_group_hierarchy.size(); i++){
+        auto& device_group_union = _src_group_hierarchy.get(i);
+        if(device_group_union.has(local_device)){
+          output_pipeline_num = device_group_union.get_index(local_device);
+          break;
+        }
+      }
+      if(output_pipeline_num == -1 || !(output_pipeline_num != -1 && output_pipeline_num < _dst_group_hierarchy.get(0).size())){
+         output_pipeline_num = 0;
+      }
+    }
+
+    // if(output_pipeline_num != -1){
+    const HTShape& input_shape = input_shapes.at(0);
+    HT_ASSERT(input_shape.size() == 2)
+      << "only support 2D input for cross modal comm op";
+    HTShape shape(input_shape.size());
+    shape[0] = 0;
+    shape[1] = input_shape[1];
+    
+    HT_ASSERT(_packing_slice_list.size() == 1)
+      << "only support single strategy for cross modal comm op";
+    auto& packing_slice_list_one_strategy = _packing_slice_list.at(0);
+    for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
+      shape[0] += packing_slice_list_one_strategy[i][output_pipeline_num + 1]->get_val() - packing_slice_list_one_strategy[i][output_pipeline_num]->get_val();
+    }
+    return {shape};
+    // }
+  }
+
   const HTShape& input_shape = input_shapes.at(0);
   Tensor& input = op->input(0);
   const auto& src_ds = input->get_distributed_states();
@@ -669,14 +841,33 @@ TensorList CommOpImpl::DoGradient(Operator& op,
     DistributedStatesUnion dst_ds_union;
     int32_t ds_input_hetero_dim = input->cur_ds_union().hetero_dim();
     dst_ds_union.set_hetero_dim(ds_input_hetero_dim == -2 ? -1 : ds_input_hetero_dim);
-    size_t hetero_size = std::max(std::max(input->cur_ds_union().size(), output->cur_ds_union().size()), grad_output->cur_ds_union().size());
+
+    auto input_hetero_size = input->cur_ds_union().size();
+    auto output_hetero_size = output->cur_ds_union().size();
+    auto grad_output_hetero_size = grad_output->cur_ds_union().size();
+    // size_t hetero_size = std::max(std::max(input_hetero_size, output_hetero_size), grad_output_hetero_size);
+    size_t hetero_size = input_hetero_size;
+
+
     for (size_t cur_hetero_id = 0; cur_hetero_id < hetero_size; cur_hetero_id++) {
       graph.CUR_HETERO_ID = cur_hetero_id;
       const auto& ds_input = input->get_distributed_states();
-      const auto& ds_output = output->get_distributed_states();
-      const auto& ds_grad_output = grad_output->get_distributed_states();
-      HT_ASSERT(ds_input.is_valid() && ds_output.is_valid())
-              << "distributed states for input and output tensor must be valid!";
+      // const auto& ds_output = output->get_distributed_states();
+      // const auto& ds_grad_output = grad_output->get_distributed_states();
+
+      if(graph.CUR_HETERO_ID < input_hetero_size){
+        HT_ASSERT(ds_input.is_valid())
+          << "distributed states for input tensor must be valid!";
+      }
+      // if(graph.CUR_HETERO_ID < output_hetero_size){
+      //   HT_ASSERT(ds_output.is_valid())
+      //     << "distributed states for output tensor must be valid!";
+      // }
+      // if(graph.CUR_HETERO_ID < grad_output_hetero_size){
+      //   HT_ASSERT(ds_grad_output.is_valid())
+      //     << "distributed states for grad output tensor must be valid!";
+      // }
+
       // now support hetero settings
       // device num could be different
       // sounds cool~
@@ -684,8 +875,8 @@ TensorList CommOpImpl::DoGradient(Operator& op,
       HT_ASSERT(ds_input.get_device_num() == ds_output.get_device_num())
         << "distributed states for input and output tensor must be matched!";
       */
-      HT_ASSERT(ds_output.states(-2) == 1)
-        << "partial shouldn't appear in forward comm op output";
+      // HT_ASSERT(ds_output.states(-2) == 1)
+      //   << "partial shouldn't appear in forward comm op output";
       /*
       HT_ASSERT(ds_grad_output.get_dim(-2) == 1)
         << "partial shouldn't appear in backward comm op input"
@@ -721,12 +912,55 @@ TensorList CommOpImpl::DoGradient(Operator& op,
   graph.CUR_STRATEGY_ID = 0;
   graph.CUR_HETERO_ID = 0;
   graph.USE_HETERO_ID = false;
+
+
+
+
+
+  // Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_group_hierarchy, 
+  //                   SyShapeListList packing_slice_list, bool is_pipeline_inter_diff_model, OpMeta op_meta);
+
+
+
+  if(_is_cross_modal_comm_op) {
+    HT_ASSERT(_packing_slice_list.size() == 1 && _src_ds_hierarchy.size() == 1 && _src_group_hierarchy.size() == 1 
+    && _dst_ds_hierarchy.size() == 1 && _dst_group_hierarchy.size() == 1)
+      << "only support single strategy";
+    auto& packing_slice_list_one_strategy = _packing_slice_list.at(0);
+    auto pipeline_before_comm = packing_slice_list_one_strategy.size();
+    auto pipeline_after_comm = packing_slice_list_one_strategy.at(0).size() - 1;
+    SyShapeListList grad_packing_slice_list;
+    for(int i = 0; i < _packing_slice_list.size(); i ++){
+      SyShapeList packing_slice;
+      for(int j = 0; j < pipeline_after_comm; j ++){
+        SyShape packing_slice_one_pipeline;
+        IntSymbol position_now = IntSymbol(0);
+        packing_slice_one_pipeline.push_back(position_now);
+        for(int k = 0; k < pipeline_before_comm; k ++){
+          position_now = position_now + (_packing_slice_list[i][k][j + 1] - _packing_slice_list[i][k][j]);
+          packing_slice_one_pipeline.push_back(position_now);
+        }
+        packing_slice.push_back(packing_slice_one_pipeline);
+        HT_ASSERT(packing_slice_one_pipeline.size() == pipeline_before_comm + 1) << "packing slice one pipeline size mismatch";
+      }
+      HT_ASSERT(packing_slice.size() == pipeline_after_comm) << "packing slice size mismatch";
+      grad_packing_slice_list.push_back(packing_slice);
+    }
+
+    Tensor grad_input = MakeCommOp(grad_output, _dst_ds_hierarchy, _dst_group_hierarchy, 
+                                  _src_ds_hierarchy, _src_group_hierarchy, grad_packing_slice_list, 
+                                  true, false, OpMeta().set_name("grad_" + op->name()));
+    return {grad_input};
+  }
+
+
   Tensor grad_input = MakeCommOp(grad_output, dst_ds_hierarchy, OpMeta().set_name("grad_" + op->name()));
   /*
   HT_LOG_WARN << grad_input << " ds input " << input->ds_hierarchy().get(0).ds_union_info()
     << " and ds output " << output->ds_hierarchy().get(0).ds_union_info()
     << " and ds grad output " << grad_output->ds_hierarchy().get(0).ds_union_info();
   */
+
   return {grad_input};
 }
 
@@ -827,7 +1061,6 @@ void P2PSendOpImpl::DoCompute(Operator& op,
     << "Data type mismatched for P2P communication: " << input->dtype()
     << " vs. " << op->input(0)->dtype();
   size_t dst_device_index = _dst_device_index == -1 ? op->input(0)->local_placement_group().get_index(op->placement()) : _dst_device_index;
-
   std::vector<int> comm_group_ranks(2);
   auto src_rank = GetWorldRank();
   auto dst_rank = DeviceToWorldRank(_dst_group.get(dst_device_index));
@@ -1013,6 +1246,7 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   NDArrayList outputs;
   auto cur_buffer_shape = runtime_ctx.get_runtime_shape(op->output(0)->id());
   int64_t output_numel = std::accumulate(cur_buffer_shape.begin(), cur_buffer_shape.end(), 1, std::multiplies<int64_t>());
+  // outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   // workaround: no buffer for allgather inside lora
   if (op->name().find("lora") != op->name().npos
       || runtime_ctx.has_runtime_allocation(op->output(0)->id())) {
@@ -1383,6 +1617,32 @@ Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, Dev
     op->graph().DeleteOpFromSubGraph(op);
     auto pipeline_layer_subgraph = op->graph().MakeSubGraph(SubGraphType::PIPELINE, op->name(), true);
     op->graph().AddOpToSubGraph(op, pipeline_layer_subgraph->global_name());
+  }
+  return op->output(0);
+}
+
+
+Tensor MakeCommOp(Tensor input, DistributedStatesHierarchy src_ds_hierarchy, DeviceGroupHierarchy src_group_hierarchy, 
+                  DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_group_hierarchy, SyShapeListList packing_slice_list, 
+                  bool is_cross_modal_comm_op, bool is_forward_op, OpMeta op_meta) {
+  HT_ASSERT(op_meta.device_group_hierarchy.size() == 0)
+    << "MakeCommOp mustn't use device group hierarchy, please use its official attribute (dst group hierarchy) instead to avoid chaos";
+  HT_ASSERT(dst_ds_hierarchy.size() == 1 && dst_group_hierarchy.size() == 1 && packing_slice_list.size() == 1) << "only support single strategy, but got " 
+  << dst_ds_hierarchy.size() << " and " << dst_group_hierarchy.size() << " and " << packing_slice_list.size();
+
+
+  auto& op = Graph::MakeOp(std::make_shared<CommOpImpl>(std::move(dst_ds_hierarchy), std::move(dst_group_hierarchy), kSUM, packing_slice_list,
+                                                        std::move(src_ds_hierarchy), std::move(src_group_hierarchy)), 
+                           {input}, std::move(op_meta));
+
+  auto& comm_op_impl = dynamic_cast<CommOpImpl&>(op->body());
+  comm_op_impl.SetIsCrossModalCommOp(is_cross_modal_comm_op);
+  // record the subgraph
+  // 单独将其放在一个subgraph中
+  if (is_cross_modal_comm_op && is_forward_op) {
+    op->graph().DeleteOpFromSubGraph(op);
+    auto cross_modal_comm_op_subgraph = op->graph().MakeSubGraph(SubGraphType::CROSS_MODAL_COMM_OP, op->name(), true);
+    op->graph().AddOpToSubGraph(op, cross_modal_comm_op_subgraph->global_name());
   }
   return op->output(0);
 }

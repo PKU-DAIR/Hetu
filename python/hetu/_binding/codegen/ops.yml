@@ -386,6 +386,11 @@
   args: Tensor input, Tensor filter, Tensor bias, int64_t padding, int64_t stride
   self: input
 
+- name: conv3d
+  op: Conv3dOp
+  args: Tensor input, Tensor filter, int64_t padding, int64_t stride
+  self: input
+
 - name: avgpool
   op: AvgPoolOp
   args: Tensor input, int64_t kernel_H, int64_t kernel_W, int64_t padding, int64_t stride
@@ -472,6 +477,11 @@
   args: Tensor input
   self: input
 
+- name: gelu
+  op: GeluOp
+  args: Tensor input
+  self: input
+
 - name: leakyrelu
   op: LeakyReluOp
   args: Tensor input, double alpha
@@ -500,6 +510,12 @@
 - name: sin_
   op: SinInplaceOp
   args: Tensor input
+  self: input
+
+
+- name: cos
+  op: CosOp
+  args: Tensor input, bool inplace=False
   self: input
 
 - name: abs
@@ -630,6 +646,11 @@
   op: CommOp
   args: Tensor input, DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_dg_hierarchy, bool is_pipeline_op=True
 
+
+- name: comm
+  op: CommOp
+  args: Tensor input, DistributedStatesHierarchy src_ds_hierarchy, DeviceGroupHierarchy src_dg_hierarchy, DistributedStatesHierarchy dst_ds_hierarchy, DeviceGroupHierarchy dst_dg_hierarchy, List[List[List[IntSymbol]]] packing_slice_list, bool is_cross_modal_comm_op=True, bool is_forward_op=True
+
 - name: comm
   op: CommOp
   args: Tensor input, DistributedStatesHierarchy dst_ds_hierarchy  
@@ -670,6 +691,11 @@
 - name: masked_fill
   op: MaskedfillOp
   args: Tensor input, Tensor mask, double val=0
+  self: input
+
+- name: masked_scatter
+  op: MaskedScatterOp
+  args: Tensor input, Tensor mask, Tensor source
   self: input
 
 - name: norm

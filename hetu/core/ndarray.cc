@@ -1172,6 +1172,36 @@ NDArray NDArray::conv2d(const NDArray& input, const NDArray& filter,
   return out;
 }
 
+NDArray NDArray::conv3d(const NDArray& input, const NDArray& filter, 
+                        const HTShape& padding, const HTShape& stride,
+                        StreamIndex stream_id,
+                        NDArray& output) {
+  NDArray out;
+  if (output.is_defined()) 
+    out = output;
+  else {
+    int64_t N = input->shape(0);
+    int64_t D = input->shape(2);
+    int64_t H = input->shape(3);
+    int64_t W = input->shape(4);
+    int64_t f_O = filter->shape(0);
+    int64_t f_D = filter->shape(2);
+    int64_t f_H = filter->shape(3);
+    int64_t f_W = filter->shape(4);
+    int64_t out_D = (D + 2 * padding[0] - f_D) / stride[0] + 1;
+    int64_t out_H = (H + 2 * padding[0] - f_H) / stride[1] + 1;
+    int64_t out_W = (W + 2 * padding[1] - f_W) / stride[2] + 1;
+    out = NDArray::empty({N, f_O, out_D, out_H, out_W}, input->device(),
+                         input->dtype(), stream_id);
+  }
+  Stream stream(input->device(), stream_id);
+  HT_DISPATCH_KERNEL_CPU_AND_CUDA(input->device().type(), __FUNCTION__, hetu::impl::Conv3d,
+                                  input, filter, out,
+                                  padding[0], padding[1], padding[2],
+                                  stride[0], stride[1], stride[2], stream);
+  return out;
+}
+
 NDArray NDArray::cos(const NDArray& input,
                      StreamIndex stream_id,
                      NDArray& output) {
@@ -1584,7 +1614,7 @@ NDArray NDArray::slice(const NDArray& input, const HTShape& begin_pos,
   const auto& in_shape = input->shape();
   const auto& in_stride = input->stride();
   HTShape out_shape = output_shape;
-  
+
   HT_ASSERT(begin_pos.size() == in_shape.size()
          && output_shape.size() == in_shape.size());
 
@@ -1692,6 +1722,7 @@ NDArray NDArray::sceloss(const NDArray& preds, const NDArray& labels, const int6
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(preds->device().type(), __FUNCTION__,
                                   hetu::impl::SoftmaxCrossEntropySparse, preds,
                                   labels, unreduced, ignored_index, stream);
+  stream.Sync();
   if (reduction != kNONE) {
     NDArray::reduce(unreduced, reduction, HTAxes(), false, stream_id, out);
   }

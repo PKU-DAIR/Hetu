@@ -304,6 +304,15 @@ void MulElewiseOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outp
   outputs.at(0)->set_distributed_states(ElewiseDeduceStates(inputs.at(0), inputs.at(1)));
 }
 
+void MulElewiseOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
+int32_t hetero_dim = inputs_hetero_dim.at(0);
+HT_ASSERT(inputs_hetero_dim.at(1) != -1 || inputs_hetero_dim.at(1) != hetero_dim) << "MulElewiseOpImpl: input hetero dim should be valid!";
+outputs.at(0)->cur_ds_union().set_hetero_dim(hetero_dim);
+}
+
+
+
 void MulByConstOpImpl::DoCompute(Operator& op,
                                  const NDArrayList& inputs, NDArrayList& outputs,
                                  RuntimeContext& ctx) const {

@@ -40,6 +40,7 @@ class DeviceController(heturpc_pb2_grpc.DeviceControllerServicer):
         self.exit_nums = 0
         self.barrier_nums = {}
         self.barrier_end_nums = {}
+        self.host_name_to_idx = {}
         #dicts
         self.double_dict = {}
         self.int_dict = {}
@@ -61,21 +62,33 @@ class DeviceController(heturpc_pb2_grpc.DeviceControllerServicer):
     def GetRank(self, request, context):
         local_rank = 0
         self.lock.acquire()
-        nodename = "node-" + request.name
-        if nodename not in self.local_ranks:
-            self.local_ranks[nodename] = 0
-        for nodename_ in self.nodenames:
-            if nodename_ == nodename:
-                local_rank += self.local_ranks[nodename]
-                self.local_ranks[nodename] = self.local_ranks[nodename] + 1
-                break
-            else:
-                local_rank += self.local_worldsizes[nodename_]
-        print(request.name, " ", local_rank)
+        if self.host_name_to_idx == {}:
+            nodename = "node-" + request.name
+            if nodename not in self.local_ranks:
+                self.local_ranks[nodename] = 0
+            for nodename_ in self.nodenames:
+                if nodename_ == nodename:
+                    local_rank += self.local_ranks[nodename]
+                    local_device = self.local_ranks[nodename]
+                    self.local_ranks[nodename] = self.local_ranks[nodename] + 1
+                    break
+                else:
+                    local_rank += self.local_worldsizes[nodename_]
+        else:
+            nodename = request.name
+            assert(request.name in self.host_name_to_idx)
+            if nodename not in self.local_ranks:
+                self.local_ranks[nodename] = 0
+            local_rank = self.host_name_to_idx[nodename][self.local_ranks[nodename]]
+            local_device = self.host_name_to_local_idx[nodename][self.local_ranks[nodename]]
+            self.local_ranks[nodename] = self.local_ranks[nodename] + 1
+
+        # print(request.name, " ", local_rank)
+        print(request.name, "rank:", local_rank, ",device:", local_device, "confirm")
         self.last_heartbeat[int(local_rank)] = time.time()
         self.arr[0] += 1
         self.lock.release()
-        return heturpc_pb2.RankReply(rank=local_rank)
+        return heturpc_pb2.RankReply(rank=local_rank, local_device=local_device)
     
     def CommitHostName(self, request, context):
         self.lock.acquire()

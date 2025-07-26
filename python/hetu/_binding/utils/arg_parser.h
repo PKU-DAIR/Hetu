@@ -74,9 +74,11 @@ enum class ArgType : uint8_t {
   INT_SYMBOL,
   SYMBOLIC_SHAPE,
   SYMBOLIC_SHAPE_LIST,
+  SYMBOLIC_SHAPE_LIST_LIST,
   INITIALIZER,
   SGDOPTIMIZER,
   ADAMOPTIMIZER,
+  
 };
 
 std::string ArgType2Str(ArgType);
@@ -547,6 +549,14 @@ class ParsedPyArgs {
 
   inline SyShapeList get_symbolic_shape_list(size_t i) {
     return SyShapeList_FromPyObject(_args[i]);
+  }
+
+  inline SyShapeListList get_symbolic_shape_list_list_or_empty(size_t i) {
+    return has(i) ? SyShapeListList_FromPyObject(_args[i]) : SyShapeListList();
+  }
+
+  inline SyShapeListList get_symbolic_shape_list_list(size_t i) {
+    return SyShapeListList_FromPyObject(_args[i]);
   }
 
   inline std::shared_ptr<Initializer> get_initializer(size_t i) {

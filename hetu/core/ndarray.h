@@ -388,6 +388,11 @@ class NDArray : public shared_ptr_wrapper<NDArrayDef> {
                         StreamIndex stream_id = DEFAULT_STREAM,
                         NDArray& output = EMPTY);
 
+  static NDArray conv3d(const NDArray& input, const NDArray& filter, 
+                        const HTShape& padding, const HTShape& stride,
+                        StreamIndex stream_id = DEFAULT_STREAM,
+                        NDArray& output = EMPTY);
+
   static NDArray cos(const NDArray& input,
                      StreamIndex stream_id = DEFAULT_STREAM,
                      NDArray& output = EMPTY);

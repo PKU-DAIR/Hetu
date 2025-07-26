@@ -41,5 +41,5 @@ __all__ = [
     # parallel_multi_ds
     'HtMultiParallelRMSNorm', 'HtMultiParallelLayerNorm', 'HtMultiParallelEmbedding', 
     'HtMultiVocabParallelEmbedding', 'HtMultiColumnParallelLinear', 'HtMultiRowParallelLinear',
-    'HtMultiQKVColumnParallelLinear',
+    'HtMultiQKVColumnParallelLinear', 'HtParallelConv2d', 'HtParallelConv3d',
 ]

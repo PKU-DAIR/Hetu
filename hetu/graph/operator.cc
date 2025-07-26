@@ -230,6 +230,7 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
                                         RuntimeContext& runtime_ctx) const {
   NDArrayList outputs;
   auto output_size = op->num_outputs();
+
   if (output_size > 0) {
     outputs.reserve(output_size);
     // 动态图
@@ -260,8 +261,8 @@ NDArrayList OpInterface::DoAllocOutputs(Operator& op, const NDArrayList& inputs,
         auto output_id = op->output(i)->id();
         // HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << ": get runtime shape for " << op->output(i);
         const auto& output_shape = runtime_ctx.get_runtime_shape(output_id);
-        HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << ": exec op " << op
-          << " output " << i << " shape = " << output_shape << " ds = " << op->output(i)->get_distributed_states().ds_info();
+        // HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << ": exec op " << op
+          // << " output " << i << " shape = " << output_shape << " ds = " << op->output(i)->get_distributed_states().ds_info();
         if (runtime_ctx.has_runtime_allocation(output_id)) {
           // HT_LOG_INFO << op->output(i) << " id is " << output_id << ", has runtime allocation";
           outputs.push_back(runtime_ctx.get_runtime_allocation(output_id));

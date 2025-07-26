@@ -25,10 +25,10 @@ __global__ void softmax_cross_entropy_sparse_kernel(const spec_t* pred, const in
     return;
   auto label_offset = label_offset_calculator->get(idx);
   auto loss_offset = loss_offset_calculator->get(idx);
-  if(int64_t(label[label_offset]) == ignored_index) {
+  if(int64_t(label[label_offset]) == ignored_index || int64_t(label[label_offset]) < 0) {
     loss[loss_offset] = 0;
     return;
-  }  
+  }
   __shared__ spec_t buffer[32];
   __shared__ float buffer_f[32];
   __shared__ spec_t wrap_max[1];
@@ -66,7 +66,7 @@ __global__ void softmax_cross_entropy_sparse_kernel2(const spec_t* pred, const i
     return;
   auto label_offset = label_offset_calculator->get(idx);
   auto loss_offset = loss_offset_calculator->get(idx);
-  if(int64_t(label[label_offset]) == ignored_index) {
+  if(int64_t(label[label_offset]) == ignored_index || int64_t(label[label_offset]) < 0) {
     loss[loss_offset] = 0;
     return;
   }
@@ -105,7 +105,7 @@ softmax_cross_entropy_sparse_gradient_kernel(const spec_t* pred, const int64_t* 
 
   auto label_offset = label_offset_calculator->get(idx);
   auto base_idx = idx * n_cols;
-  if(int64_t(label[label_offset]) == ignored_index) {
+  if(int64_t(label[label_offset]) == ignored_index || int64_t(label[label_offset]) < 0) {
     for (size_t i = 0; i < n_cols; ++i) {
         auto out_offset = out_offset_calculator->get(base_idx + i);
         output[out_offset] = 0;
