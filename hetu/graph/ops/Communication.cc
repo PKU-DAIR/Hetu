@@ -1,10 +1,13 @@
 #include "hetu/graph/ops/Communication.h"
+#include "hetu/core/ndarray.h"
 #include "hetu/graph/headers.h"
 #include "hetu/graph/ops/kernel_links.h"
 #include "hetu/graph/executable_graph.h"
 #include "hetu/impl/communication/nccl_comm_group.h"
 #include "hetu/impl/communication/comm_group.h"
 #include "hetu/core/symbol.h"
+#include <any>
+#include <cstdint>
 #include <numeric>
 
 namespace hetu {
@@ -481,7 +484,8 @@ std::tuple<size_t, std::vector<DeviceGroupList>> CommOpImpl::get_split_comm_grou
 }
 
 void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                const OpMeta& op_meta) const {
+                                const OpMeta& op_meta,
+                                const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   Tensor& output = outputs.at(0);
   HT_ASSERT(input->graph().USE_HETERO_ID == true)
@@ -514,12 +518,13 @@ void CommOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void CommOpImpl::DeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                            TensorList& outputs, const OpMeta& op_meta) const {
-  return DoDeduceHeterProp(inputs_hetero_dim, outputs, op_meta);
+                            TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
+  return DoDeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
 }
 
 void CommOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                   TensorList& outputs, const OpMeta& op_meta) const {
+                                   TensorList& outputs, const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   int32_t hetero_dim = NULL_HETERO_DIM;
   SplitPattern split_pattern = SplitPattern(true);
   if (_dst_ds_hierarchy.size() == 1) { // for comm op created in exec_graph, without multi ds
@@ -540,7 +545,7 @@ void CommOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim
 // 因为comm op的输入和输出的hetero size可能不一样,而operator中DoDeduceStatesHierarchy将所有的输入和输出的hetero size都设置为一样
 // 所以需要重载DoDeduceStatesHierarchy，根绝comm op的dst_ds_hierarchy来给output设置hetero size
 void CommOpImpl::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
-                                      const OpMeta& op_meta, Graph& graph) const{
+                                      const OpMeta& op_meta, const InstantiationContext& inst_ctx, Graph& graph) const{
   
   int32_t hetero_size = 1;
   std::vector<int32_t> inputs_hetero_dim;
@@ -572,7 +577,7 @@ void CommOpImpl::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& o
   // 创建所有outputs的ds union并确定hetero dim
   graph.CREATE_STRATEGY = true;
   // HT_LOG_WARN << "DeduceHeterProp for " << op_meta.name;
-  DeduceHeterProp(inputs_hetero_dim, outputs, op_meta);
+  DeduceHeterProp(inputs_hetero_dim, outputs, op_meta, inst_ctx);
   graph.CREATE_STRATEGY = false;
   // 依据是否为hetero
   // 创建所有outputs的ds union中的ds
@@ -593,7 +598,7 @@ void CommOpImpl::DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& o
   graph.USE_HETERO_ID = true;
   for (size_t cur_hetero_id = 0; cur_hetero_id < output_hetero_size; cur_hetero_id++) {
     graph.CUR_HETERO_ID = cur_hetero_id;
-    DeduceStates(inputs, outputs, op_meta);
+    DeduceStates(inputs, outputs, op_meta, inst_ctx);
   }
   /*
   for (auto& output : outputs) {
@@ -690,7 +695,7 @@ bool CommOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-CommOpImpl::DoInferMeta(const TensorList& inputs) const {
+CommOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   const HTShape& input_shape = input->shape();
   const DistributedStates& src_ds = input->get_distributed_states();
@@ -708,7 +713,6 @@ CommOpImpl::DoInferMeta(const TensorList& inputs) const {
     << ", dst ds union is " << get_dst_ds_union(input->producer()).ds_union_info()
     << ", dst ds is " << dst_ds.ds_info();
   */
-  std::cout << "DoInferShape " << "is_cross_modal_comm_op " << _is_cross_modal_comm_op << std::endl;
   if(_is_cross_modal_comm_op) {
     HT_ASSERT(_dst_group_hierarchy.size() == 1)
     << "only support single strategy";
@@ -744,12 +748,7 @@ CommOpImpl::DoInferMeta(const TensorList& inputs) const {
     HT_ASSERT(_packing_slice_list.size() == 1)
       << "only support single strategy for cross modal comm op";
     auto& packing_slice_list_one_strategy = _packing_slice_list.at(0);
-    std::cout << "output_pipeline_num " << output_pipeline_num << std::endl;
-    for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
-      for(int j = 0; j < packing_slice_list_one_strategy[i].size(); j++){
-        std::cout << "packing_slice_list_one_strategy " << i << " " << j << " " << packing_slice_list_one_strategy[i][j]->get_val() << std::endl;
-      }
-    }
+
     for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
       shape[0] += packing_slice_list_one_strategy[i][output_pipeline_num + 1]->get_val() - packing_slice_list_one_strategy[i][output_pipeline_num]->get_val();
     }
@@ -768,7 +767,6 @@ HTShapeList CommOpImpl::DoInferShape(Operator& op,
                                      const HTShapeList& input_shapes,
                                      RuntimeContext& runtime_ctx) const {
   
-  std::cout << "DoInferShape " << "is_cross_modal_comm_op " << _is_cross_modal_comm_op << std::endl;
   if(_is_cross_modal_comm_op) {
     HT_ASSERT(_dst_group_hierarchy.size() == 1)
     << "only support single strategy";
@@ -806,12 +804,6 @@ HTShapeList CommOpImpl::DoInferShape(Operator& op,
     HT_ASSERT(_packing_slice_list.size() == 1)
       << "only support single strategy for cross modal comm op";
     auto& packing_slice_list_one_strategy = _packing_slice_list.at(0);
-    std::cout << "output_pipeline_num " << output_pipeline_num << std::endl;
-    for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
-      for(int j = 0; j < packing_slice_list_one_strategy[i].size(); j++){
-        std::cout << "packing_slice_list_one_strategy " << i << " " << j << " " << packing_slice_list_one_strategy[i][j]->get_val() << std::endl;
-      }
-    }
     for(int i = 0; i < packing_slice_list_one_strategy.size(); i++){
       shape[0] += packing_slice_list_one_strategy[i][output_pipeline_num + 1]->get_val() - packing_slice_list_one_strategy[i][output_pipeline_num]->get_val();
     }
@@ -899,7 +891,7 @@ TensorList CommOpImpl::DoGradient(Operator& op,
       // row backward, no comm: ->dup->dup-> (forward op DoGradient())
       // sp:
       // col forward, all-gather: ->split0->dup-> (manually insert comm op in .py)
-      // col backward, reduces-scatter: ->partial->split0-> (forward op DoGradient())
+      // col backward, reduce-scatter: ->partial->split0-> (forward op DoGradient())
       // row forward, reduce-scatter: ->partial->split0-> (manually insert comm op in .py)
       // row backward, all-gather: ->split0->dup-> (forward op DoGradient())
       
@@ -954,24 +946,7 @@ TensorList CommOpImpl::DoGradient(Operator& op,
       HT_ASSERT(packing_slice.size() == pipeline_after_comm) << "packing slice size mismatch";
       grad_packing_slice_list.push_back(packing_slice);
     }
-    for(int i = 0; i < _packing_slice_list.size(); i++){
-      std::cout << "packing_slice_list " << i << std::endl;
-      for(int j = 0; j < _packing_slice_list[i].size(); j++){
-        for(int k = 0; k < _packing_slice_list[i][j].size(); k++){
-          std::cout << _packing_slice_list[i][j][k]->get_val() << " ";
-        }
-        std::cout << std::endl;
-      }
-    }
-    for(int i = 0; i < grad_packing_slice_list.size(); i++){
-      std::cout << "grad_packing_slice_list " << i << std::endl;
-      for(int j = 0; j < grad_packing_slice_list[i].size(); j++){
-        for(int k = 0; k < grad_packing_slice_list[i][j].size(); k++){
-          std::cout << grad_packing_slice_list[i][j][k]->get_val() << " ";
-        }
-        std::cout << std::endl;
-      }
-    }
+
     Tensor grad_input = MakeCommOp(grad_output, _dst_ds_hierarchy, _dst_group_hierarchy, 
                                   _src_ds_hierarchy, _src_group_hierarchy, grad_packing_slice_list, 
                                   true, false, OpMeta().set_name("grad_" + op->name()));
@@ -1008,7 +983,7 @@ bool AllReduceOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-AllReduceOpImpl::DoInferMeta(const TensorList& inputs) const {
+AllReduceOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {inputs[0]->meta()};
 }
 
@@ -1022,10 +997,11 @@ NDArrayList AllReduceOpImpl::DoCompute(Operator& op,
                                        const NDArrayList& inputs,
                                        RuntimeContext& ctx) const {
   // NDArrayList outputs = inplace() ? inputs : DoAllocOutputs(op, inputs, ctx);
-  NDArrayList outputs = !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx); // just inplace here
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx); 
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
+                                  std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                   op->instantiation_ctx().stream());
   return outputs;
 }
@@ -1035,6 +1011,7 @@ void AllReduceOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::AllReduce, inputs.at(0),
                                   outputs.at(0), reduction_type(), _comm_group, // _comm_group is a subset of placement_group
+                                  std::any_cast<bool>(runtime_ctx.get_param("fp32_comm_reduce")),
                                   op->instantiation_ctx().stream());                          
 }
 
@@ -1065,7 +1042,7 @@ bool P2PSendOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-P2PSendOpImpl::DoInferMeta(const TensorList& inputs) const {
+P2PSendOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {};
 }
 
@@ -1126,7 +1103,7 @@ bool P2PRecvOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-P2PRecvOpImpl::DoInferMeta(const TensorList& inputs) const {
+P2PRecvOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {NDArrayMeta().set_dtype(_dtype).set_shape(get_shape())};
 }
 
@@ -1169,7 +1146,7 @@ bool BatchedISendIRecvOpImpl::DoInstantiate(Operator& op, const Device& placemen
 }
 
 std::vector<NDArrayMeta> 
-BatchedISendIRecvOpImpl::DoInferMeta(const TensorList& inputs) const {
+BatchedISendIRecvOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   HTShapeList outputs_shape = get_outputs_shape();
   if (outputs_shape.size() == 0)
     return {};
@@ -1244,7 +1221,7 @@ bool AllGatherOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-AllGatherOpImpl::DoInferMeta(const TensorList& inputs) const {
+AllGatherOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape gather_shape = input->shape();
@@ -1271,7 +1248,8 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   int64_t output_numel = std::accumulate(cur_buffer_shape.begin(), cur_buffer_shape.end(), 1, std::multiplies<int64_t>());
   // outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   // workaround: no buffer for allgather inside lora
-  if (op->name().find("lora") != op->name().npos) {
+  if (op->name().find("lora") != op->name().npos
+      || runtime_ctx.has_runtime_allocation(op->output(0)->id())) {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   } else if (!runtime_ctx.has_runtime_allocation(op->output(0)->id()) 
              && _buffer_for_allgather.is_defined() 
@@ -1283,7 +1261,9 @@ NDArrayList AllGatherOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   } else {
     outputs = DoAllocOutputs(op, inputs, runtime_ctx);
     _buffer_for_allgather = outputs[0];
-  }  
+  } 
+  // TODO: recompute to avoid this additional memory allocate. 
+  outputs = DoAllocOutputs(op, inputs, runtime_ctx);
   DoCompute(op, inputs, outputs, runtime_ctx);
   return outputs;
 }
@@ -1320,7 +1300,7 @@ bool ReduceScatterOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-ReduceScatterOpImpl::DoInferMeta(const TensorList& inputs) const {
+ReduceScatterOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape scatter_shape = input->shape();
@@ -1351,26 +1331,28 @@ NDArrayList ReduceScatterOpImpl::DoCompute(Operator& op,
     << "Data type mismatched for ReduceScatter communication: " << inputs.at(0)->dtype()
     << " vs. " << op->input(0)->dtype();
 
-  // if (inplace()) {
-  // just inplace here
-  // NDArrayMeta meta = inputs.at(0)->meta();
-  // HTShape scatter_shape = inputs.at(0)->shape();
-  // scatter_shape[get_scatter_dim()] /= _comm_group.num_devices();
-  // meta.set_shape(scatter_shape);
-  // int rank = _comm_group.get_index(op->placement());
-  // size_t storage_offset = rank * (inputs.at(0)->numel() / _comm_group.num_devices());
-  // NDArray output = NDArray(meta, inputs.at(0)->storage(), inputs.at(0)->storage_offset() + storage_offset);
-  // outputs.emplace_back(output);
-  // }
-  // else {
-  // no inplace for reduce-scatter
-  outputs = DoAllocOutputs(op, inputs, ctx);
-  // }
+  if (inplace() && !ctx.has_runtime_allocation(op->output(0)->id())) {
+    // just inplace here
+    NDArrayMeta meta = inputs.at(0)->meta();
+    HTShape scatter_shape = inputs.at(0)->shape();
+    scatter_shape[get_scatter_dim()] /= _comm_group.num_devices();
+    meta.set_shape(scatter_shape);
+    int rank = _comm_group.get_index(op->placement());
+    size_t storage_offset = rank * (inputs.at(0)->numel() / _comm_group.num_devices());
+    NDArray output = NDArray(meta, inputs.at(0)->storage(), inputs.at(0)->storage_offset() + storage_offset);
+    outputs.emplace_back(output);
+  }
+  else {
+    // no inplace for reduce-scatter
+    outputs = DoAllocOutputs(op, inputs, ctx);
+  }
   
   // HT_LOG_INFO << "comm group " << _comm_group
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::ReduceScatter, inputs.at(0), outputs.at(0), 
-                                  reduction_type(), _comm_group, get_scatter_dim(), op->instantiation_ctx().stream());
+                                  reduction_type(), _comm_group, get_scatter_dim(), 
+                                  std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
+                                  op->instantiation_ctx().stream());
   return outputs;
 }
 
@@ -1384,7 +1366,9 @@ void ReduceScatterOpImpl::DoCompute(Operator& op,
 
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                   hetu::impl::ReduceScatter, inputs.at(0), outputs.at(0), 
-                                  reduction_type(), _comm_group, get_scatter_dim(), op->instantiation_ctx().stream());
+                                  reduction_type(), _comm_group, get_scatter_dim(), 
+                                  std::any_cast<bool>(runtime_ctx.get_param("fp32_comm_reduce")),
+                                  op->instantiation_ctx().stream());
 }
 
 bool SplitAllGatherOpImpl::DoMapToParallelDevices(Operator& op, 
@@ -1405,7 +1389,7 @@ bool SplitAllGatherOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-SplitAllGatherOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitAllGatherOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape gather_shape = input->shape();
@@ -1482,7 +1466,7 @@ bool SplitAllReduceOpImpl::DoInstantiate(Operator& op, const Device& placement,
 }
 
 std::vector<NDArrayMeta> 
-SplitAllReduceOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitAllReduceOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   return {inputs[0]->meta()};
 }
 
@@ -1517,6 +1501,7 @@ NDArrayList SplitAllReduceOpImpl::DoCompute(Operator& op,
       HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                       hetu::impl::AllReduce, split_inputs.at(i),
                                       split_outputs.at(i), reduction_type(), comm_group,
+                                      std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                       op->instantiation_ctx().stream());
     }
   }
@@ -1541,7 +1526,7 @@ bool SplitReduceScatterOpImpl::DoInstantiate(Operator& op, const Device& placeme
 }
 
 std::vector<NDArrayMeta> 
-SplitReduceScatterOpImpl::DoInferMeta(const TensorList& inputs) const {
+SplitReduceScatterOpImpl::DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const {
   const Tensor& input = inputs.at(0);
   DataType dtype = input->dtype();
   HTShape scatter_shape = input->shape();
@@ -1598,6 +1583,7 @@ NDArrayList SplitReduceScatterOpImpl::DoCompute(Operator& op,
       HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(),
                                       hetu::impl::ReduceScatter, split_inputs.at(i),
                                       split_outputs.at(i), reduction_type(), comm_group, 0,
+                                      std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                       op->instantiation_ctx().stream());
     }
   }

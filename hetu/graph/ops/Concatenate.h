@@ -39,7 +39,7 @@ class ConcatenateOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     int len = inputs.size();
     bool flag = true;
@@ -80,7 +80,7 @@ class ConcatenateOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -139,14 +139,14 @@ class ConcatenateGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     NDArrayMeta output_meta = inputs[0]->meta();
     return {output_meta};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;

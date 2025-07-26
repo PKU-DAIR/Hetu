@@ -3,9 +3,10 @@ import argparse
 import yaml
 import time
 from pssh.clients import ParallelSSHClient
-# from pssh.utils import enable_host_logger
-# from heturpc_polling_server import server_launch
-from heturpc_async_server import server_launch
+from pssh.utils import enable_host_logger
+from heturpc_polling_server import server_launch
+# from heturpc_async_server import server_launch
+# from heturpc_elastic_server import server_launch
 import multiprocessing.spawn
 import time
 
@@ -52,14 +53,16 @@ def pssh(args):
         # 请注意log编号目前并不等于rank编号
         # log编号是进程编号
         # 但不能保证分配到同样编号的rank
-        cmd_list.append(cmd + f"export HETU_LOCAL_HOSTNAME={hostname} && " + train_command + f" 2>&1 | tee {args.log_path}" + "/log_" + f"{i}" + ".txt")
+        if args.nsys_profile and i == 0:
+            new_train_command = f"nsys profile -o {args.log_path}/report_{i} " + train_command
+        else:
+            new_train_command = train_command
+        cmd_list.append(cmd + f"export HETU_LOCAL_HOSTNAME={hostname} && " + new_train_command + f" 2>&1 | tee {args.log_path}" + "/log_" + f"{i}" + ".log")
     clients = []
     outputs = []
     for hostname, port, password, cmd in zip(hostnames, ports, passwords, cmd_list):
         client = ParallelSSHClient([hostname], port=port, password=password)
-        print(f"{hostname} run command:")
         output = client.run_command(cmd)
-        print(f"{hostname} run command done")
         clients.append(client)
         outputs.append(output)
     for client in clients:
@@ -80,12 +83,6 @@ if __name__ == '__main__':
         "--command", type=str, default='uname', help="command for pssh"
     )
     parser.add_argument(
-        "--pssh_port", type=str, default='60001', help="pssh's port"
-    )
-    parser.add_argument(
-        "--pssh_password", type=str, default='gehao1602', help="pssh's password"
-    )
-    parser.add_argument(
         "--server_addr", type=str, default='127.0.0.1', help="server's address"
     )
     parser.add_argument(
@@ -103,13 +100,15 @@ if __name__ == '__main__':
     parser.add_argument(
         "--log_path", type=str, help="log folder path"
     )
+    parser.add_argument(
+        '--nsys_profile', action='store_true', help='use nsys to profile'
+    )
     args = parser.parse_args()
-    print("server_launch")
     p = multiprocessing.Process(target=server_launch, args=(args.server_port,))
-    print("Server started, listening on", args.server_port)
     p.start()
-    time.sleep(5)
-    print("start pssh")
+    # workaround: clients may start earlier than the server
+    # need to use retry-until-connect approach
+    # now simply wait 3 seconds to ensure the server is lauched before clients
+    time.sleep(3)
     pssh(args)
-    print("pssh done")
     p.join()

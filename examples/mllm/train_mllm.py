@@ -45,25 +45,6 @@ def train_dataset_provider(args):
     global tokenizer
     args.make_vocab_size_divisible_by = 128
     tokenizer = build_tokenizer(args)
-    # config = LLaMaDatasetConfig(
-    #     random_seed=args.seed,
-    #     sequence_length=args.max_seq_len,
-    #     blend=args.data_path,
-    #     blend_per_split=[None, None, None],
-    #     split=args.split,
-    #     path_to_cache=args.data_cache_path,
-    #     tokenizer=tokenizer,
-    #     reset_position_ids=False,
-    #     reset_attention_mask=False,
-    #     eod_mask_loss=False,
-    #     vocab_size=args.vocab_size,
-    # )
-    # train_val_test_num_samples = [args.epochs * args.steps * args.global_batch_size, 0, 0]
-    # train_ds, valid_ds, test_ds = BlendedHetuDatasetBuilder(
-    #     LLaMAJsonDataset,
-    #     train_val_test_num_samples,
-    #     config
-    # ).build()
     train_ds = NExTQADataset(tokenizer = tokenizer, args = args)
     return train_ds
 
@@ -99,12 +80,13 @@ def pretrain(args):
         # 获取GPU的位置
         # 原则是不让tp跨机并尽可能贪心地让pp跨机
         vision_layers_tp_groups, llm_layers_tp_groups, gpu_pos = convert_strategy(vision_multi_tp_pp_list[strategy_id], llm_multi_tp_pp_list[strategy_id], args.ngpus, args.num_hidden_layers)
-        config_file_path = ds_parallel_config_path + f"strategy_{strategy_id}.txt"
+        config_file_path = ds_parallel_config_path + f"strategy_{strategy_id}.json"
         # print("layers_tp_groups", layers_tp_groups)
         generate_mllm_model_ds_parallel_config(args.ngpus, args.vision_num_layers, args.num_hidden_layers, vision_layers_tp_groups, llm_layers_tp_groups,config_file_path)
         print(f"Strategy {strategy_id}, gpu positions are: {gpu_pos}")
         multi_gpu_pos.append(gpu_pos)
         multi_config_file_path.append(config_file_path)
+    time.sleep(1)
     ds_parallel_configs = read_ds_parallel_config(",".join(multi_config_file_path), llm_num_strategy)
 
     # 1. Config Information
@@ -117,10 +99,6 @@ def pretrain(args):
     dummy_size = dp_size * args.max_seq_len
     embed_dim = args.patch_size * args.patch_size * args.temporal_patch_size * args.in_channels
     # mbs_times_dp = dp_size * args.micro_batch_size
-    print("dp_size", dp_size)
-    print("args.max_seq_len", args.max_seq_len)
-    print("dummy_size", dummy_size)
-    print("embed_dim", embed_dim)
     image_inputs = ht.parallel_placeholder(ht.float32, global_shape=[2 * dummy_size, embed_dim], ds_hierarchy=image_input_ds_hierarchy, device_group_hierarchy=image_input_dg_hierarchy, name='input_ids')
     text_ids = ht.parallel_placeholder(ht.int64, global_shape=[2 * dummy_size], ds_hierarchy=text_input_ds_hierarchy, device_group_hierarchy=text_input_dg_hierarchy, name='input_ids')
     # position_ids = ht.parallel_placeholder(ht.int64, global_shape=[2 * dummy_size, args.hidden_size], ds_hierarchy=input_ds_hierarchy, device_group_hierarchy=input_dg_hierarchy, name='position_ids')
@@ -252,14 +230,12 @@ def pretrain(args):
         global profiler
         consumed_samples = 0
         
-        print("args.torch_profile", args.torch_profile)
         if args.torch_profile:
             profiler = torch.profiler.profile(
                 activities=[
                     torch.profiler.ProfilerActivity.CUDA
                 ],
             )
-            print("profiler", profiler)
         for epoch in range(args.epochs):
             strategy_id = 0
 
@@ -282,11 +258,8 @@ def pretrain(args):
         global profiler
         vision_dp_size = vision_multi_dp_size[strategy_id]
         llm_dp_size = llm_multi_dp_size[strategy_id]
-        print("vision_dp_size", vision_dp_size)
-        print("llm_dp_size", llm_dp_size)
         # tp_pp_list = multi_tp_pp_list[strategy_id]
         gpu_pos = multi_gpu_pos[strategy_id]
-        print
         gpu_id = all_devices.get_index(local_device)
 
 
@@ -310,8 +283,6 @@ def pretrain(args):
                 else:
                     vision_dp_id = 0
         
-        print("vision_dp_id", vision_dp_id)
-        print("llm_dp_id", llm_dp_id)
 
         print(f"{local_device}: gpu_id = {gpu_id}, dp_id = {dp_id}, stage_id = {stage_id}, is_vision = {is_vision}")
 
@@ -331,7 +302,6 @@ def pretrain(args):
                 raise
             vision_config.max_seqlen_symbol.set_data(args.vision_max_seqlen) 
             llm_config.max_seqlen_symbol.set_data(args.text_max_seqlen)   
-            print('batching method is ', args.batching_method)
             if args.batching_method == 0: # padding
                 raise NotImplementedError("padding is not supported")
             elif args.batching_method == 1: # greedy packing
@@ -346,7 +316,6 @@ def pretrain(args):
                 llm_input_mask = bucket.get_llm_input_mask()
                 assert vision_dp_size == llm_dp_size, "vision_dp_size should be equal to the length of llm_dp_size"
                 llm_micro_batch_per_dp = len(llm_input_batch) // llm_dp_size
-                print("llm_micro_batch_per_dp", llm_micro_batch_per_dp)
                 llm_start_idx = llm_dp_id * llm_micro_batch_per_dp
                 llm_end_idx = (llm_dp_id + 1) * llm_micro_batch_per_dp      
                 # 批量处理数据
@@ -369,19 +338,11 @@ def pretrain(args):
                 llm_input_mask = bucket.get_llm_input_mask()
                 packed_llm_packing_slice_list = bucket.get_packed_llm_packing_slice_list()
                 packed_vision_packing_slice_list = bucket.get_packed_vision_packing_slice_list()
-                print("vision dp size", len(vision_input_batch))
-                print("llm dp size", len(llm_input_batch))
                 vision_seq_len_list = [vision_input_batch[i].shape[0] for i in range(len(vision_input_batch))]
                 llm_seq_len_list = [llm_input_batch[i].shape[0] for i in range(len(llm_input_batch))]
-                print("vision_seq_len_list", vision_seq_len_list)
-                print("llm_seq_len_list", llm_seq_len_list)
                 vision_micro_batch_per_dp = len(vision_input_batch) // vision_dp_size
                 llm_micro_batch_per_dp = len(llm_input_batch) // llm_dp_size
-                print("vision_micro_batch_per_dp", vision_micro_batch_per_dp)
-                print("llm_micro_batch_per_dp", llm_micro_batch_per_dp)
                 assert vision_micro_batch_per_dp == llm_micro_batch_per_dp, "vision_micro_batch_per_dp should be equal to llm_micro_batch_per_dp"
-                print("all vision_cu_seqlens_list", vision_cu_seqlens_list)
-                print("all llm_cu_seqlens_list", llm_cu_seqlens_list)
                 vision_indices = [i for i in range(len(vision_input_batch)) if i % vision_dp_size == vision_dp_id]
                 llm_indices = [i for i in range(len(llm_input_batch)) if i % llm_dp_size == llm_dp_id]
                 vision_list = [np.array(vision_input_batch[i], dtype=np.float32) for i in vision_indices[:vision_micro_batch_per_dp]]
@@ -403,41 +364,24 @@ def pretrain(args):
                     vision_dp_id = idx % vision_dp_size
                     for j in range(llm_dp_size + 1):
                         packed_vision_packing_slice_list_preprocessed[vision_dp_id][j].append(packing_slice[j])
-                print("packed_vision_packing_slice_list_preprocessed", packed_vision_packing_slice_list_preprocessed)
 
             else:
                 raise ValueError("Invalid batching method")
 
             analyze_FLOPs_memory(vision_seq_len_list, llm_seq_len_list, vision_config, llm_config)
 
-            for vision in vision_list:
-                print(f"vision shape is {vision.shape}")
-            for text in text_list:
-                print(f"text shape is {text.shape}")
             for i, text_mask in enumerate(text_mask_list):
                 # Create contiguous array by using np.zeros and filling it
                 text_mask_expanded = np.zeros((text_mask.shape[0], args.hidden_size), dtype=text_mask.dtype)
                 text_mask_expanded[:,:] = text_mask[:,np.newaxis]
                 text_mask_list[i] = text_mask_expanded
-                print(f"text_mask shape is {text_mask_expanded.shape}")
-            for i, loss_mask_ in enumerate(loss_mask_list):
-                print(f"loss_mask shape is {loss_mask_.shape}")
-            for label in label_list:
-                print(f"label shape is {label.shape}")
             for i, vision_cu_seqlens in enumerate(vision_cu_seqlens_list):
-                print(f"vision_cu_seqlens is {vision_cu_seqlens}")
                 assert(vision_cu_seqlens[-1] == vision_list[i].shape[0]), "vision_cu_seqlens should be equal to the sum of the product of image_grid_thws"
             for i, llm_cu_seqlens in enumerate(llm_cu_seqlens_list):
-                print(f"llm_cu_seqlens is {llm_cu_seqlens}")
                 assert(llm_cu_seqlens[-1] == text_list[i].shape[0]), "llm_cu_seqlens should be equal to the sum of the product of image_grid_thws"
                 assert(llm_cu_seqlens[-1] == label_list[i].shape[0]), "llm_cu_seqlens should be equal to the sum of the product of image_grid_thws"
             
 
-            print("image_inputs", vision_list[0], np.mean(vision_list[0]))
-            print("text_ids", text_list[0], np.mean(text_list[0]))
-            print("image_mask", text_mask_list[0], np.mean(text_mask_list[0]))
-            print("masked_lm_labels", label_list[0], np.mean(label_list[0]))
-            print("loss_mask", loss_mask_list[0], np.sum(loss_mask_list[0]))
             feed_dict = {
                 image_inputs: vision_list,
                 text_ids: text_list,
@@ -461,7 +405,6 @@ def pretrain(args):
             # feed_dict[loss_mask] = loss_mask_list
 
 
-
             int_symbol_dict = {}
             # print("packed_vision_packing_slice_list", packed_vision_packing_slice_list)
 
@@ -473,7 +416,7 @@ def pretrain(args):
             # print("feed_dict", feed_dict)
             
             start_time = time.time()
-            with ht.profiler(enabled = True, use_cuda = True, record_shapes = True, profile_memory = True) as profile:
+            with ht.profiler(enabled = False, use_cuda = False, record_shapes = False, profile_memory = False) as profile:
                 if profiler is not None:
                     profiler.start()    
                 try:
@@ -500,11 +443,10 @@ def pretrain(args):
             consumed_samples += args.global_batch_size
             # 如果在pipeline的最后一个stage上那么就打印loss
             # print(tp_pp_list[dp_id])
-            if stage_id == llm_multi_tp_pp_list[0][dp_id][1] - 1 and len(results) > 0 and results[0] is not None:
-                loss_out = results[0].numpy(force=True).mean()
+            if stage_id == vision_multi_tp_pp_list[0][dp_id][1] - 1 and len(results) > 0 and results[0][0] is not None:
+                loss_out = results[0][0].numpy(force=True).mean()
                 print(f"{local_device}: [Epoch {epoch}] (step {step}, consumed_samples = {consumed_samples}): loss = {loss_out:.3f}, time = {end_time - start_time:.4f}")
         
-        print("profiler is ", profiler)
         if profiler is not None:
             print("profiler is not None" )
             profiler.export_chrome_trace(f"/home/pkuhetu/njw1123/hetu_mm/examples/mllm/tensorboard_log/trace_{local_device}.json")

@@ -51,6 +51,10 @@ void Optimizer::ApplyZero(const GradAndVarList& grads_and_vars) {
   for (const auto& grad_and_var : grads_and_vars) {
     const Tensor& grad = grad_and_var.first;
     const Tensor& var = grad_and_var.second;
+    if (var->graph().type() == GraphType::EAGER) {
+      // workaround for unit tests
+      break;
+    }
     // 需要记录未应用zero前的var的ds hierarchy
     // 后续define graph实例化具体的optimize-compute bridge subgraph时需要
     dynamic_cast<DefineAndRunGraph&>(var->graph()).RecordBeforeZero(var, var->ds_hierarchy());

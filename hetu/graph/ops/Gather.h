@@ -24,7 +24,7 @@ class GatherOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
                                            .set_shape(inputs[1]->shape())
                                            .set_device(inputs[0]->device());
@@ -32,13 +32,16 @@ protected:
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -74,16 +77,18 @@ class GatherGradientOpImpl final : public OpInterface {
 
 protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
-    NDArrayMeta output_meta = inputs[2]->meta();
-    return {output_meta};
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
+    return {inst_ctx.get<NDArrayMeta>("in_meta")};
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
                       
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
+
+  void DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;
@@ -103,7 +108,7 @@ protected:
   }
 };
 
-Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id, Tensor input,
+Tensor MakeGatherGradientOp(Tensor grad_output, int64_t dim, Tensor id,
                             OpMeta op_meta = OpMeta());
 
 } // namespace graph

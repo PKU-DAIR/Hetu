@@ -1,19 +1,32 @@
+from __future__ import annotations
+
 import os
 import sys
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-import torch
 import hetu
 import numpy as np
 
 from safetensors import deserialize, safe_open, serialize, serialize_file
 from collections import OrderedDict
 
+import shutil
+import multiprocessing
+
 WEIGHTS_NAME = 'hetu_pytorch_model'
 WEIGHTS_FORMAT = '.safetensors'
 TEMP_SPLITS = 8
 SPLIT_DIMS = 2
+
+base_step = 0
+
+def get_states_union(param):
+    tds_list = param.ds_hierarchy[0].ds_list
+    states_union = []
+    for tds in tds_list:
+        states_union.append(tds.states)
+    return states_union
 
 def need_transfer(src_dtype, dst_dtype):
     if dst_dtype is None:
@@ -111,41 +124,20 @@ def change_query_key_value_ordering(param, num_splits, num_heads, hidden_size):
     param = param.view(input_shape)
     return param
 
+def storage_ptr(tensor: hetu.Tensor) -> int:
+    return tensor.raw_data_ptr()
 
-def storage_ptr(tensor: torch.Tensor) -> int:
-    try:
-        return tensor.untyped_storage().data_ptr()
-    except Exception:
-        # Fallback for torch==1.10
-        try:
-            return tensor.storage().data_ptr()
-        except NotImplementedError:
-            # Fallback for meta storage
-            return 0
-
-
-def _end_ptr(tensor: torch.Tensor) -> int:
-    if tensor.nelement():
-        stop = tensor.view(-1)[-1].data_ptr() + _SIZE[tensor.dtype]
+def _end_ptr(tensor: hetu.Tensor) -> int:
+    if tensor.numel():
+        stop = tensor.raw_data_ptr() + _SIZE[tensor.dtype] * tensor.numel()
     else:
-        stop = tensor.data_ptr()
+        stop = tensor.raw_data_ptr()
     return stop
 
+def storage_size(tensor: hetu.Tensor) -> int:
+    return tensor.numel() * _SIZE[tensor.dtype]
 
-def storage_size(tensor: torch.Tensor) -> int:
-    try:
-        return tensor.untyped_storage().nbytes()
-    except AttributeError:
-        # Fallback for torch==1.10
-        try:
-            return tensor.storage().size() * _SIZE[tensor.dtype]
-        except NotImplementedError:
-            # Fallback for meta storage
-            # On torch >=2.0 this is the tensor size
-            return tensor.nelement() * _SIZE[tensor.dtype]
-
-
-def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
+def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, hetu.Tensor]) -> List[Set[str]]:
     filtered_tensors = []
     for shared in tensors:
         if len(shared) < 2:
@@ -155,7 +147,7 @@ def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, tor
         areas = []
         for name in shared:
             tensor = state_dict[name]
-            areas.append((tensor.data_ptr(), _end_ptr(tensor), name))
+            areas.append((tensor.raw_data_ptr(), _end_ptr(tensor), name))
         areas.sort()
 
         _, last_stop, last_name = areas[0]
@@ -169,24 +161,21 @@ def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, tor
 
     return filtered_tensors
 
-
-def _find_shared_tensors(state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
+def _find_shared_tensors(state_dict: Dict[str, hetu.Tensor]) -> List[Set[str]]:
     tensors = defaultdict(set)
     for k, v in state_dict.items():
-        if v.device != torch.device("meta") and storage_ptr(v) != 0 and storage_size(v) != 0:
+        if storage_ptr(v) != 0 and storage_size(v) != 0:
             # Need to add device as key because of multiple GPU.
             tensors[(v.device, storage_ptr(v), storage_size(v))].add(k)
     tensors = list(sorted(tensors.values()))
     tensors = _filter_shared_not_shared(tensors, state_dict)
     return tensors
 
-
-def _is_complete(tensor: torch.Tensor) -> bool:
-    return tensor.data_ptr() == storage_ptr(tensor) and tensor.nelement() * _SIZE[tensor.dtype] == storage_size(tensor)
-
+def _is_complete(tensor: hetu.Tensor) -> bool:
+    return tensor.raw_data_ptr() == storage_ptr(tensor) and tensor.numel() * _SIZE[tensor.dtype] == storage_size(tensor)
 
 def _remove_duplicate_names(
-    state_dict: Dict[str, torch.Tensor],
+    state_dict: Dict[str, hetu.Tensor],
     *,
     preferred_names: Optional[List[str]] = None,
     discard_names: Optional[List[str]] = None,
@@ -301,17 +290,25 @@ def save_model(
                         raise ValueError(msg)
 
 def temp_save(
-    model: hetu.nn.Module, optimizer, filename: str, config=None, 
-    local_device=None, save_dtype = None,
+    model: hetu.nn.Module, optimizer, filename: str, 
+    step = 0, consumed_samples = 0, save_copies = 1, config = None, 
+    local_device = None, save_dtype = None,
     force_contiguous: bool = False,
     only_lora: bool = False,
     metadata: Optional[Dict[str, str]] = None
 ):
-    with hetu.graph("define_and_run", create_new=True, prefix="save_model"):
+    with hetu.graph("define_and_run"):
         import time
         save_st = time.time()
+        print("SAVE_BY_TRAINING:", local_device, "CONSUMED:", consumed_samples, "STEP:", step)
+        cur_step_dir = os.path.join(filename, "step" + str(step))
+        rm_step_dir = os.path.join(filename, "step" + str(step - save_copies))
+        if local_device.index == 0:
+            if not os.path.exists(cur_step_dir):
+                os.mkdir(cur_step_dir)
         global_state_dict = OrderedDict()
         all_device_groups = []
+        all_device_group_unions = []
         state_dict = model.state_dict()
         ht_state_dict = model.state_dict(format='hetu')
         total_sum = len(state_dict.items())
@@ -331,12 +328,29 @@ def temp_save(
             if (not only_lora) and ("lora" in key):
                 continue
             param = ht_state_dict[key]
-            device_group = param.get_device_group()
+            device_group_union = param.get_device_group_union()
+            # print(type(device_group_union), device_group_union)
+            device_group = device_group_union[0]
+            # device_group = param.get_device_group()
                 
             if device_group not in all_device_groups:
                 all_device_groups.append(device_group)
+            
+            if device_group_union not in all_device_group_unions:
+                all_device_group_unions.append(device_group_union)
+            
             # TODO: implement allgather_inter_group_param()
-            if not device_group.contains(local_device):
+            
+            # if not device_group.contains(local_device):
+            #     continue
+            
+            local_device_in_union = False
+            for single_device_group in device_group_union:
+                if single_device_group.contains(local_device):
+                    local_device_in_union = True
+                    break
+                
+            if local_device_in_union == False:
                 continue
             
             global_value = param
@@ -345,7 +359,7 @@ def temp_save(
                 continue
             visit_tensors.add(param.id)
             opt_state_dict = optimizer.get_states(param)
-            print("Opt_State_Dict:", opt_state_dict)
+            # print("Opt_State_Dict:", opt_state_dict)
             # global_value, abs_max = data_transform_for_store(key, param, data, config, save_dtype, 
             #                                                  ht_state_dict, local_device)
             # global_state_dict[key] = global_value.numpy(force=True, save=True)
@@ -359,11 +373,25 @@ def temp_save(
             state["device_num"] = param.distributed_states.device_num
             state["order"] = param.distributed_states.order
             state["states"] = param.distributed_states.states
+            state["states_union"] = get_states_union(param)
             device_index = []
-            for i in range(state["device_num"]):
-                device_index.append(all_devices.get_index(param.device_group.get(i)))
+            device_index_union = []
+            # print("PAram:", param, 
+            #       "\ndg_union:", param.get_device_group_union(),
+            #       "\nds:", param.distributed_states,
+            #       "\nds_hierarchy:", param.ds_hierarchy)
+            for single_device_group in param.get_device_group_union():
+                dg_num_devices = single_device_group.num_devices
+                device_index_union.append([])
+                for i in range(dg_num_devices):
+                    device_index.append(all_devices.get_index(single_device_group.get(i)))
+                    device_index_union[-1].append(all_devices.get_index(single_device_group.get(i)))
             state["device_group"] = device_index
-            ds_json[key] = state
+            state["device_union"] = device_index_union
+            ds_json_key = str(param.get_device_group_union())
+            if ds_json_key not in ds_json.keys():
+                ds_json[ds_json_key] = {}
+            ds_json[ds_json_key][key] = state
             for k, state_param in opt_state_dict.items():
                 # if (k == "step"):
                 #     continue
@@ -377,11 +405,22 @@ def temp_save(
                 state["device_num"] = state_param.distributed_states.device_num
                 state["order"] = state_param.distributed_states.order
                 state["states"] = state_param.distributed_states.states
+                state["states_union"] = get_states_union(state_param)
                 device_index = []
-                for i in range(state["device_num"]):
-                    device_index.append(all_devices.get_index(state_param.device_group.get(i)))
+                device_index_union = []
+                # for i in range(state["device_num"]):
+                #     device_index.append(all_devices.get_index(state_param.device_group.get(i)))
+                for single_device_group in state_param.get_device_group_union():
+                    dg_num_devices = single_device_group.num_devices
+                    device_index_union.append([])
+                    for i in range(dg_num_devices):
+                        device_index.append(all_devices.get_index(single_device_group.get(i)))
+                        device_index_union[-1].append(all_devices.get_index(single_device_group.get(i)))
                 state["device_group"] = device_index
-                ds_json[state_key] = state
+                state["device_union"] = device_index_union
+                if ds_json_key not in ds_json.keys():
+                    ds_json[ds_json_key] = {}
+                ds_json[ds_json_key][state_key] = state
             cur_sum += 1
 
         save_ed = time.time()
@@ -391,57 +430,477 @@ def temp_save(
 
         if force_contiguous:
             state_dict = {k: v.contiguous() for k, v in state_dict.items()}
-
-        for i, device_group in enumerate(all_device_groups):
-            if device_group.contains(local_device):
-                need_save_json = False
-                num_devices = device_group.num_devices
-                last_hostname = "default host"
-                local_losthame = hetu.device.get_local_hostname()
-                for j in range(num_devices):
-                    dev = device_group.get(j)
-                    if dev == local_device:
-                        if local_device.hostname == last_hostname:
-                            need_save_json = False
-                        else:
-                            need_save_json = True
-                        break
-                    print("DEV:", dev.hostname)
-                    last_hostname = dev.hostname
-                        
-                if need_save_json:
-                    print(local_device, "\n", ds_json)
-                    json_file = "param_states" + f'-{i + 1}-of-{len(all_device_groups)}' + ".json"
-                    json_file = os.path.join(
-                        filename, json_file
-                    )
-                    try:
-                        import json
-                        file_obj=open(json_file,'w',encoding='utf-8')
-                        json.dump(ds_json, file_obj,ensure_ascii=False)
-                    except ValueError as e:
-                        msg = str(e)
-                        msg += " Or use save_model(..., force_contiguous=True), read the docs for potential caveats."
-                        raise ValueError(msg)
-        d_index = local_device.index 
-        num_devices = 0
-        for device_group in all_device_groups:
-            if (device_group.contains(local_device)):
-                d_index = num_devices + device_group.get_index(local_device)
-            num_devices += device_group.num_devices
+        
+        for i, m_device_union in enumerate(all_device_group_unions):
+            # print(f"Union{i}:{m_device_union}")
+            need_save_json = False
+            if len(m_device_union) > 0 and \
+               m_device_union[0].contains(local_device) and \
+               m_device_union[0].get_index(local_device) == 0:
+                need_save_json = True
+                 
+            if need_save_json:
+                # print("SAVE JSON:", local_device, "Union:", m_device_union,
+                #       "\nJSON:", ds_json[str(m_device_union)])
+                json_file = "param_states" + f'-{i + 1}-of-{len(all_device_group_unions)}' + ".json"
+                # json_file = os.path.join(
+                #     filename, json_file
+                # )
+                json_file = os.path.join(
+                    cur_step_dir, json_file
+                )
+                print("SAVE JSON:", local_device, json_file)
+                try:
+                    import json
+                    file_obj=open(json_file,'w',encoding='utf-8')
+                    ds_json_for_dump = ds_json[str(m_device_union)]
+                    ds_json_for_dump["consumed_samples"] = consumed_samples
+                    json.dump(ds_json_for_dump, file_obj, ensure_ascii=False)
+                except ValueError as e:
+                    msg = str(e)
+                    msg += " Or use save_model(..., force_contiguous=True), read the docs for potential caveats."
+                    raise ValueError(msg) 
+        
+        save_ed = time.time()
+        print(local_device, 'SAVE_JSON_Time = %.4f'%(save_ed - save_st))
+                
+        # print("all_devices:", all_devices)
+        assert(all_devices.contains(local_device))
+        num_devices = all_devices.num_devices
+        d_index = all_devices.get_index(local_device)
         archive_file = WEIGHTS_NAME + f'-{d_index + 1}-of-{num_devices}' + WEIGHTS_FORMAT
+        # archive_file = os.path.join(
+        #     filename, archive_file
+        # )
         archive_file = os.path.join(
-            filename, archive_file
+            cur_step_dir, archive_file
         )
         print(local_device, archive_file)
+        save_st = time.time()
         try:
-            save_file(global_state_dict, archive_file, metadata=metadata)
+            # save_file(global_state_dict, archive_file, metadata=metadata)
+            # if local_device.index == 0:
+            #     step_filename = filename + "/step.txt"
+            #     with open(step_filename, "w") as step_file:
+            #         step_file.write(str(step))
+            #     if os.path.exists(rm_step_dir):
+            #         try:
+            #             shutil.rmtree(rm_step_dir)
+            #             print(f"The folder {rm_step_dir} has been deleted.")
+            #         except OSError as e:
+            #             print(f"Error: {e.strerror}")
+            p = multiprocessing.Process(target=save_file_async, 
+                                        args=(global_state_dict, archive_file, metadata,
+                                              local_device, filename, step, rm_step_dir,))
+            p.start()
+            # save_file_async(global_state_dict, archive_file, metadata,
+            #                 local_device, filename, step, rm_step_dir)
         except ValueError as e:
             msg = str(e)
             msg += " Or use save_model(..., force_contiguous=True), read the docs for potential caveats."
             raise ValueError(msg)
         save_ed = time.time()
         print(local_device, 'Pure_Save_Time = %.4f'%(save_ed - save_st))
+
+def save_file_async(global_state_dict, archive_file, metadata,
+                    local_device, filename, step, rm_step_dir):
+    save_file(global_state_dict, archive_file, metadata=metadata)
+    if local_device.index == 0:
+        step_filename = filename + "/step.txt"
+        with open(step_filename, "w") as step_file:
+            step_file.write(str(step))
+        if os.path.exists(rm_step_dir):
+            try:
+                shutil.rmtree(rm_step_dir)
+                print(f"The folder {rm_step_dir} has been deleted.")
+            except OSError as e:
+                print(f"Error: {e.strerror}")
+
+def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike],
+              config=None, local_device=None, strict=True) -> Tuple[List[str], List[str]]:
+    import time
+    save_st = time.time()
+
+    step_filename = filename + "/step.txt"
+    if not os.path.exists(step_filename):
+        print("No checkpoint. Train with initialize.")
+        return model, 0
+    with open(step_filename, "r") as step_file:
+        cur_step = int(step_file.readline())
+    global base_step
+    base_step = cur_step + 1
+    filename = os.path.join(filename, "step" + str(cur_step))
+    print("BASE_STEP:", base_step)
+    
+    local_state_dict = model.state_dict(format='hetu')
+    hetu_state_dict = model.state_dict(format='hetu')
+    all_device_groups = []
+    all_device_group_unions = []
+    parameter_to_dtype = {}
+    trans_strategy = {}
+    state_dict = {}
+    all_devices = hetu.global_device_group()
+    
+    save_ed = time.time()
+    print(local_device, 'Get_Params_Time = %.4f'%(save_ed - save_st))
+
+    ds_json = []
+    d_index = local_device.index 
+    num_devices = 0
+    file_list = os.listdir(filename)
+    ds_files = []
+    archive_files = []
+    local_hostname = hetu.device.get_local_hostname()
+    for file in file_list:
+        if ("param_states" in file and ".json" in file):
+            ds_files.append(file)
+        if (WEIGHTS_NAME in file and WEIGHTS_FORMAT in file):
+            archive_files.append(file)
+    # print("GYGYGYGY:", local_hostname, " ", ds_files)
+    # print("DAFILE:", ds_files)
+    consumed_samples = 0
+    for i, json_file in enumerate(ds_files):
+        json_file = os.path.join(
+            filename, json_file
+        )
+        try:
+            import json
+            file_obj=open(json_file,'r',encoding='utf-8')
+            python_data=json.load(file_obj)
+            if i == 0:
+                consumed_samples = python_data['consumed_samples']
+            # exit(0)
+            ds_json.append(python_data)
+            file_obj.close()
+            # if d_index == 0:
+            #     print(json_file, "\n", python_data)
+    
+        except ValueError as e:
+            msg = str(e)
+            msg += " Or use save_model(..., force_contiguous=True), read the docs for potential caveats."
+            raise ValueError(msg)
+
+    need_switch = False
+    for k in local_state_dict:
+        param = local_state_dict[k]
+        device_group_union = param.get_device_group_union()
+        # device_group = param.get_device_group()
+        device_group = device_group_union[0]
+        if device_group not in all_device_groups:
+            all_device_groups.append(device_group)
+        if device_group_union not in all_device_group_unions:
+            all_device_group_unions.append(device_group_union)
+        # TODO: implement allgather_inter_group_param()
+        # if not device_group.contains(local_device):
+        #     continue
+        local_device_in_union = False
+        for single_device_group in device_group_union:
+            if single_device_group.contains(local_device):
+                local_device_in_union = True
+                break
+            
+        if local_device_in_union == False:
+            continue
+        
+        for i in range(len(ds_json)):
+            if k in ds_json[i]:                
+                trans_strategy[k] = ds_json[i][k]
+                pre_states = {}
+                for sk, sv in trans_strategy[k]["states"].items():
+                    pre_states[int(sk)] = sv
+                trans_strategy[k]["states"] = pre_states
+                # device_index = []
+                # for i in range(param.distributed_states.device_num):
+                #     device_index.append(all_devices.get_index(param.device_group.get(i)))
+                device_index = []
+                device_index_union = []
+                for single_device_group in param.get_device_group_union():
+                    dg_num_devices = single_device_group.num_devices
+                    device_index_union.append([])
+                    for i in range(dg_num_devices):
+                        device_index.append(all_devices.get_index(single_device_group.get(i)))
+                        device_index_union[-1].append(all_devices.get_index(single_device_group.get(i)))
+                
+                if (param.distributed_states.device_num == trans_strategy[k]["device_num"] and
+                    param.distributed_states.order == trans_strategy[k]["order"] and
+                    param.distributed_states.states == trans_strategy[k]["states"] and
+                    # get_states_union(param) == trans_strategy[k]["states_union"] and
+                    device_index == trans_strategy[k]["device_group"] and
+                    device_index_union == trans_strategy[k]["device_union"]):
+                    pass
+                else:
+                    # print("Error:", k, "\nSDUnion:", get_states_union(param),
+                    #       "\nTSD_UNION:", trans_strategy[k]["states_union"],
+                    #       "\nST:", param.distributed_states.states,
+                    #       "\nTST:", trans_strategy[k]["states"])
+                    # exit(0)
+                    need_switch = True
+                state = {}
+                state["device_num"] = param.distributed_states.device_num
+                state["order"] = param.distributed_states.order
+                state["states"] = param.distributed_states.states
+                state["states_union"] = get_states_union(param)
+                state["device_group"] = device_index
+                state["device_union"] = device_index_union
+                break
+            
+        if optimizer is not None:
+            opt_state_dict = optimizer.get_states(param)
+            # print("Opt_State_Dict:", opt_state_dict)
+            for state_k, state_param in opt_state_dict.items():
+                # if (k == "step"):
+                #     continue
+                state_key = k + "_" + state_k
+                for i in range(len(ds_json)):
+                    if state_key in ds_json[i]:                
+                        trans_strategy[state_key] = ds_json[i][state_key]
+                        pre_states = {}
+                        for sk, sv in trans_strategy[state_key]["states"].items():
+                            pre_states[int(sk)] = sv
+                        trans_strategy[state_key]["states"] = pre_states
+                        break
+                state_key = k + "_" + state_k
+                hetu_state_dict[state_key] = state_param
+                parameter_to_dtype[state_key] = state_param.dtype        
+
+    save_st = time.time()
+    # state_dict = load_file(archive_file, parameter_to_dtype)
+    print("Need Switch:", need_switch)
+    if need_switch:
+        archive_opens = []
+        ptr = 0
+        def archive_sort(file_name):
+            return int(str(file_name).split("-")[1])
+        archive_files.sort(key=archive_sort)
+        for archive in archive_files:
+            archive_opens.append(safe_open(os.path.join(
+            filename, archive), framework="np"))
+            ptr += 1
+        
+        split1_sum = 0
+        split2_sum = 0
+        for k in hetu_state_dict:
+            param = hetu_state_dict[k]
+            parameter_to_dtype[k] = param.dtype
+            # device_group = param.get_device_group()
+            # if device_group not in all_device_groups:
+            #     all_device_groups.append(device_group)
+            device_group_union = param.get_device_group_union()
+            device_group = device_group_union[0]
+            if device_group not in all_device_groups:
+                all_device_groups.append(device_group)
+            if device_group_union not in all_device_group_unions:
+                all_device_group_unions.append(device_group_union)
+            # if not device_group.contains(local_device):
+            #     continue
+            local_device_in_union = False
+            for single_device_group in device_group_union:
+                if single_device_group.contains(local_device):
+                    local_device_in_union = True
+                    break
+            
+            if local_device_in_union == False:
+                continue
+            
+            shared_param = False
+            if k not in trans_strategy.keys():
+                print("Shared:", param)
+                continue 
+            device_num = trans_strategy[k]["device_num"]
+            order = trans_strategy[k]["order"]
+            states = trans_strategy[k]["states"]
+            states_union = trans_strategy[k]["states_union"]
+            device_index = trans_strategy[k]["device_group"]
+            device_index_union = trans_strategy[k]["device_union"]
+            num_data_splits = int(device_num)
+            for dim in order:
+                if dim < 0:
+                    num_data_splits = num_data_splits // states[dim]
+            stride = int(1)
+            split_numpys = []
+            # print("GGG:", k, device_index, num_data_splits, archive_files)
+            if (k[-4:] == "step"):
+                num_data_splits = 1
+
+            if num_data_splits == 1:
+                split1_sum += 1
+                # print(len(archive_opens))
+                if k in archive_opens[device_index[0]].keys():
+                    split_numpys.append(archive_opens[device_index[0]].get_tensor(k))
+                    if (k == "transformer.h.10.attn.qkv_dense.weight_step"):
+                        print("HHHHHHHH:", split_numpys)
+                    shared_param = False
+            else:
+                split2_sum += 1
+                for i in range(-1, -len(order) - 1, -1):
+                    dim = order[i]
+                    if dim < 0:
+                        stride *= states[dim]
+                    else:
+                        if (len(split_numpys) == 0):
+                            shared_param = False
+                            ptr = 0
+                            if (1 == 1) and ((k[-4:] == "mean") or (k[-8:] == "variance")):
+                                ori_stride = 1
+                                if "-1" in states_union[0].keys():
+                                    ori_stride = states_union[0]["-1"]      
+
+                                if "transformer.h.10.ln_1" in k:
+                                    print("HJ:", local_device, device_index_union)
+                                for j, dg in enumerate(device_index_union):
+                                    ptr = 0
+                                    cur_stride = 1
+                                    if "-1" in states_union[j].keys():
+                                        cur_stride = states_union[j]["-1"]
+                                    while(ptr < len(dg)):
+                                        if k in archive_opens[dg[ptr]].keys():
+                                            if "transformer.h.10.ln_1" in k:
+                                                print("K IN:", dg[ptr], -1 in states_union[j].keys(), states_union[j].keys(),
+                                                      ori_stride, cur_stride)
+                                            split_numpys.append(archive_opens[dg[ptr]].get_tensor(k))
+                                            shared_param = False
+                                        if stride == 1:
+                                            ptr += stride
+                                        else:
+                                            ptr += (stride // ori_stride) * cur_stride
+                                # print("ZERO SPLITS:", len(split_numpys), split_numpys)
+                                if "transformer.h.10.ln_1" in k:
+                                    for i, sl in enumerate(split_numpys):
+                                        print("SL:", local_device, i, sl.shape, stride)
+                                split_numpys = [np.concatenate(split_numpys, axis=dim)]
+                                break
+                            else:
+                                for j in range(num_data_splits):
+                                    if k in archive_opens[device_index[ptr]].keys():
+                                        # if k == "transformer.wte.embedding_table_mean":
+                                        #     print("KKKK:", trans_strategy[k]["device_num"], trans_strategy[k]["states"],
+                                        #           "/n", ptr, device_index[ptr], 
+                                        #           archive_opens[device_index[ptr]].get_tensor(k).shape)
+                                        split_numpys.append(archive_opens[device_index[ptr]].get_tensor(k))
+                                        shared_param = False
+                                    ptr += stride
+                                # print("HHJIJ:", len(split_numpys), num_data_splits, order, states)
+                                assert(shared_param or (len(split_numpys) == num_data_splits))
+                        
+                        if (states[dim] > 1):           
+                            split_numpys_ = []
+                            assert(num_data_splits % states[dim] == 0)
+                            # print(num_data_splits, " ", len(split_numpys))
+                            for j in range(num_data_splits // states[dim]):
+                                temp_storage = []
+                                for l in range(states[dim]):
+                                    temp_storage.append(split_numpys[j * states[dim] + l])
+                                split_numpys_.append(np.concatenate(temp_storage, axis=dim))
+                            split_numpys = split_numpys_
+                            num_data_splits = num_data_splits // states[dim]
+            # print(param, " shape:", param.shape, " t_shape:", split_numpys[0].shape, " order:", order, 
+            #       " states", states, " num_splits", num_data_splits, " split_nps:", len(split_numpys))
+            from hetu.nn.modules.module import parallel_data_provider
+            # global_data = hetu.numpy_to_NDArray(split_numpys[0], parameter_to_dtype[k])
+            global_data = split_numpys[0]
+
+            cur_device_group_union = param.get_device_group_union()
+            assert(len(cur_device_group_union) > 0)
+            dg_idx = -1
+            num_dgs = len(cur_device_group_union)
+            # device_idx = 0
+            for i, cur_device_group in enumerate(cur_device_group_union):
+                if cur_device_group.contains(local_device):
+                    dg_idx = i
+                    if (k[-4:] == "step"):
+                        state_dict[k] = global_data
+                        break
+                    # device_idx += cur_device_group.get_index(local_device)
+                    device_idx = cur_device_group.num_devices * i
+                    device_idx += cur_device_group.get_index(local_device)
+                    tds_list = param.ds_hierarchy[0].ds_list
+                    tds = tds_list[dg_idx]
+                    # data = parallel_data_provider(global_data, param.distributed_states, device_idx)
+                    # print(k, device_idx, global_data.shape, tds)
+                    data = parallel_data_provider(global_data, tds, device_idx)
+                    state_dict[k] = data
+                    break
+                # tdevice_idx += 
+                # device_idx += cur_device_group.num_devices
+            assert(dg_idx >= 0)
+            # print("Reset:", "Device:", local_device, "Key:" , k, 
+            #       "OriShape:", tuple(hetu_state_dict[k].shape), "RealShape:", tuple(state_dict[k].shape),
+            #       "\nDS:", hetu_state_dict[k].distributed_states,
+            #       "\nDSU:", hetu_state_dict[k].ds_hierarchy,
+            #       "\nDGIDX:", dg_idx,
+            #       "\nDVIDX:", device_idx,
+            #       "\nTDS:", tds,
+            #       "\nTDSLIST:", tds_list,
+            #       "\nDGU:", hetu_state_dict[k].get_device_group_union())
+            # 3D parallel: for pipeline situation, a device don't need to load all the checkpoint
+            # if cur_device_group.contains(local_device):
+            #     device_idx = cur_device_group.get_index(local_device)
+            #     data = parallel_data_provider(global_data, param.distributed_states, device_idx)
+            #     state_dict[k] = data
+            # if (k == "transformer.h.10.attn.qkv_dense.weight_step"):
+            #     print("GGGGGGGGG:", global_data,
+            #           "\nDS:", param.distributed_states, 
+            #           "\nIndex:", device_idx,
+            #           "\nIIIIIII:", state_dict[k])
+        print("SP1:", split1_sum, "SP>1:", split2_sum)    
+        # for acv in archive_opens:    
+        #     acv.close()
+    else:
+        for k in hetu_state_dict:
+            param = hetu_state_dict[k]
+            parameter_to_dtype[k] = param.dtype  
+        d_index = all_devices.get_index(local_device)
+        num_devices = all_devices.num_devices
+        archive_file = WEIGHTS_NAME + f'-{d_index + 1}-of-{num_devices}' + WEIGHTS_FORMAT
+        archive_file = os.path.join(
+            filename, archive_file
+        )
+        print("ARC:", archive_file)
+        state_dict = load_file(archive_file, parameter_to_dtype)
+    save_ed = time.time()
+    print(local_device, 'Load_Params_Time = %.4f'%(save_ed - save_st))
+    
+    save_st = time.time()
+    for k in hetu_state_dict:
+        if k in state_dict:
+            # if (k[-4:] == "step"):
+            #     print("STEP:", k, ":", state_dict[k].shape, state_dict[k])
+            # if tuple(hetu_state_dict[k].shape) != tuple(state_dict[k].shape):
+            #     print("Reset:", "Device:", local_device, "Key:" , k, "OriShape:", tuple(hetu_state_dict[k].shape), 
+            #           "RealShape:", tuple(state_dict[k].shape),
+            #           "\nDSH:", hetu_state_dict[k].ds_hierarchy,
+            #           "\nGSHAPE:", hetu_state_dict[k].global_shape)
+            # assert(tuple(hetu_state_dict[k].shape) == tuple(state_dict[k].shape))
+            # print("Reset:", "Device:", local_device, "Key:" , k, "OriShape:", tuple(hetu_state_dict[k].shape), "RealShape:", tuple(state_dict[k].shape))
+            hetu_state_dict[k].reset_data(state_dict[k])
+    save_ed = time.time()
+    print(local_device, 'Reset_Params_Time = %.4f'%(save_ed - save_st))
+    # exit(0)
+    return model, consumed_samples
+
+def load_by_training(
+    model: hetu.nn.Module, optimizer, filename: str, 
+    step=0, consumed_samples=0, save_copies=1, config=None, 
+    local_device=None, save_dtype = None,
+    force_contiguous: bool = False,
+    only_lora: bool = False,
+    metadata: Optional[Dict[str, str]] = None
+):
+    temp_save(model, optimizer, filename, base_step + step, consumed_samples, 
+              save_copies, config, local_device, save_dtype, force_contiguous,
+              only_lora, metadata)
+
+def save_by_training(
+    model: hetu.nn.Module, optimizer, filename: str, 
+    step=0, consumed_samples=0, save_copies=1, config=None, 
+    local_device=None, save_dtype = None,
+    force_contiguous: bool = False,
+    only_lora: bool = False,
+    metadata: Optional[Dict[str, str]] = None,
+):
+    temp_save(model, optimizer, filename, base_step + step, consumed_samples, 
+              save_copies, config, local_device, save_dtype, force_contiguous,
+              only_lora, metadata)
 
 def temp_save_split(
     model: hetu.nn.Module, optimizer, filename: str, config=None, 
@@ -486,7 +945,6 @@ def temp_save_split(
                 continue
             visit_tensors.add(param.id)
             opt_state_dict = optimizer.get_states(param)
-            print("Opt_State_Dict:", opt_state_dict)
             # global_value, abs_max = data_transform_for_store(key, param, data, config, save_dtype, 
             #                                                  ht_state_dict, local_device)
             # global_state_dict[key] = global_value.numpy(force=True, save=True)
@@ -560,7 +1018,6 @@ def temp_save_split(
                     for idx, split_idx in enumerate(split_group):
                         for i in range(start_pos, start_pos + splits_per_device):
                             temp_split_group.append(split_idx * temp_splits + i)
-                        # print("Split:", split_data[idx].shape, split_dim, temp_splits, splits_per_device)
                         block_splits = np.split(split_data[idx], splits_per_device, axis=dim)
                         for blk in block_splits:
                             temp_split_data.append(blk)
@@ -569,7 +1026,6 @@ def temp_save_split(
                 state["split_group"] = split_group
                 for idx, split_idx in enumerate(split_group):
                     split_key = state_key + "_split_" + str(split_idx)
-                    # print(local_device, split_key)
                     global_state_dict[split_key] = split_data[idx]
                 ds_json[state_key] = state
             cur_sum += 1
@@ -585,7 +1041,6 @@ def temp_save_split(
         for i, device_group in enumerate(all_device_groups):
             if device_group.contains(local_device):
                 if device_group.get_index(local_device) == 0:
-                    print(local_device, "\n", ds_json)
                     json_file = "param_states" + f'-{i + 1}-of-{len(all_device_groups)}' + ".json"
                     json_file = os.path.join(
                         filename, json_file
@@ -617,7 +1072,6 @@ def temp_save_split(
             raise ValueError(msg)
         save_ed = time.time()
         print(local_device, 'Pure_Save_Time = %.4f'%(save_ed - save_st))
-
 
 def load_model(model: hetu.nn.Module, filename: Union[str, os.PathLike],
                config=None, local_device=None, strict=True) -> Tuple[List[str], List[str]]:
@@ -690,226 +1144,6 @@ def load_model(model: hetu.nn.Module, filename: Union[str, os.PathLike],
     model.load_state_dict(state_dict, local_device, False)
     return model
 
-def temp_load(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike],
-              config=None, local_device=None, strict=True) -> Tuple[List[str], List[str]]:
-    import time
-    save_st = time.time()
-    
-    local_state_dict = model.state_dict(format='hetu')
-    hetu_state_dict = model.state_dict(format='hetu')
-    all_device_groups = []
-    parameter_to_dtype = {}
-    trans_strategy = {}
-    state_dict = {}
-    all_devices = hetu.global_device_group()
-     
-    # for k in local_state_dict:
-    #     param = local_state_dict[k]
-    #     device_group = param.get_device_group()
-    #     if device_group not in all_device_groups:
-    #         all_device_groups.append(device_group)
-    #     # TODO: implement allgather_inter_group_param()
-    #     if not device_group.contains(local_device):
-    #         continue
-    
-    save_ed = time.time()
-    print(local_device, 'Get_Params_Time = %.4f'%(save_ed - save_st))
-
-    ds_json = []
-    d_index = local_device.index 
-    num_devices = 0
-    file_list = os.listdir(filename)
-    ds_files = []
-    archive_files = []
-    local_hostname = hetu.device.get_local_hostname()
-    for file in file_list:
-        if ("param_states" in file and ".json" in file):
-            ds_files.append(file)
-        if (WEIGHTS_NAME in file and WEIGHTS_FORMAT in file):
-            archive_files.append(file)
-    print("GYGYGYGY:", local_hostname, " ", ds_files)
-    print("DAFILE:", ds_files)
-    for i, json_file in enumerate(ds_files):
-        json_file = os.path.join(
-            filename, json_file
-        )
-        try:
-            import json
-            file_obj=open(json_file,'r',encoding='utf-8')
-            python_data=json.load(file_obj)
-            ds_json.append(python_data)
-            # if d_index == 0:
-            #     print(json_file, "\n", python_data)
-    
-        except ValueError as e:
-            msg = str(e)
-            msg += " Or use save_model(..., force_contiguous=True), read the docs for potential caveats."
-            raise ValueError(msg)
-
-    need_switch = False
-    for k in local_state_dict:
-        param = local_state_dict[k]
-        device_group = param.get_device_group()
-        if device_group not in all_device_groups:
-            all_device_groups.append(device_group)
-        # TODO: implement allgather_inter_group_param()
-        if not device_group.contains(local_device):
-            continue
-        for i in range(len(ds_json)):
-            if k in ds_json[i]:                
-                trans_strategy[k] = ds_json[i][k]
-                pre_states = {}
-                for sk, sv in trans_strategy[k]["states"].items():
-                    pre_states[int(sk)] = sv
-                trans_strategy[k]["states"] = pre_states
-                device_index = []
-                for i in range(param.distributed_states.device_num):
-                    device_index.append(all_devices.get_index(param.device_group.get(i)))
-                
-                if (param.distributed_states.device_num == trans_strategy[k]["device_num"] and
-                    param.distributed_states.order == trans_strategy[k]["order"] and
-                    param.distributed_states.states == trans_strategy[k]["states"] and
-                    device_index == trans_strategy[k]["device_group"]):
-                    pass
-                else:
-                    need_switch = True
-                state = {}
-                state["device_num"] = param.distributed_states.device_num
-                state["order"] = param.distributed_states.order
-                state["states"] = param.distributed_states.states
-                state["device_group"] = device_index
-                break
-            
-        if optimizer is not None:
-            opt_state_dict = optimizer.get_states(param)
-            # print("Opt_State_Dict:", opt_state_dict)
-            for state_k, state_param in opt_state_dict.items():
-                # if (k == "step"):
-                #     continue
-                state_key = k + "_" + state_k
-                for i in range(len(ds_json)):
-                    if state_key in ds_json[i]:                
-                        trans_strategy[state_key] = ds_json[i][state_key]
-                        pre_states = {}
-                        for sk, sv in trans_strategy[state_key]["states"].items():
-                            pre_states[int(sk)] = sv
-                        trans_strategy[state_key]["states"] = pre_states
-                        break
-                state_key = k + "_" + state_k
-                hetu_state_dict[state_key] = state_param
-                parameter_to_dtype[state_key] = state_param.dtype        
-
-    save_st = time.time()
-    # state_dict = load_file(archive_file, parameter_to_dtype)
-    print("Need Switch:", need_switch)
-    if need_switch:
-        archive_opens = []
-        ptr = 0
-        def archive_sort(file_name):
-            return int(str(file_name).split("-")[1])
-        archive_files.sort(key=archive_sort)
-        for archive in archive_files:
-            archive_opens.append(safe_open(os.path.join(
-            filename, archive), framework="np"))
-            ptr += 1
-
-        split1_sum = 0
-        split2_sum = 0
-        for k in hetu_state_dict:
-            param = hetu_state_dict[k]
-            parameter_to_dtype[k] = param.dtype
-            device_group = param.get_device_group()
-            if device_group not in all_device_groups:
-                all_device_groups.append(device_group)
-            # TODO: implement allgather_inter_group_param()
-            if not device_group.contains(local_device):
-                continue
-            shared_param = False
-            if k not in trans_strategy.keys():
-                print("Shared:", param)
-                continue 
-            device_num = trans_strategy[k]["device_num"]
-            order = trans_strategy[k]["order"]
-            states = trans_strategy[k]["states"]
-            device_index = trans_strategy[k]["device_group"]
-            num_data_splits = int(device_num)
-            for dim in order:
-                if dim < 0:
-                    num_data_splits = num_data_splits // states[dim]
-            stride = int(1)
-            split_numpys = []
-            # print("GGG:", k, device_index, num_data_splits, archive_files)
-            if num_data_splits == 1:
-                split1_sum += 1
-                # print(len(archive_opens))
-                if k in archive_opens[device_index[0]].keys():
-                    split_numpys.append(archive_opens[device_index[0]].get_tensor(k))
-                    shared_param = False
-            else:
-                split2_sum += 1
-                for i in range(-1, -len(order) - 1, -1):
-                    dim = order[i]
-                    if dim < 0:
-                        stride *= states[dim]
-                    else:
-                        if (len(split_numpys) == 0):
-                            shared_param = False
-                            ptr = 0
-                            for j in range(num_data_splits):
-                                if k in archive_opens[device_index[ptr]].keys():
-                                    split_numpys.append(archive_opens[device_index[ptr]].get_tensor(k))
-                                    shared_param = False
-                                ptr += stride
-                            # print("HHJIJ:", len(split_numpys), num_data_splits, order, states)
-                            assert(shared_param or (len(split_numpys) == num_data_splits))
-                        
-                        if (states[dim] > 1):           
-                            split_numpys_ = []
-                            assert(num_data_splits % states[dim] == 0)
-                            # print(num_data_splits, " ", len(split_numpys))
-                            for j in range(num_data_splits // states[dim]):
-                                temp_storage = []
-                                for l in range(states[dim]):
-                                    temp_storage.append(split_numpys[j * states[dim] + l])
-                                split_numpys_.append(np.concatenate(temp_storage, axis=dim))
-                            split_numpys = split_numpys_
-                            num_data_splits = num_data_splits // states[dim]
-            # print(param, " shape:", param.shape, " t_shape:", split_numpys[0].shape, " order:", order, 
-            #       " states", states, " num_splits", num_data_splits, " split_nps:", len(split_numpys))
-            from hetu.nn.modules.module import parallel_data_provider
-            # global_data = hetu.numpy_to_NDArray(split_numpys[0], parameter_to_dtype[k])
-            global_data = split_numpys[0]
-            cur_device_group = param.get_device_group()
-            assert cur_device_group.num_devices > 0, f"device group has {cur_device_group.num_devices} devices, which is illegal, please check your model initialization."
-            # 3D parallel: for pipeline situation, a device don't need to load all the checkpoint
-            if cur_device_group.contains(local_device):
-                device_idx = cur_device_group.get_index(local_device)
-                data = parallel_data_provider(global_data, param.distributed_states, device_idx)
-                state_dict[k] = data
-        print("SP1:", split1_sum, "SP>1:", split2_sum)        
-    else:  
-        d_index = all_devices.get_index(local_device)
-        num_devices = 0
-        for device_group in all_device_groups:
-            num_devices += device_group.num_devices
-        archive_file = WEIGHTS_NAME + f'-{d_index + 1}-of-{num_devices}' + WEIGHTS_FORMAT
-        archive_file = os.path.join(
-            filename, archive_file
-        )
-        print("ARC:", archive_file)
-        state_dict = load_file(archive_file, parameter_to_dtype)
-    save_ed = time.time()
-    print(local_device, 'Load_Params_Time = %.4f'%(save_ed - save_st))
-    
-    save_st = time.time()
-    for k in hetu_state_dict:
-        if k in state_dict:
-            # print("Reset:", k)
-            hetu_state_dict[k].reset_data(state_dict[k])
-    save_ed = time.time()
-    print(local_device, 'Reset_Params_Time = %.4f'%(save_ed - save_st))
-    return model
-
 def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.PathLike],
                     config=None, local_device=None, strict=True) -> Tuple[List[str], List[str]]:
     import time
@@ -936,7 +1170,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             ds_files.append(file)
         if (WEIGHTS_NAME in file and WEIGHTS_FORMAT in file):
             archive_files.append(file)
-    print("DAFILE:", ds_files)
     for i, json_file in enumerate(ds_files):
         json_file = os.path.join(
             filename, json_file
@@ -946,8 +1179,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             file_obj=open(json_file,'r',encoding='utf-8')
             python_data=json.load(file_obj)
             ds_json.append(python_data)
-            # if d_index == 0:
-            #     print(json_file, "\n", python_data)
     
         except ValueError as e:
             msg = str(e)
@@ -986,7 +1217,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
             
         if optimizer is not None:
             opt_state_dict = optimizer.get_states(param)
-            # print("Opt_State_Dict:", opt_state_dict)
             for state_k, state_param in opt_state_dict.items():
                 # if (k == "step"):
                 #     continue
@@ -1005,7 +1235,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
 
     save_st = time.time()
     # state_dict = load_file(archive_file, parameter_to_dtype)
-    print("Need Switch:", need_switch)
     if need_switch:
         archive_opens = []
         archive_keys = []
@@ -1029,7 +1258,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                 continue
             shared_param = False
             if k not in trans_strategy.keys():
-                print("Shared:", param)
                 continue 
             parameter_to_dtype[k] = param.dtype
             
@@ -1085,7 +1313,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                             break
                         
             split_dims = min(param.ndim, SPLIT_DIMS)
-            # print(local_device, k, split_group, len(split_data))
             for dim in range(split_dims - 1, -1, -1):
                 temp_split_data = []
                 split_dim = states[dim] if dim in states else 1
@@ -1093,7 +1320,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                 temp_splits = min(param.shape[dim], temp_splits)
                 splits_per_device = temp_splits // split_dim
                 num_groups = len(split_data) // splits_per_device
-                # print(local_device, k, state["states"], num_groups, dim, temp_splits, split_dim, splits_per_device)
                 for i in range(num_groups):
                     concat_group = []
                     for j in range(splits_per_device):
@@ -1123,7 +1349,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
         archive_file = os.path.join(
             filename, archive_file
         )
-        print("ARC:", archive_file)
         result = {}
         with safe_open(archive_file, framework="np") as f:
             for k, dtype in parameter_to_dtype.items():
@@ -1158,7 +1383,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                     
                 for split_block_idx in split_group:
                     split_key = k + "_split_" + str(split_block_idx)
-                    # print(local_device, archive_file, split_key)
                     split_data.append(f.get_tensor(split_key))
                 
                 split_dims = min(hetu_state_dict[k].ndim, SPLIT_DIMS)
@@ -1169,7 +1393,6 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
                     temp_splits = min(hetu_state_dict[k].shape[dim], temp_splits)
                     splits_per_device = temp_splits // split_dim
                     num_groups = len(split_data) // splits_per_device
-                    # print(local_device, k, state["states"], num_groups, dim, temp_splits, split_dim, splits_per_device)
                     for i in range(num_groups):
                         concat_group = []
                         for j in range(splits_per_device):
@@ -1185,19 +1408,17 @@ def temp_load_split(model: hetu.nn.Module, optimizer, filename: Union[str, os.Pa
     save_st = time.time()
     for k in hetu_state_dict:
         if k in state_dict:
-            # print("Reset:", k)
             hetu_state_dict[k].reset_data(state_dict[k])
     save_ed = time.time()
     print(local_device, 'Reset_Params_Time = %.4f'%(save_ed - save_st))
     return model
-
 
 def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = None) -> bytes:
     """
     Saves a dictionary of tensors into raw bytes in safetensors format.
 
     Args:
-        tensors (`Dict[str, torch.Tensor]`):
+        tensors (`Dict[str, hetu.Tensor]`):
             The incoming tensors. Tensors need to be contiguous and dense.
         metadata (`Dict[str, str]`, *optional*, defaults to `None`):
             Optional text only metadata you might want to save in your header.
@@ -1210,10 +1431,10 @@ def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = 
     Example:
 
     ```python
-    from safetensors.torch import save
-    import torch
+    from hetu.utils.checkpoint.ht_safetensors import save
+    import hetu
 
-    tensors = {"embedding": torch.zeros((512, 1024)), "attention": torch.zeros((256, 256))}
+    tensors = {"embedding": hetu.zeros((512, 1024)), "attention": hetu.zeros((256, 256))}
     byte_data = save(tensors)
     ```
     """
@@ -1221,9 +1442,8 @@ def save(tensors: Dict[str, torch.Tensor], metadata: Optional[Dict[str, str]] = 
     result = bytes(serialized)
     return result
 
-
 def save_file(
-    tensors: Dict[str, np.ndarray],
+    tensors: Dict[str, hetu.NDArray],
     filename: Union[str, os.PathLike],
     metadata: Optional[Dict[str, str]] = None,
 ):
@@ -1231,7 +1451,7 @@ def save_file(
     Saves a dictionary of tensors into raw bytes in safetensors format.
 
     Args:
-        tensors (`Dict[str, torch.Tensor]`):
+        tensors (`Dict[str, hetu.Tensor]`):
             The incoming tensors. Tensors need to be contiguous and dense.
         filename (`str`, or `os.PathLike`)):
             The filename we're saving into.
@@ -1246,44 +1466,41 @@ def save_file(
     Example:
 
     ```python
-    from safetensors.torch import save_file
-    import torch
+    from hetu.utils.checkpoint.ht_safetensors import save_file
+    import hetu
 
-    tensors = {"embedding": torch.zeros((512, 1024)), "attention": torch.zeros((256, 256))}
+    tensors = {"embedding": hetu.zeros((512, 1024)), "attention": hetu.zeros((256, 256))}
     save_file(tensors, "model.safetensors")
     ```
     """
     if not os.path.exists(filename):
-        open(filename, "w").close()
-    # for k, v in tensors.items():
-    #     print("save:", k, v.dtype, v.flatten()[:10])
-    import time
-    save_st = time.time()
-    flattened = {k: {"dtype": v.dtype.name, "shape": v.shape, "data": _tobytes(v)} for k, v in tensors.items()}
-    save_ed = time.time()
-    print('Flattened_Time = %.4f'%(save_ed - save_st))
+        with open(filename, 'w') as f:
+            pass
+    flattened = {k: {"dtype": str(v.dtype).split(".")[-1], "shape": v.shape, "data": _tobytes(v.numpy(save=True))} for k, v in tensors.items()}
     serialize_file(flattened, filename, metadata=metadata)
-    save_ed = time.time()
-    print('Safetensors_Save_Time = %.4f'%(save_ed - save_st))
 
-def load_file(filename: Union[str, os.PathLike], parameter_to_dtype, device="cpu") -> Dict[str, torch.Tensor]:
+def load_file(
+    filename: Union[str, os.PathLike],
+    dtype: Optional[hetu.dtype] = None,
+    device: str = "cpu",
+) -> Dict[str, hetu.NDArray]:
     """
-    Loads a safetensors file into torch format.
+    Loads a safetensors file into hetu format.
 
     Args:
         filename (`str`, or `os.PathLike`):
             The name of the file which contains the tensors
         device (`Dict[str, any]`, *optional*, defaults to `cpu`):
             The device where the tensors need to be located after load.
-            available options are all regular torch device locations
+            available options are all regular hetu device locations
 
     Returns:
-        `Dict[str, torch.Tensor]`: dictionary that contains name as key, value as `torch.Tensor`
+        `Dict[str, hetu.Tensor]`: dictionary that contains name as key, value as `hetu.Tensor`
 
     Example:
 
     ```python
-    from safetensors.torch import load_file
+    from hetu.utils.checkpoint.ht_safetensors import load_file
 
     file_path = "./my_folder/bert.safetensors"
     loaded = load_file(file_path)
@@ -1296,25 +1513,26 @@ def load_file(filename: Union[str, os.PathLike], parameter_to_dtype, device="cpu
             if (k in parameter_to_dtype):
                 # print(parameter_to_dtype[k])
                 # print("load:", k, f.get_tensor(k).dtype, parameter_to_dtype[k], f.get_tensor(k).flatten()[:10])
+                print("Reset ", "Key:" , k, 
+                      "\nPARAM:", f.get_tensor(k).flatten()[:20])
                 result[k] = hetu.numpy_to_NDArray(f.get_tensor(k), parameter_to_dtype[k])
     return result
 
-
 def load(data: bytes) -> Dict[str, torch.Tensor]:
     """
-    Loads a safetensors file into torch format from pure bytes.
+    Loads a safetensors file into hetu format from pure bytes.
 
     Args:
         data (`bytes`):
             The content of a safetensors file
 
     Returns:
-        `Dict[str, torch.Tensor]`: dictionary that contains name as key, value as `torch.Tensor` on cpu
+        `Dict[str, hetu.Tensor]`: dictionary that contains name as key, value as `hetu.Tensor` on cpu
 
     Example:
 
     ```python
-    from safetensors.torch import load
+    from hetu.utils.checkpoint.ht_safetensors import load
 
     file_path = "./my_folder/bert.safetensors"
     with open(file_path, "rb") as f:
@@ -1324,7 +1542,7 @@ def load(data: bytes) -> Dict[str, torch.Tensor]:
     ```
     """
     flat = deserialize(data)
-    return _view2torch(flat)
+    return _view2hetu(flat)
 
 _SIZE = {
     hetu.int64: 8,
@@ -1359,16 +1577,14 @@ _TYPES = {
     "NF4": hetu.nfloat4,
 }
 
-
 def _getdtype(dtype_str: str) -> torch.dtype:
     return _TYPES[dtype_str]
-
 
 def _view2torch(safeview) -> Dict[str, torch.Tensor]:
     result = {}
     for k, v in safeview:
         dtype = _getdtype(v["dtype"])
-        arr = hetu.frombuffer(v["data"], dtype=dtype).reshape(v["shape"])
+        arr = hetu.buffer_to_NDArray(v["data"], dtype=dtype, shape=v["shape"])
         result[k] = arr
 
     return result

@@ -12,11 +12,11 @@ void Dropout2dOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
   uint64_t seed = hetu::impl::GenNextRandomSeed();
   // record seed for recomputed dropout
   if (op->op_meta().get_recompute(op->graph().COMPUTE_STRATEGY_ID, op->suggested_hetero_id())) {
-    ctx.get_or_create(op->id()).put_uint64("seed", seed);
+    ctx.get_or_create(op->id()).put("seed", seed);
   }
   // recomputed dropout
   if (op->op_meta().origin_op_id != -1) {
-    seed = ctx.get(op->op_meta().origin_op_id).get_uint64("seed");
+    seed = ctx.get_or_create(op->op_meta().origin_op_id).get<uint64_t>("seed");
   }
   HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                 hetu::impl::Dropout2d, inputs.at(0), 1 - keep_prob(),
@@ -39,13 +39,20 @@ NDArrayList Dropout2dOpImpl::DoCompute(Operator& op,
 
 TensorList Dropout2dOpImpl::DoGradient(Operator& op, const TensorList& grad_outputs) const {
   return {op->requires_grad(0) ? MakeDropout2dGradientOp(grad_outputs.at(0),
-                                  op->output(0), keep_prob(), inplace(),
+                                  op->output(1), keep_prob(), inplace(),
                                   op->grad_op_meta().set_name(op->grad_name()))
                                : Tensor()};
 }
 
+HTShapeList Dropout2dOpImpl::DoInferShape(Operator& op,
+                                          const HTShapeList& input_shapes,
+                                          RuntimeContext& ctx) const {
+  return {input_shapes[0], HTShape({input_shapes[0][0], input_shapes[0][1]})};
+}
+
 void Dropout2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                     const OpMeta& op_meta) const {
+                                     const OpMeta& op_meta,
+                                     const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds_input.is_valid()) 
     << "Dropout2dOpDef: distributed states for input must be valid!";
@@ -75,6 +82,18 @@ Dropout2dGradientOpImpl::DoCompute(Operator& op,const NDArrayList& inputs,
   }
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
+}
+
+HTShapeList Dropout2dGradientOpImpl::DoInferShape(Operator& op,
+                                                  const HTShapeList& input_shapes,
+                                                  RuntimeContext& ctx) const {
+  return {input_shapes[0]};
+}
+
+void Dropout2dGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                                             const OpMeta& op_meta,
+                                             const InstantiationContext& inst_ctx) const {
+  outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());    
 }
 
 Tensor MakeDropout2dOp(Tensor input, double keep_prob,

@@ -70,6 +70,12 @@ PyObject* PyDevice_index(PyDevice* self) {
   HT_PY_FUNC_END
 }
 
+PyObject* PyDevice_global_index(PyDevice* self) {
+  HT_PY_FUNC_BEGIN
+  return PyLong_FromInteger(self->device.global_index());
+  HT_PY_FUNC_END
+}
+
 PyObject* PyDevice_is_cpu(PyDevice* self) {
   HT_PY_FUNC_BEGIN
   Py_RETURN_BOOLEAN_COND(self->device.is_cpu());
@@ -158,6 +164,7 @@ PyObject* PyDevice_reduce(PyDevice* self) {
 PyGetSetDef PyDevice_properties[] = {
   {PY_GET_SET_DEF_NAME("type"), (getter) PyDevice_type, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("index"), (getter) PyDevice_index, nullptr, nullptr, nullptr}, 
+  {PY_GET_SET_DEF_NAME("global_index"), (getter) PyDevice_global_index, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("is_cpu"), (getter) PyDevice_is_cpu, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("is_cuda"), (getter) PyDevice_is_cuda, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("is_undetermined"), (getter) PyDevice_is_undetermined, nullptr, nullptr, nullptr}, 
@@ -243,6 +250,18 @@ PyObject* PyDeviceGroupList_New(const DeviceGroupList& dg_list) {
   for (size_t i = 0; i < dg_list.size(); i++) {
     auto* dg_obj = PyDeviceGroup_New(dg_list[i]);
     PyList_SET_ITEM(ret, i, dg_obj);
+  }
+  return ret;
+  HT_PY_FUNC_END
+}
+
+PyObject* PyDeviceGroupHierarchy_New(const DeviceGroupHierarchy& dg_hierarchy) {
+  HT_PY_FUNC_BEGIN
+  PyObject* ret = PyList_New(dg_hierarchy.size());
+  HT_RUNTIME_ERROR_IF(!ret) << "Failed to alloc dict";
+  for (size_t i = 0; i < dg_hierarchy.size(); i++) {
+    auto* dg_list_obj = PyDeviceGroupList_New(dg_hierarchy.raw_data()[i].raw_data());
+    PyList_SET_ITEM(ret, i, dg_list_obj);
   }
   return ret;
   HT_PY_FUNC_END

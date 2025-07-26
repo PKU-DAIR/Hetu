@@ -3,7 +3,7 @@ import numpy as np
 from queue import Queue
 from .module import Module
 import numbers
-from hetu.utils.parallel import get_local_index, config2ds
+from hetu.utils.parallel import get_local_index, config2ds, get_multi_recompute_from
 
 __all__ = [
     'HtMultiColumnParallelLinear', 
@@ -13,7 +13,8 @@ __all__ = [
     'HtMultiParallelLayerNorm',
     'HtMultiParallelRMSNorm',
     'HtParallelConv2d',
-    'HtParallelConv3d'
+    'HtParallelConv3d',
+    'HtMultiQKVColumnParallelLinear',
 ]
 
 def parallel_data_provider(global_data, ds_union, device_group_index, device_index):
@@ -85,6 +86,7 @@ def get_multi_ds_parallel_config(ds_parallel_configs, module_name, _range=-1):
     assert len(multi_ds_parallel_config) == len(ds_parallel_configs), \
         f'ds_parallel_configs parse error, cannot find {module_name}' if _range == -1 else \
         f'ds_parallel_configs parse error, cannot find {module_name} with range id {_range}'   
+    print("ds_config", module_name, multi_ds_parallel_config)
     return multi_ds_parallel_config
 
 # walkaround: just give order by type(placeholder/varibale), may not include all cases
@@ -98,6 +100,7 @@ def config2ds(config):
     else:
         raise RuntimeError(f"unsupported type {config['type']}!")  
     hetero_sum = len(config['device_group_union'])
+    print("config['device_group_union']", config['device_group_union'])
     if hetero_sum == 1:
         hetero_dim = -3
     for hetero_num in range(hetero_sum):
@@ -124,8 +127,10 @@ def config2ds(config):
         dg_list.append(dg)
     return hetu.DistributedStatesUnion(ds_list, hetero_dim), dg_list
 
+    return multi_ds_parallel_config
+
 class HtMultiParallelRMSNorm(Module):
-    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, recompute_allgather=False, dtype=hetu.float32, name='rmsnorm'):
+    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, recompute_allgather=False, eps=1e-5, dtype=hetu.float32, name='rmsnorm'):
         super(HtMultiParallelRMSNorm, self).__init__()
         self.ds_parallel_configs = multi_ds_parallel_config
         if isinstance(normalized_shape, numbers.Integral):
@@ -135,6 +140,8 @@ class HtMultiParallelRMSNorm(Module):
         self.sequence_parallel = sequence_parallel
         self.recompute_allgather = recompute_allgather
         self.name = name
+        self.eps = eps
+        self.layer_idx = int(name.split('Block')[1]) if 'Block' in name else -1
         self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
@@ -174,8 +181,9 @@ class HtMultiParallelRMSNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0'])
-            output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
-                                                   device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
+            with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
+                output_rms_split0 = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, eps=self.eps, \
+                                                    device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
             # handle allgather recompute manually
             if output_rms_split0.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
                 output_rms = output_rms_split0
@@ -190,8 +198,9 @@ class HtMultiParallelRMSNorm(Module):
                 input_p = input_p
             else:
                 input_p = hetu.comm(input_p, self.ds_union_map['split0_dup'])
-            output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, \
-                                            device_group_hierarchy=self.device_group_unions, name=self.name)[0]
+            with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
+                output_rms = hetu.fused_rmsnorm(input_p, self.weight, self.normalized_shape, eps=self.eps, \
+                                                device_group_hierarchy=self.device_group_unions, name=self.name)[0]
         return output_rms
 
 # class HtMultiParallelLayerNorm(Module):
@@ -274,7 +283,7 @@ class HtMultiParallelRMSNorm(Module):
 
 
 class HtMultiParallelLayerNorm(Module):
-    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, eps=1e-5, dtype=hetu.float32, name='ln'):
+    def __init__(self, normalized_shape, multi_ds_parallel_config, sequence_parallel=False, recompute_allgather=False, eps=1e-5, dtype=hetu.float32, name='ln'):
         super(HtMultiParallelLayerNorm, self).__init__()
         self.ds_parallel_configs = multi_ds_parallel_config
         if isinstance(normalized_shape, numbers.Integral):
@@ -282,25 +291,37 @@ class HtMultiParallelLayerNorm(Module):
             normalized_shape = [normalized_shape]  # type: ignore[assignment]
         self.normalized_shape = list(normalized_shape)  # type: ignore[arg-type]
         self.sequence_parallel = sequence_parallel
+        self.recompute_allgather = recompute_allgather
         self.eps = eps
         self.name = name
-        self.ds_union_map = {'dup': [], 'split0': []}
+        self.layer_idx = int(name.split('Block')[1]) if 'Block' in name else -1
+        self.ds_union_map = {'dup': [], 'split0': [], 'split0_dup': []}
         self.device_index = []
         self.device_group_unions = []
         for ds_parallel_config in multi_ds_parallel_config:
-            ds_union_dup, device_group_union = config2ds(ds_parallel_config)
+            ds_union_dup_split0, device_group_union = config2ds(ds_parallel_config)
             self.device_group_unions.append(device_group_union)
             hetero_size = len(device_group_union)
-            hetero_dim = ds_union_dup.hetero_dim
+            dcp_union = [ds_union_dup_split0.get(i).get_dim(-1) for i in range(hetero_size)]
+            tp_union = [ds_union_dup_split0.get(i).get_dim(0) for i in range(hetero_size)]
+            hetero_dim = ds_union_dup_split0.hetero_dim
             assert hetero_dim == -1 or hetero_dim == -3, "ParallelLayerNorm only support hetero on dup"
+            assert np.array_equal(np.array(dcp_union) * np.array(tp_union) / hetero_size, np.array([device_group.num_devices for device_group in device_group_union]) 
+                , f'ParallelLayerNorm get wrong ds_parallel_config: {ds_parallel_config}!')
             device_group_index, device_index = get_local_index(device_group_union)
             self.device_index.append(device_index)
+            ds_list_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: device_group_union[i].num_devices * hetero_size}, [-1])
+                for i in range(hetero_size)] # for sp data
+            ds_union_dup = hetu.DistributedStatesUnion(ds_list_dup, -1 if hetero_dim != -3 else -3)
             ds_list_split0 = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {0: device_group_union[i].num_devices * hetero_size}, [0])
                 for i in range(hetero_size)] # for sp data
             ds_union_split0 = hetu.DistributedStatesUnion(ds_list_split0, 0 if hetero_dim != -3 else -3)
+            ds_list_split0_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: tp_union[i], 0: dcp_union[i]}, [0, -1])
+                for i in range(hetero_size)] # for data
+            ds_union_split0_dup = hetu.DistributedStatesUnion(ds_list_split0_dup, 0 if hetero_dim != -3 else -3)
             self.ds_union_map['dup'].append(ds_union_dup)
             self.ds_union_map['split0'].append(ds_union_split0)
-        
+            self.ds_union_map['split0_dup'].append(ds_union_split0_dup)
             
         self.weight = hetu.parallel_parameter(eval(f'hetu.ones_initializer()'), 
                                               self.normalized_shape, self.ds_union_map['dup'], 
@@ -313,22 +334,31 @@ class HtMultiParallelLayerNorm(Module):
 
     def forward(self, input_p):
         if self.sequence_parallel:
-            assert input_p.check_ds_hierarchy_equal(self.ds_union_map['split0']), \
-                f'for sequence parallel, layernorm {self.name} need input fully sharded in dimension 0 for each element in the union, but found {input_p.ds_hierarchy}'
-            # do sequence parallel layernorm: [bsz * seq_len // tp, hidden_size]
-            # print(f'in sp, ln input shape = {input_p.shape}')
-            # print("input_p", input_p)
-            # print("weight", self.weight)
-            # print("bias", self.bias)
-            output_ln = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, \
-                                             self.eps, device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
-            # allgather will be auto done in later column parallel
+            if input_p.check_ds_hierarchy_equal(self.ds_union_map['split0']):
+                input_p = input_p
+            else:
+                input_p = hetu.comm(input_p, self.ds_union_map['split0'])
+            with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
+                output_ln_split0 = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
+                                                        device_group_hierarchy=self.device_group_unions, name=self.name + '_sp')[0]
+            # handle allgather recompute manually
+            if output_ln_split0.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
+                output_ln = output_ln_split0
+            else:
+                if self.recompute_allgather:
+                    with hetu.recompute(multi_recompute=[[True] * len(self.ds_parallel_configs)]):
+                        output_ln = hetu.comm(output_ln_split0, self.ds_union_map['split0_dup'])
+                else:
+                    output_ln = hetu.comm(output_ln_split0, self.ds_union_map['split0_dup'])
         else:
-            # [bsz * seq_len, hidden_size]
-            # print(f'in no-sp, ln input shape = {input_p.shape}')
-            output_ln = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, \
-                                             self.eps, device_group_hierarchy=self.device_group_unions, name=self.name)[0]
-        return output_ln   
+            if input_p.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
+                input_p = input_p
+            else:
+                input_p = hetu.comm(input_p, self.ds_union_map['split0_dup'])
+            with hetu.recompute(multi_recompute = get_multi_recompute_from(self.ds_parallel_configs, self.layer_idx)):
+                output_ln = hetu.fused_layernorm(input_p, self.weight, self.bias, self.normalized_shape, self.eps, \
+                                                device_group_hierarchy=self.device_group_unions, name=self.name)[0]
+        return output_ln
 
 class HtMultiParallelEmbedding(Module):
     def __init__(self, num_embeddings, embedding_dim, multi_ds_parallel_config, 
@@ -592,6 +622,9 @@ class HtParallelConv3d(Module):
 
 
 
+        
+
+    
 # process: x->split1, w->split0 => y->partial => y->dup    
 class HtMultiRowParallelLinear(Module):
     """Linear layer with row parallelism.
@@ -684,4 +717,91 @@ class HtMultiRowParallelLinear(Module):
         
         output = output + self.bias if self.bias is not None else output
         
+        return output
+
+class HtMultiQKVColumnParallelLinear(Module):
+    """Linear layer with column parallelism.
+
+    The linear layer is defined as Y = XA + b. A is parallelized along
+    its second dimension as A = [A_1, ..., A_p].
+    """
+    def __init__(self, in_features, out_features, multi_ds_parallel_config,
+                 bias=True, gather_output=True, init_method='xavier_normal_', 
+                 dtype=hetu.float32, name='colp'):
+        super(HtMultiQKVColumnParallelLinear, self).__init__()
+        self.ds_parallel_configs = multi_ds_parallel_config
+        self.in_features = in_features
+        self.out_features = out_features
+        self.gather_output = gather_output
+        self.name = name
+
+        self.ds_union_map = {'dup_split0': [], 'split0_dup': []}
+        self.device_index = []
+        self.device_group_unions = []
+        for ds_parallel_config in multi_ds_parallel_config:
+            ds_union_dup_split1, device_group_union = config2ds(ds_parallel_config)
+            self.device_group_unions.append(device_group_union)
+            zero = ds_parallel_config['zero']
+            hetero_size = len(device_group_union)
+            dcp_union = [ds_union_dup_split1.get(i).get_dim(-1) for i in range(hetero_size)]
+            tp_union = [ds_union_dup_split1.get(i).get_dim(1) for i in range(hetero_size)]
+            hetero_dim = ds_union_dup_split1.hetero_dim
+            assert hetero_dim == -1 or hetero_dim == -3, "ColumnParallelLinear only support hetero on dup"
+            assert np.array_equal(np.array(dcp_union) * np.array(tp_union) / hetero_size, np.array([device_group.num_devices for device_group in device_group_union])
+                , f'ColumnParallelLinear get wrong ds_parallel_config: {ds_parallel_config}!')        
+            device_group_index, device_index = get_local_index(device_group_union)
+            self.device_index.append(device_index)
+            # assume num_devices=8, there exists 4 cases: dp=1 tp=8, dp=2 tp=4, dp=4 tp=2, dp=8 tp=1
+            # when dp=1 tp=8, weights: ds_dup_split0->ds_split0, data: ds_split0_dup->ds_dup
+            # when dp=8 tp=1, weights: ds_dup_split0->ds_dup, data: ds_split0_dup->ds_split0
+            ds_list_dup_split0 = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: dcp_union[i], 0: tp_union[i]}, [-1, 0], zero)
+                for i in range(hetero_size)] # for weights with trans_b
+            ds_list_split0_dup = [hetu.DistributedStates(device_group_union[i].num_devices * hetero_size, {-1: tp_union[i], 0: dcp_union[i]}, [0, -1])
+                for i in range(hetero_size)] # for data
+            ds_union_dup_split0 = hetu.DistributedStatesUnion(ds_list_dup_split0, -1 if hetero_dim != -3 else -3) # for weights with trans_b
+            ds_union_split0_dup = hetu.DistributedStatesUnion(ds_list_split0_dup, 0 if hetero_dim != -3 else -3) # for data
+            self.ds_union_map['dup_split0'].append(ds_union_dup_split0)
+            self.ds_union_map['split0_dup'].append(ds_union_split0_dup)
+        
+        self.weight = hetu.parallel_parameter(eval(f'hetu.{init_method}initializer()'), 
+                                              [out_features // 3, 3, in_features], 
+                                              self.ds_union_map['dup_split0'], self.device_index, 
+                                              dtype=dtype, requires_grad=True, 
+                                              device_group_hierarchy=self.device_group_unions, name=f'{name}_weight')
+        if bias:
+            self.bias = hetu.parallel_parameter(hetu.zeros_initializer(), [out_features], 
+                                                self.ds_union_map['dup_split0'], self.device_index,
+                                                dtype=dtype, requires_grad=True, 
+                                                device_group_hierarchy=self.device_group_unions, name=f'{name}_bias')
+        else:
+            self.bias = None
+      
+    def forward(self, input_p):
+        if input_p.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']):
+            tensor_split0_dup = input_p
+        else:
+            "sp allgather recompute"
+            mutli_recompute = [[True] for i in range(1 if self.ds_parallel_configs is None 
+                                                        else len(self.ds_parallel_configs))]
+            with hetu.recompute(mutli_recompute): 
+                tensor_split0_dup = hetu.comm(input_p, self.ds_union_map['split0_dup'])
+            '''
+            print(f"sp: column parallel linear need extra communication for \
+                    adapt input tensor ds hierarchy {input_p.ds_hierarchy} into {self.ds_union_map['split0_dup']}!")
+            '''
+        tmp_weight = hetu.transpose(self.weight, [1,0,2])
+        
+        if self.bias != None:
+            tensor_split01 = hetu.linear(tensor_split0_dup, tmp_weight, self.bias, trans_a=False, trans_b=True, device_group_hierarchy=self.device_group_unions, name=self.name)
+        else:
+            tensor_split01 = hetu.linear(tensor_split0_dup, tmp_weight, trans_a=False, trans_b=True, device_group_hierarchy=self.device_group_unions, name=self.name)
+        
+        if not self.gather_output:
+            output = tensor_split01
+        else:
+            if tensor_split01.check_ds_hierarchy_equal(self.ds_union_map['split0_dup']): # pure dp
+                output = tensor_split01
+            else:
+                output = hetu.comm(tensor_split01, self.ds_union_map['split0_dup'])
+
         return output

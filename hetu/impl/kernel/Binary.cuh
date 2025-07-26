@@ -8,7 +8,7 @@ template<typename spec_a_t, typename spec_b_t>
 struct kplus{
   __forceinline__ __host__ __device__ 
   spec_a_t operator() (spec_a_t a, spec_b_t b) {
-    return a + b;
+    return spec_a_t(a) + spec_a_t(b);
   }
 };
 

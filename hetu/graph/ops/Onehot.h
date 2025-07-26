@@ -21,7 +21,7 @@ class OnehotOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape shape;
     if (inputs[0]->has_shape()) {
       shape = inputs[0]->shape();

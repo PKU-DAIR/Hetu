@@ -57,15 +57,31 @@ std::shared_ptr<MemoryPool> GetMemoryPool(const Device& device) {
 }
 
 DataPtr AllocFromMemoryPool(const Device& device, size_t num_bytes,
-                            const Stream& stream) {
+                            const Stream& stream, bool shared_memory) {
   if (stream.device().is_undetermined()) {
     HT_LOG_WARN << "Allocation stream not provided (" << device << ", "
                 << stream << ", " << num_bytes << " bytes)";
     return GetMemoryPool(device)->AllocDataSpace(
+      num_bytes, Stream(device, kComputingStream), shared_memory);
+  } else {
+    return GetMemoryPool(device)->AllocDataSpace(num_bytes, stream, shared_memory);
+  }
+}
+
+void AllocShareMemoryFromMemoryPool(const Device& device, size_t num_bytes,
+                                    const Stream& stream) {
+  if (stream.device().is_undetermined()) {
+    HT_LOG_WARN << "Allocation stream not provided (" << device << ", "
+                << stream << ", " << num_bytes << " bytes)";
+    GetMemoryPool(device)-> AllocShareMemory(
       num_bytes, Stream(device, kComputingStream));
   } else {
-    return GetMemoryPool(device)->AllocDataSpace(num_bytes, stream);
+    GetMemoryPool(device)->AllocShareMemory(num_bytes, stream);
   }
+}
+
+bool ShareMomoryReadyOfMemoryPool(const Device& device) {
+    return GetMemoryPool(device)->ShareMemoryReady();
 }
 
 DataPtr BorrowToMemoryPool(const Device& device, void* ptr, size_t num_bytes, 

@@ -24,7 +24,7 @@ class OptimizerUpdateOpInterface : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     // Question: should we check whether the param is trainable?
     HT_VALUE_ERROR_IF(!inputs.front()->producer()->is_parameter())
       << "The first input " << inputs.front() << " is not a parameter";
@@ -152,10 +152,12 @@ class AdamOpImpl : public OptimizerUpdateOpInterface {
                  RuntimeContext& runtime_ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override; 
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override; 
 
   void DoSpecialMergeStrategy(Operator& op, Operator& another_op) override;
 

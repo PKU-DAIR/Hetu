@@ -19,6 +19,16 @@ inline bool CheckPyLong(PyObject* obj) {
   return (PyLong_Check(obj) && !PyBool_Check(obj)) || CheckNumpyInt(obj);
 }
 
+inline int32_t Int32_FromPyLong(PyObject* obj) {
+  int overflow = 0;
+  auto ret = PyLong_AsLongAndOverflow(obj, &overflow);
+  HT_VALUE_ERROR_IF(PyErr_Occurred()) 
+    << "Error occurred in PyLong_AsLongAndOverflow";
+  HT_VALUE_ERROR_IF(overflow != 0) 
+    << "Python integer overflowed for int32_t";
+  return ret;
+}
+
 inline int64_t Int64_FromPyLong(PyObject* obj) {
   int overflow = 0;
   auto ret = PyLong_AsLongLongAndOverflow(obj, &overflow);
@@ -60,6 +70,14 @@ inline bool CheckPyString(PyObject* obj) {
   return PyBytes_Check(obj) || PyUnicode_Check(obj);
 }
 
+inline bool CheckPyBytes(PyObject* obj) {
+  return PyBytes_Check(obj);
+}
+
+inline bool CheckPyByteArray(PyObject* obj) {
+  return PyByteArray_Check(obj);
+}
+
 inline PyObject* PyUnicode_FromString(const std::string& str) {
   return PyUnicode_FromStringAndSize(str.c_str(), str.size());
 }
@@ -93,6 +111,17 @@ inline bool CheckPyIntList(PyObject* obj) {
     return true;
   }
   return false;
+}
+
+inline std::vector<int32_t> Int32List_FromPyIntList(PyObject* obj) {
+  bool is_tuple = PyTuple_Check(obj);
+  size_t size = is_tuple ? PyTuple_GET_SIZE(obj) : PyList_GET_SIZE(obj);
+  std::vector<int32_t> ret(size);
+  for (size_t i = 0; i < size; i++) {
+    auto* item = is_tuple ? PyTuple_GET_ITEM(obj, i) : PyList_GET_ITEM(obj, i);
+    ret[i] = Int32_FromPyLong(item);
+  }
+  return ret;
 }
 
 inline std::vector<int64_t> Int64List_FromPyIntList(PyObject* obj) {

@@ -2,6 +2,7 @@
 
 #include "hetu/core/memory_pool.h"
 #include "hetu/utils/task_queue.h"
+#include <cstdint>
 #include <functional>
 
 namespace hetu {
@@ -13,7 +14,13 @@ class CPUMemoryPool final : public MemoryPool {
 
   ~CPUMemoryPool();
 
-  DataPtr AllocDataSpace(size_t num_bytes, const Stream& stream = Stream());
+  DataPtr AllocDataSpace(size_t num_bytes, const Stream& stream = Stream(),
+                         bool shared_memory = false);
+  
+  void AllocShareMemory(size_t num_bytes, const Stream& stream = Stream(),
+                        bool realloc = false);
+  
+  bool ShareMemoryReady();
 
   DataPtr BorrowDataSpace(void* ptr, size_t num_bytes, DataPtrDeleter deleter, const Stream& stream = Stream());
 
@@ -60,6 +67,9 @@ class CPUMemoryPool final : public MemoryPool {
   uint64_t _borrow_cnt{0};
   uint64_t _free_cnt{0};
   uint64_t _mark_cnt{0};
+  uint64_t _shm_allocated{0};
+  uint64_t _shm_maxium_size{0};
+  void* base_ptr;
 };
 
 } // namespace impl

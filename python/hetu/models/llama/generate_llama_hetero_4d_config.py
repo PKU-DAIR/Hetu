@@ -1,9 +1,27 @@
-import argparse
+import hydra
 import json
 import os
-import ast
+from omegaconf import OmegaConf
+from hetu.utils.parallel import RecomputeStrategy
+from hetu.utils.parallel import generate_recompute_config
 
-def generate_llama_hetero_4d_config(cp_list, rank_to_device_mapping, unused_rank, hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers=32, num_gpus=8, dp=2, tp=2, zero=True):
+def generate_llama_hetero_4d_config(
+    cp_list, 
+    rank_to_device_mapping, 
+    unused_rank, 
+    hetero_layers, 
+    accumulate_hetero_stages, 
+    num_layers=32, 
+    num_gpus=8, 
+    dp=2, 
+    tp=2, 
+    zero=True,
+    recompute_granularity=None,
+    recompute_method=None,
+    recompute_num_layers=None,
+    recompute_layer_idxs_list=None
+):
+    
     if dp == 1:
         zero = False
     
@@ -32,10 +50,22 @@ def generate_llama_hetero_4d_config(cp_list, rank_to_device_mapping, unused_rank
             hybrid_device_group.append([rank_to_device_mapping[rank] for rank in ranks if rank not in unused_rank])
         tp_union_list.append(hybrid_tp_degree)
         dg_union_list.append(hybrid_device_group)
+        
+    recompute_config = generate_recompute_config(
+        dp_cp,
+        num_layers,
+        hetero_layers,
+        recompute_granularity=recompute_granularity,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
+        recompute_layer_idxs_list=recompute_layer_idxs_list
+    )
 
     ds_parallel_config = {
         'zero': zero,
         'devices': list(range(num_gpus)),
+        'recompute_granularity': recompute_config.recompute_granularity,
+        'recompute_layer_idxs_list': recompute_config.recompute_layer_idxs_list,
         'input': {
             'split': {'0': dp_cp_union},
             'dup': tp_union_list[0],
@@ -77,7 +107,9 @@ def generate_llama_hetero_4d_config(cp_list, rank_to_device_mapping, unused_rank
         blocks_json = ds_parallel_config['llama']['blocks']
         blocks_json[f'blocks{block_id}'] = {
             'range': [block_id,],
-            'recompute': [(True if block_id in recompute_layers[i] else False) for i in range(dp_cp)],
+            'recompute': recompute_config.blocks_recompute[block_id],
+            'output_recompute': recompute_config.blocks_output_recompute[block_id],
+            'cpu_offload': [False for _ in range(dp_cp)],
             'rmsnorm1': {
                 'split': {'0': tp_union_list[block_id]},
                 'dup': dp_cp_union,
@@ -116,85 +148,69 @@ def generate_llama_hetero_4d_config(cp_list, rank_to_device_mapping, unused_rank
                     'dup': dp_cp_union,
                     'device_group_union': dg_union_list[block_id],
                     'type': 'variable'
+                },
+                'activation_func': {
                 }
             }
         }
     return ds_parallel_config
     
+@hydra.main(config_path=None, config_name="config", version_base=None)
+def main(config):
+    config = config.ds_parallel
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--num_layers', type=int, default=32, help='size of llama, 7b is 32 and 13b is 40.'
-    )
-    parser.add_argument(
-        '--num_gpus', type=int, default=8, help='num of gpus.'
-    )
-    parser.add_argument(
-        '--dp', type=int, default=2, help='dp.'
-    )
-    parser.add_argument(
-        '--cp_list', type=str, default="", help='cp list.'
-    )
-    parser.add_argument(
-        '--tp', type=int, default=2, help='tp.'
-    )
-    parser.add_argument(
-        '--hetero_layers', type=str, help='heterogenous layers list.'
-    )
-    parser.add_argument(
-        '--rank_to_device_mapping', type=str, default="", help='device to rank mapping.'
-    )
-    parser.add_argument(
-        '--unused_rank', type=str, default="[]", help='unused rank list.'
-    )
-    parser.add_argument(
-        '--zero', action='store_true', help='use zero or not.'
-    )
-    parser.add_argument(
-        '--recompute_layers', type=str, default="", help='layers to recompute.'
-    )
-    parser.add_argument(
-        '--file_name', type=str, default="", help="file path to save."
-    )
-    args = parser.parse_args()
-    
-    if args.cp_list == "":
-        cp_list = [1 for _ in range(args.dp)]
+    if config.cp_list is None:
+        cp_list = [1 for _ in range(config.dp)]
     else:
-        cp_list = ast.literal_eval(args.cp_list)
-        assert len(cp_list) == args.dp, "len of cp list should be equal to dp"
+        cp_list = config.cp_list
+        assert len(cp_list) == config.dp, "len of cp list should be equal to dp"
     
-    num_layers = args.num_layers
-    hetero_layers = ast.literal_eval(args.hetero_layers)
+    num_layers = config.num_layers
+    hetero_layers = config.hetero_layers
     assert len(hetero_layers) == sum(cp_list), "number  of pipelines should be equal to dcp"
     accumulate_hetero_stages = [0,]
     for pipeline in hetero_layers:
         assert sum(pipeline) == num_layers, "sum of heterogenous layers of a single pipeline should be equal to the num of total layers"
         accumulate_hetero_stages.append(accumulate_hetero_stages[-1] + len(pipeline))
      
-    if args.rank_to_device_mapping == "":
+    if config.rank_to_device_mapping is None:
         rank_to_device_mapping = {}       
-        for idx in range(args.num_gpus):
+        for idx in range(config.num_gpus):
             rank_to_device_mapping[idx] = idx
     else:
-        rank_to_device_mapping = ast.literal_eval(args.rank_to_device_mapping)
-     
-    if args.recompute_layers == "":   
-        recompute_layers = [[] for _ in range(sum(cp_list))]
-    else:
-        recompute_layers = ast.literal_eval(args.recompute_layers)
-        assert len(recompute_layers) == sum(cp_list), "recompute layers state should align to dcp num"  
+        rank_to_device_mapping = config.rank_to_device_mapping
         
-    ds_parallel_config = generate_llama_hetero_4d_config(cp_list, rank_to_device_mapping, ast.literal_eval(args.unused_rank), hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers, args.num_gpus, args.dp, args.tp, args.zero)
-    
-    save_folder = './ds_parallel_config/llama_hetero'
-    if args.file_name == "":
-        file_name = f'dcp{sum(cp_list)}_tp{args.tp}_pp{[len(pipeline) for pipeline in hetero_layers]}.json'
+    if config.unused_rank is None:
+        unused_rank = []
     else:
-        file_name = args.file_name
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+        unused_rank = config.unused_rank
+    
+    base_cfg = OmegaConf.structured(RecomputeStrategy)
+    merged_cfg = OmegaConf.merge(base_cfg, config.recompute)
+    recompute_strategy: RecomputeStrategy = OmegaConf.to_object(merged_cfg)
+     
+    ds_parallel_config = generate_llama_hetero_4d_config(
+        cp_list, 
+        rank_to_device_mapping, 
+        unused_rank, 
+        hetero_layers, 
+        accumulate_hetero_stages, 
+        num_layers, 
+        config.num_gpus, 
+        config.dp, 
+        config.tp, 
+        config.zero,
+        recompute_strategy.recompute_granularity,
+        recompute_strategy.recompute_method, 
+        recompute_strategy.recompute_num_layers, 
+        recompute_strategy.recompute_layer_idxs_list
+    )
+    
+    save_folder = config.ds_parallel_config_path
+    file_name = config.ds_parallel_config_name
+    os.makedirs(save_folder, exist_ok=True)
     with open(f'{save_folder}/{file_name}', 'w') as f:
         json.dump(ds_parallel_config, f, indent=4)
 
+if __name__ == '__main__':
+    main()

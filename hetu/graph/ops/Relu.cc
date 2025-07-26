@@ -14,7 +14,7 @@ void ReluOpImpl::DoCompute(Operator& op,
 NDArrayList ReluOpImpl::DoCompute(Operator& op,
                                   const NDArrayList& inputs,
                                   RuntimeContext& ctx) const {
-  NDArrayList outputs = inputs;
+  NDArrayList outputs = inplace() && !ctx.has_runtime_allocation(op->output(0)->id()) ? inputs : DoAllocOutputs(op, inputs, ctx);
   DoCompute(op, inputs, outputs, ctx);
   return outputs;
 }

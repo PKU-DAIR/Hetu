@@ -1,4 +1,12 @@
 #include "hetu/graph/executable_graph.h"
+#include "hetu/common/logging.h"
+#include "hetu/core/device.h"
+#include "hetu/core/dtype.h"
+#include "hetu/core/memory_pool.h"
+#include "hetu/core/ndarray.h"
+#include "hetu/core/stream.h"
+#include "hetu/graph/common.h"
+#include "hetu/graph/operator.h"
 #include "hetu/graph/switch_exec_graph.h"
 #include "hetu/graph/ops/op_headers.h"
 #include "hetu/graph/autocast/autocast.h"
@@ -10,6 +18,9 @@
 #include "hetu/impl/utils/cuda_utils.h"
 #include "hetu/core/symbol.h"
 #include "hetu/core/ndarray_storage.h"
+#include <any>
+#include <cstdint>
+#include <memory>
 #include <nccl.h>
 #include <ctime>
 #include <iostream>
@@ -202,8 +213,9 @@ bool ExecutableGraph::Instantiate(const TensorList& fetches,
           auto cur_subgraph = GetSubGraph(grad->producer());
           if (cur_subgraph != nullptr) {
             AddOpToSubGraph(grad_scale->producer(), cur_subgraph->global_name(), SubGraphOpType::BACKWARD);
+            HT_LOG_WARN << "find the subgraph of ultimate grad op " << grad->producer() << " " << grad; 
           } else {
-            HT_LOG_WARN << "cannot find the subgraph of ultimate grad op " << grad->producer()
+            HT_LOG_WARN << "cannot find the subgraph of ultimate grad op " << grad->producer() << " " << grad
               << ", though it is ok if we do not use memory plan"; 
           }
           RecordExecTensor(grad_scale);
@@ -365,7 +377,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
       auto& comm_op = op;
       // 获取其所在的subgraph使得后续替换的op都出现在同样的subgraph中
       // 有如下几种可能
-      // 1、在optimize-compute bridge或compute-oprimize bridge的subgraph中
+      // 1、在optimize-compute bridge或compute-optimize bridge的subgraph中
       // 例如zero与grad相关的(split)-all-gather/-all-reduce/-reduce-scatter或batched-send-recv
       // 2、在pipeline layer的subgraph中
       // 例如pp相关的(batched)-send-recv
@@ -594,10 +606,29 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         int32_t local_device_idx = info.dst_group.get_index(local_device);
         DeviceGroup comm_group = info.local_dst_ds.get_devices_by_dim(-1, local_device_idx, info.dst_group);
         int32_t gather_dim = info.src_ds.get_split_dim(info.dst_ds);
-        Tensor all_gather_output = MakeAllGatherOp(
-          result, comm_group, gather_dim,
-          OpMeta().set_is_deduce_states(false)
-                  .set_name(result->name() + "_AllGather"));
+        // workaround for multi allgather.
+        // TODO: fix this
+        bool already_allgather = false;
+        Tensor all_gather_output;
+        for (int i = 0; i < result->num_consumers(); ++i) {
+          if (is_all_gather_op(result->consumer(i))) {
+            already_allgather = true;
+            all_gather_output = result->consumer(i)->output(0);
+            break;
+          }
+        }
+
+        if (!already_allgather) {
+          all_gather_output = MakeAllGatherOp(result, comm_group, gather_dim,
+                                              OpMeta().set_is_deduce_states(false)
+                                              .set_name(result->name() + "_AllGather"));
+          RecordExecTensor(all_gather_output);
+          auto& all_gather_op = all_gather_output->producer();
+          all_gather_op->set_fw_op_id(result->producer()->fw_op_id());
+          all_gather_op->MapToParallelDevices(info.src_group_union);
+          all_gather_op->Instantiate(local_device, suggested_comm_stream_idx);
+        }
+        
         RecordExecTensor(all_gather_output);
         auto& all_gather_op = all_gather_output->producer();
         all_gather_op->set_fw_op_id(result->producer()->fw_op_id());
@@ -741,6 +772,8 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         }
       }
       // old_comm_to_new[comm_op->id()] = result->producer()->id();
+      // bool is_comm_recompute = comm_op->op_meta().is_recompute();
+      // result->producer()->op_meta().set_is_recompute(is_comm_recompute);
       pop_subgraph_ctx();
       pop_subgraph_op_type_ctx();
       DeleteExecOp(comm_op);
@@ -888,7 +921,9 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
 
   auto local_device = hetu::impl::comm::GetLocalDevice();
 
-  HT_LOG_DEBUG << local_device << ": computeFunc topo is" << topo;
+  // HT_LOG_DEBUG << local_device << ": computeFunc topo is" << topo;
+  int64_t total_count = 0;
+  int64_t max_share_memory = 0;
   for (auto& op_ref : topo) {
     auto& op = op_ref.get();
 
@@ -917,6 +952,48 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
       // HT_LOG_INFO << local_device << ": skip execute shared weight p2p: " << op;
       continue;
     }
+
+    bool enable_async_param = std::any_cast<bool>(runtime_ctx.get_param("get_cpu_states"));
+    enable_async_param = enable_async_param && 
+                         micro_batch_id == 0 &&
+                         is_optimizer_update_op(op);
+
+    if (enable_async_param && is_adam_op(op)) {
+      TIK(cpu_offload);
+      int alignment = 16;
+      NDArray& gpu_param = _preserved_data[op->input(0)->id()];
+      NDArray& gpu_mean = _preserved_data[op->input(2)->id()];
+      NDArray& gpu_variance = _preserved_data[op->input(3)->id()];
+      NDArray& gpu_step = _preserved_data[op->input(4)->id()];
+      max_share_memory += DIVUP(gpu_param->numel() * DataType2Size(gpu_param->dtype()), 
+                                alignment) * alignment;
+      max_share_memory += DIVUP(gpu_mean->numel() * DataType2Size(gpu_mean->dtype()),
+                                alignment) * alignment;
+      max_share_memory += DIVUP(gpu_variance->numel() * DataType2Size(gpu_variance->dtype()),
+                                alignment) * alignment;
+      max_share_memory += DIVUP(gpu_step->numel() * DataType2Size(gpu_step->dtype()),
+                                alignment) * alignment;
+      if (ShareMomoryReadyOfMemoryPool(kCPU)) {
+        NDArray cpu_param = GetCPUParam(gpu_param, op->input(0));
+        NDArray cpu_mean = GetCPUParam(gpu_mean, op->input(2));
+        NDArray cpu_variance = GetCPUParam(gpu_variance, op->input(3));
+        NDArray cpu_step = GetCPUParam(gpu_step, op->input(4));
+
+        NDArray::to(gpu_param, kCPU, 
+                    gpu_param->dtype(), kOffloadStream, cpu_param);
+        NDArray::to(gpu_mean, kCPU, 
+                    gpu_mean->dtype(), kOffloadStream, cpu_mean);
+        NDArray::to(gpu_variance, kCPU, 
+                    gpu_variance->dtype(), kOffloadStream, cpu_variance);
+        NDArray::to(gpu_step, kCPU, 
+                    gpu_step->dtype(), kComputingStream, cpu_step);
+        HT_LOG_DEBUG << op << "ready for offloading, cpu_step" << gpu_step << " " << cpu_step;
+        TOK(cpu_offload);
+        total_count += COST_MSEC(cpu_offload);
+        // HT_LOG_WARN<< "offload time = " << COST_MSEC(cpu_offload) << " ms."; 
+      }
+    }
+
     // accumulated_ops now all execute in PostRun()
     // including shared weight grad p2p ops
     if (accumulated_ops.find(op->id()) != accumulated_ops.end()) {
@@ -950,6 +1027,9 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
       _p2p_events.emplace_back(std::move(event));
       // HT_LOG_INFO << local_device << ": nccl group end";
     }
+
+    // 2025.2.6 Update: parallel attn op内部会自动根据当前graph的CUR_MICRO_BATCH_ID去选择ctx
+    /*
     // parallel attn op算子手动实现且比较复杂
     // 目前单独维护attn ctx
     // 这里需要从外部传入micro batch id来确定 fwd存/bwd取 哪个attn ctx
@@ -960,6 +1040,7 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
         dynamic_cast<ParallelAttentionGradientOpImpl&>(op->body()).set_attn_ctx_num(micro_batch_id);
       }
     }
+    */
 
     // variable can be directly fetched, needn't save in tensor2data
     // AMP data transfer can be directly fetched, needn't save in tensor2data
@@ -994,9 +1075,17 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
         auto& data = it->second;
         if (data->device() != input->placement() ||
             data->dtype() != input->dtype()) {
-          RECORD_OP(input->name() + "_transfer", input->id());
-          tensor2data[input->id()] = NDArray::to(data, input->placement(), input->dtype(),
-                                                 op->instantiation_ctx().stream_index);
+          if (data->device().is_cpu() && input->placement().is_cuda()) {
+            tensor2data[input->id()] = NDArray::to(data, input->placement(), input->dtype(),
+                                                   kH2DStream);
+            auto event = std::make_unique<hetu::impl::CUDAEvent>(input->placement());
+            event->Record(Stream(input->placement(), kH2DStream));
+            event->Block(op->instantiation_ctx().stream());
+          } else {
+            // TODO: use another stream for async data transfer
+            tensor2data[input->id()] = NDArray::to(data, input->placement(), input->dtype(),
+                                                   op->instantiation_ctx().stream_index);
+          }
         }
         input_val = tensor2data[input->id()];
         // should free memory until op async compute complete!!!
@@ -1020,34 +1109,13 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
     }
 
     // **** 调用op计算 ****
-    RECORD_OP(op->name(), op->id());
-    std::cout << "compute " << op << std::endl;
-    // for(auto &input : op->inputs()){
-      // std::cout << " input tensor2degrees " << input->id() << " = " << tensor2degrees[input->id()] << std::endl;
-      // std::cout << "input " << input <<  std::endl;
-      // std::cout << "      " << NDArray::mean(input) << std::endl;
-    // }
-
-    for(int i = 0; i < op->num_inputs(); i++) {
-      if(op->is_need_for_computation(i)) {
-        std::cout << "input " << i << " " << input_vals[i]->shape() << std::endl;
-      }
+    NDArrayList output_vals;
+    try {
+      output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
+    } catch (const std::exception& e) {
+      HT_RUNTIME_ERROR << "During computing exec op " << op << " of micro batch " << micro_batch_id
+        << " with inputs " << op->inputs() << ", an error occurs: " << e.what();
     }
-    NDArrayList output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
-    op->Sync(micro_batch_id);
-
-    for(int i = 0; i < op->num_outputs(); i++) {
-      std::cout << "output " << i << " " << output_vals[i]->shape() << std::endl;
-    }
-
-    
-    // for(auto &output : output_vals){
-    //   std::cout << "output " << output << std::endl;
-    //   std::cout << "       " << NDArray::mean(output) << std::endl;
-    // }
-    // for(auto&output : op->outputs()){
-      // std::cout << "output tensor2degrees " << output->id() << " = " << tensor2degrees[output->id()] << std::endl;
-    // }
     // checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
 
     if (is_shared_weight_or_grad_p2p(op)) {
@@ -1059,19 +1127,27 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
     // but we still mark here in case we forget to do so in some kernels. 
     NDArray::MarkUsedBy(input_vals, op->instantiation_ctx().stream());
     NDArray::MarkUsedBy(output_vals, op->instantiation_ctx().stream());
+    bool use_fp32_grad_accumulation = std::any_cast<bool>(runtime_ctx.get_param("fp32_grad_accumulation"));
     // HT_LOG_INFO << local_device << ": op execute " << op;
     for (size_t i = 0; i < op->num_outputs(); i++) {
       const auto& output = op->output(i);
       if (accumulated_tensor.find(output->id()) != accumulated_tensor.end()) {
         if (grad_accumulation.find(output->id()) == grad_accumulation.end()) {
-          grad_accumulation[output->id()] = NDArray::zeros_like(output_vals[i]);
+          // Using FP32 for Grad Accumulation
+          grad_accumulation[output->id()] = NDArray::zeros(output_vals[i]->shape(),
+                                                           output_vals[i]->device(),
+                                                           output_vals[i]->dtype());
         } 
-        NDArray::add(grad_accumulation[output->id()], output_vals[i], op->instantiation_ctx().stream_index, grad_accumulation[output->id()]);         
+        NDArray::add(grad_accumulation[output->id()], output_vals[i], 
+                     op->instantiation_ctx().stream_index, 
+                     grad_accumulation[output->id()]);  
         if (grad_accumulation_finished) {
           tensor2data[output->id()] = grad_accumulation[output->id()];
         }
       } else if (fetch_indices.find(output->id()) != fetch_indices.end()) {
-        tensor2data[output->id()] = NDArray::zeros_like(output_vals[i]);
+        tensor2data[output->id()] = NDArray::zeros(output_vals[i]->shape(),
+                                                   output_vals[i]->device(),
+                                                   output_vals[i]->dtype());
         NDArray::add(tensor2data[output->id()], output_vals[i], op->instantiation_ctx().stream_index, tensor2data[output->id()]);    
       } else if (tensor2degrees[output->id()] > 0) {
         tensor2data[output->id()] = output_vals[i];
@@ -1099,6 +1175,14 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
         // HT_LOG_INFO << "execute grad reduce for " << op << " end...";
       }
     }
+  }
+  if (micro_batch_id == 0)
+    HT_LOG_DEBUG << "micro batch id = " << micro_batch_id 
+                <<", offload time = " << total_count << " ms.";
+  if (max_share_memory > 0) {
+      HT_LOG_WARN << "max_share_memory should be allocated:" << max_share_memory << "bytes.";
+      AllocShareMemoryFromMemoryPool(kCPU, max_share_memory,
+                                     Stream(kCPU, kBlockingStream));
   }
 }
 
@@ -1259,7 +1343,8 @@ void ExecutableGraph::GetExecEnvs() {
 NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches, 
                                         const FeedDict& feed_dict, 
                                         const IntSymbolDict& int_symbol_dict,
-                                        const int num_micro_batches) {
+                                        const int num_micro_batches,
+                                        const RuntimeContext& global_ctx) {
   auto local_device = hetu::impl::comm::GetLocalDevice();
   // calculate params
   bool is_calculate_params = false;
@@ -1292,6 +1377,7 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
 
   for (int i = 0; i < num_micro_batches; i++) {
     runtime_ctx_list[i] = RuntimeContext(_execute_plan.local_topo.size(), _shape_plan_pool.at(_active_shape_plan_list[i]));
+    runtime_ctx_list[i].copy_param_dict(global_ctx);
   } 
 
   // placeholder ops: get feed in dict & split into m micro batches
@@ -1423,15 +1509,12 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
     auto& tensor2data = tensor2data_list[micro_batch_id];
     auto& tensor2degrees = tensor2degrees_list[micro_batch_id];
     auto& runtime_ctx = runtime_ctx_list[micro_batch_id];
+    // set micro batch ctx
+    // int_symbol_dict now consists of seqlens needed in parallel attn op
+    SetMicroBatchCtx(micro_batch_id, int_symbol_dict);
     // set arithmetic shape
     SetMicroBatchCtx(micro_batch_id, int_symbol_dict);
     SetShapePlan(_active_shape_plan_list[micro_batch_id]);
-    for (auto& tensor: _leaf_symbolic_tensor_list) {
-      if(HasTensorShape(tensor)){
-        tensor->set_symbolic_shape(GetTensorShape(tensor));
-      }
-    }
-    UpdateExecShapePlan(runtime_ctx);
     // set symbolic shape
     // extra shape deduction in UpdateExecShapePlan() may need it
     for (auto& tensor: _leaf_symbolic_tensor_list) {
@@ -1645,9 +1728,11 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
             result.reserve(num_micro_batches);
             for (auto& tensor2data : tensor2data_list) {
               auto it = tensor2data.find(output->id());
-              HT_ASSERT (it != tensor2data.end()) << "Something wrong! Can't find the data to fetch.";
+              HT_ASSERT (it != tensor2data.end()) 
+                << "Something wrong! Can't find the data to fetch.";
               result.push_back(tensor2data[output->id()]);
             }
+            // HT_LOG_INFO << "concat results of " << output << " fot all micro-batches: " << result;
             results[it->second] = NDArray::cat(result);
           }
         }
@@ -1664,7 +1749,7 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
   
   // HT_LOG_DEBUG << local_device << ": sync ops = " << sync_ops;
   for (size_t i = 0; i < results.size(); i++)
-    HT_LOG_TRACE << "results[" << i << "]: " << results[i];
+    HT_LOG_TRACE << "fetch " << fetches.at(i) << " (" << i << "-th result): " << results[i];
   HT_LOG_DEBUG << local_device << ": 5. get results[end]";
 
   // ********************** Run Level Check Point **********************
@@ -1701,8 +1786,10 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
 }
 
 NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches, 
-                                 const FeedDict& feed_dict, const IntSymbolDict& int_symbol_dict, const int num_micro_batches,
-                                 RunLevel run_level, const double grad_scale) {
+                                 const FeedDict& feed_dict, const IntSymbolDict& int_symbol_dict, 
+                                 const int num_micro_batches,
+                                 RunLevel run_level, const double grad_scale,
+                                 const RuntimeContext& ctx) {
   
   GetExecEnvs();
   TIK(prepare_run);
@@ -1735,6 +1822,29 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate begin...";
       Instantiate(fetches, local_device);
       HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate end...";
+
+      // init instantiated topo
+      OpRefList topo_before_recompute = Graph::TopoSort(fetches, num_ops(), is_op_computed);
+      HT_LOG_DEBUG << local_device << ": global topo before recompute pass: " << topo_before_recompute;
+
+      // add recompute pass
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] recompute pass begin...";
+      Graph::push_graph_ctx(id());
+      Recompute::InsertRecomputedOps(topo_before_recompute);
+      Graph::pop_graph_ctx();
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] recompute pass end...";
+
+      // init topo with recomputed ops
+      OpRefList topo_before_activation_offload = Graph::TopoSort(fetches, num_ops(), is_op_computed);
+      HT_LOG_DEBUG << local_device << ": global topo before activation offload pass: " << topo_before_activation_offload;
+
+      // insert activation offload ops
+      // TODO: need code review, offload may have bugs
+      HT_LOG_DEBUG << local_device << ": [Execution Plan] activation offload pass begin...";
+      Graph::push_graph_ctx(id());
+      ActivationCPUOffload::OffloadToCPU(topo_before_activation_offload);
+      Graph::pop_graph_ctx();
+      HT_LOG_INFO << local_device << ": [Execution Plan] activation offload pass end...";
 
       // init topo contains comm_op
       OpRefList topo_before_substitute_comm = Graph::TopoSort(fetches, num_ops(), is_op_computed);
@@ -1967,7 +2077,9 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       substitute_current_grad_buffer_map[dtype] = std::make_shared<ParamBuffer>("substitute_current_grad_buffer_" + DataType2Str(dtype));
       substitute_accumulate_grad_buffer_map[dtype] = std::make_shared<ParamBuffer>("substitute_accumulate_grad_buffer_" + DataType2Str(dtype));
     }  
-    _terminate_subgraph->topo_sort();
+    if (_terminate_subgraph != nullptr) {
+      _terminate_subgraph->topo_sort();
+    }
     for (auto& op_ref : bw_topo) {
       if (is_group_op(op_ref)) {
         accumulated_ops.insert(op_ref.get()->id());
@@ -2094,18 +2206,20 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       // HT_LOG_INFO << param << " substitute final grad done";
     }
     // 这里直接将substitute后的param buffer替换掉define graph中生成的
-    for (int i = 0; i < static_cast<int>(DataType::NUM_DATA_TYPES); i++) {
-      DataType dtype = static_cast<DataType>(i);
-      if (_shape_mismatch_flag == 0) {
+    if (!bw_topo.empty()){
+      for (int i = 0; i < static_cast<int>(DataType::NUM_DATA_TYPES); i++) {
+        DataType dtype = static_cast<DataType>(i);
+        if (_shape_mismatch_flag == 0) {
         HT_ASSERT(_transfer_param_buffer_map[dtype]->size() == substitute_transfer_param_buffer_map[dtype]->size()
                   && _current_grad_buffer_map[dtype]->size() == substitute_current_grad_buffer_map[dtype]->size()
-                  && _accumulate_grad_buffer_map[dtype]->size() == substitute_accumulate_grad_buffer_map[dtype]->size())
-          << "buffer size should be equal";
-      }
-      _transfer_param_buffer_map[dtype] = substitute_transfer_param_buffer_map[dtype];
-      _current_grad_buffer_map[dtype] = substitute_current_grad_buffer_map[dtype];
-      _accumulate_grad_buffer_map[dtype] = substitute_accumulate_grad_buffer_map[dtype];
-    }  
+                    && _accumulate_grad_buffer_map[dtype]->size() == substitute_accumulate_grad_buffer_map[dtype]->size())
+            << "buffer size should be equal";
+        }
+        _transfer_param_buffer_map[dtype] = substitute_transfer_param_buffer_map[dtype];
+        _current_grad_buffer_map[dtype] = substitute_current_grad_buffer_map[dtype];
+        _accumulate_grad_buffer_map[dtype] = substitute_accumulate_grad_buffer_map[dtype];
+      }  
+    }
     // dtype_transfer_tensor还有别的（非param的）需要再插入一轮
     // (group1) variable op -> send -> (group2) recv -> other ops
     for (auto& op_ref : local_fw_topo) {
@@ -2172,8 +2286,7 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
 
   TIK(crucial_run);
   // ****核心的exec graph执行部分****
-  auto results = CrucialRun(fetches, feed_dict, int_symbol_dict, num_micro_batches);
-  TOK(crucial_run);
+  auto results = CrucialRun(fetches, feed_dict, int_symbol_dict, num_micro_batches, ctx);
   auto profiler_optional = hetu::impl::Profile::get_cur_profile();
 
   if(profiler_optional && (*profiler_optional)->profile_memory()){
@@ -2259,6 +2372,12 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
     double other_compute_time = 0;
     double pp_p2p_time = 0;
     double tp_collective_time = 0;
+    double allgather_time = 0;
+    double allreduce_time = 0;
+    double reducescatter_time = 0;
+    double allgather_comm = 0;
+    double allreduce_comm = 0;
+    double reducescatter_comm = 0;
     double dp_param_gather_time = 0;
     double dp_grad_reduce_time = 0;
     double blocking_time = 0;
@@ -2298,6 +2417,18 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
           }
         } else if (op->stream_index() == kCollectiveStream) {
           tp_collective_time += op_time.second * 1.0 / 1e6;
+          if (op->type() == "AllGatherOp") {
+            allgather_time += op_time.second * 1.0 / 1e6;
+            allgather_comm += op->output(0)->numel();
+          }
+          else if (op->type() == "AllReduceOp" || op->type() == "SplitAllReduceOp") {
+            allreduce_time += op_time.second * 1.0 / 1e6;
+            allreduce_comm += op->output(0)->numel();
+          }
+          else if (op->type() == "ReduceScatterOp" || op->type() == "SplitReduceScatterOp") {
+            reducescatter_time += op_time.second * 1.0 / 1e6;
+            reducescatter_comm += op->input(0)->numel();
+          }
         } else if (op->stream_index() == kBridgeStream) {
           auto subgraph = op->graph().GetSubGraph(op);
           HT_ASSERT(subgraph != nullptr)
@@ -2327,6 +2458,12 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
                   << "optimizer time: " << optimizer_time << " ms, "
                   << "other compute time: " << other_compute_time << " ms, "
                   << "tp collective time: " << tp_collective_time << " ms, "
+                  << "allgather time: " << allgather_time << " ms, "
+                  << "allreduce time: " << allreduce_time << " ms, "
+                  << "reducescatter time: " << reducescatter_time << " ms, "
+                  << "allgather comm: " << allgather_comm / 1e9 << " GB, "
+                  << "allreduce comm: " << allreduce_comm / 1e9 << " GB, "
+                  << "reducescatter comm: " << reducescatter_comm / 1e9 << " GB, "
                   << "pp p2p time (include bubble): " << pp_p2p_time << " ms, "
                   << "dp param gather time: " << dp_param_gather_time << " ms, "
                   << "dp grad reduce time: " << dp_grad_reduce_time << " ms, "
@@ -2344,6 +2481,12 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
                   << "optimizer time: " << optimizer_time << " ms, "
                   << "other compute time: " << other_compute_time << " ms, "
                   << "tp collective time: " << tp_collective_time << " ms, "
+                  << "allgather time: " << allgather_time << " ms, "
+                  << "allreduce time: " << allreduce_time << " ms, "
+                  << "reducescatter time: " << reducescatter_time << " ms, "
+                  << "allgather comm: " << allgather_comm / 1e9 << " GB, "
+                  << "allreduce comm: " << allreduce_comm / 1e9 << " GB, "
+                  << "reducescatter comm: " << reducescatter_comm / 1e9 << " GB, "
                   << "pp p2p time (include bubble): " << pp_p2p_time << " ms, "
                   << "dp param gather time: " << dp_param_gather_time << " ms, "
                   << "dp grad reduce time: " << dp_grad_reduce_time << " ms, "

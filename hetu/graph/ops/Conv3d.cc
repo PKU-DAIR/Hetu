@@ -129,7 +129,7 @@ HTShapeList Conv3dOpImpl::DoInferShape(Operator&op,
 }
 
 void Conv3dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_filter = inputs.at(1)->get_distributed_states();
   int32_t device_num = ds_input.get_device_num();
@@ -149,7 +149,7 @@ void Conv3dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void Conv3dOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));             
 }
 
@@ -171,7 +171,7 @@ Conv3dGradientofFilterOpImpl::DoInferShape(Operator&op,
 }
 
 void Conv3dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                  const OpMeta& op_meta) const {
+                                                  const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
   const DistributedStates& ds_filter = inputs.at(2)->get_distributed_states();
@@ -190,7 +190,7 @@ void Conv3dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
 
 void Conv3dGradientofFilterOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(-2);
 }
 
@@ -212,7 +212,7 @@ Conv3dGradientofDataOpImpl::DoInferShape(Operator&op,
 }
 
 void Conv3dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                const OpMeta& op_meta) const {
+                                                const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_filter = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
   const DistributedStates& ds_input = inputs.at(2)->get_distributed_states();
@@ -230,7 +230,7 @@ void Conv3dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 }
 
 void Conv3dGradientofDataOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 

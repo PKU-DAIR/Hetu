@@ -20,6 +20,12 @@ inline bool parse_bool_slow_but_safe(const std::string& str, bool& r) {
   }
 }
 
+inline bool parse_int32_slow_but_safe(const std::string& str, int32_t& r) {
+  std::istringstream iss(str);
+  iss >> std::noskipws >> r;
+  return iss.eof();
+}
+
 inline bool parse_int64_slow_but_safe(const std::string& str, int64_t& r) {
   std::istringstream iss(str);
   iss >> std::noskipws >> r;
@@ -30,6 +36,22 @@ inline bool parse_float64_slow_but_safe(const std::string& str, double& r) {
   std::istringstream iss(str);
   iss >> std::noskipws >> r;
   return iss.eof();
+}
+
+inline std::string parse_int32_list_slow_but_safe(const std::string& str,
+                                                  std::vector<int32_t>& r) {
+  if (str.length() < 2 || str.front() != '[' || str.back() != ']')
+    return "String \'" + str + "\' is not surrounded by square brackets";
+  std::istringstream iss(str.substr(1, str.length() - 2));
+  std::string token;
+  int32_t parsed;
+  while (std::getline(iss, token, ',')) {
+    bool ok = parse_int32_slow_but_safe(token, parsed);
+    if (!ok)
+      return "Substring \'" + token + "\' cannot be parsed as an int64";
+    r.push_back(parsed);
+  }
+  return "";
 }
 
 inline std::string parse_int64_list_slow_but_safe(const std::string& str,

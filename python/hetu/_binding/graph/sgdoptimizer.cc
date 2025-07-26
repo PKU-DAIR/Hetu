@@ -38,7 +38,11 @@ inline PyObject* PySGDOptimizer_pynew(PyTypeObject* type, PyObject* args,
   auto* self = reinterpret_cast<PySGDOptimizer*>(unsafe_self);
 
   static PyArgParser parser({
-    "SGDOptimizer(float init_lr, float max_lr, float min_lr, int lr_warmup_steps, int lr_decay_steps, string lr_decay_style,"
+    "SGDOptimizer(float lr, float momentum=0.0, bool nesterov=false)", 
+
+    "SGDOptimizer(TensorList vars, float lr, float momentum=0.0, bool nesterov=false)", 
+
+    "SGDOptimizer(float init_lr, float max_lr, float min_lr, int lr_warmup_steps, int lr_decay_steps, string lr_decay_style, "
                   "float momentum=0.0, bool nesterov=false)", 
 
     "SGDOptimizer(TensorList vars, float init_lr, float max_lr, float min_lr, int lr_warmup_steps, int lr_decay_steps, "
@@ -54,6 +58,28 @@ inline PyObject* PySGDOptimizer_pynew(PyTypeObject* type, PyObject* args,
   if (parsed_args.signature_index() == 0) {
     new(&self->optimizer) SGDOptimizer();
     self->optimizer = SGDOptimizer(parsed_args.get_float64_or_default(0), 
+                                   parsed_args.get_float64_or_default(0), 
+                                   parsed_args.get_float64_or_default(0), 
+                                   0,
+                                   1000,
+                                   "constant",
+                                   parsed_args.get_float64_or_default(1), 
+                                   parsed_args.get_bool_or_default(2));
+  } else if (parsed_args.signature_index() == 1) {
+    new(&self->optimizer) SGDOptimizer();
+    auto params = parsed_args.get_tensor_list_or_empty(0);
+    self->optimizer = SGDOptimizer(params,
+                                   parsed_args.get_float64_or_default(1), 
+                                   parsed_args.get_float64_or_default(1), 
+                                   parsed_args.get_float64_or_default(1), 
+                                   0,
+                                   1000,
+                                   "constant",
+                                   parsed_args.get_float64_or_default(2), 
+                                   parsed_args.get_bool_or_default(3));
+  } else if (parsed_args.signature_index() == 2) {
+    new(&self->optimizer) SGDOptimizer();
+    self->optimizer = SGDOptimizer(parsed_args.get_float64_or_default(0), 
                                    parsed_args.get_float64_or_default(1), 
                                    parsed_args.get_float64_or_default(2), 
                                    parsed_args.get_int64_or_default(3), 
@@ -61,7 +87,7 @@ inline PyObject* PySGDOptimizer_pynew(PyTypeObject* type, PyObject* args,
                                    parsed_args.get_string_or_default(5), 
                                    parsed_args.get_float64_or_default(6), 
                                    parsed_args.get_bool_or_default(7));
-  } else if (parsed_args.signature_index() == 1) {
+  } else if (parsed_args.signature_index() == 3) {
     new(&self->optimizer) SGDOptimizer();
     auto params = parsed_args.get_tensor_list_or_empty(0);
     self->optimizer = SGDOptimizer(params,

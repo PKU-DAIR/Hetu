@@ -25,13 +25,11 @@ DistributedStates conv2d_deduce_states(
   };
   update_res_states(res_states, ds_l, l2res_map);
   update_res_states(res_states, ds_r, r2res_map);
-  std::cout << "res_states: " << res_states << std::endl;
   int32_t total_splits = 1;
   for (auto& state : res_states) {
     total_splits *= state.second;
   }
   res_states[-1] = device_num / total_splits;
-  std::cout << "after res_states: " << res_states << std::endl;
   // deduce order
   std::vector<int32_t> lorder = ds_l.get_order();
   std::vector<int32_t> rorder = ds_r.get_order();
@@ -48,12 +46,8 @@ DistributedStates conv2d_deduce_states(
     HT_ASSERT(it != _order.end()) << "dimension " << val << " is not in order!";
     return it - _order.begin();
   };
-  std::cout << "lorder: " << lorder << std::endl;
-  std::cout << "rorder: " << rorder << std::endl;
   auto new_lorder = get_new_order(l2res_map, lorder);
   auto new_rorder = get_new_order(r2res_map, rorder);
-  std::cout << "new_lorder: " << new_lorder << std::endl;
-  std::cout << "new_rorder: " << new_rorder << std::endl;
   // few cases
   if(new_lorder.size() != new_rorder.size()){
     if(new_lorder.size() + 1 == new_rorder.size()){
@@ -111,10 +105,10 @@ TensorList Conv2dOpImpl::DoGradient(Operator&op,
                                     const TensorList& grad_outputs) const {
   auto g_op_meta = op->grad_op_meta();
   auto grad_input = op->requires_grad(0) ? MakeConv2dGradientofDataOp(
-                                          op->input(1), grad_outputs.at(0), op->input(0), get_padding(),
+                                          op->input(1), grad_outputs.at(0), get_padding(),
                                           get_stride(), g_op_meta.set_name(op->grad_name(0)))
                                         : Tensor();
-  auto grad_filter = op->requires_grad(1) ? MakeConv2dGradientofFilterOp(op->input(0), grad_outputs.at(0), op->input(1),
+  auto grad_filter = op->requires_grad(1) ? MakeConv2dGradientofFilterOp(op->input(0), grad_outputs.at(0),
                                            get_padding(), get_stride(),
                                            g_op_meta.set_name(op->grad_name(1)))
                                          : Tensor();
@@ -137,8 +131,16 @@ HTShapeList Conv2dOpImpl::DoInferShape(Operator&op,
   return {{N, f_O, out_H, out_W}};
 }
 
+void Conv2dOpImpl::DoSaveCtxForBackward(const TensorList& inputs, ContextStore& dst_ctx) const {
+  dst_ctx.put("in_meta_0", inputs.at(0)->meta());
+  dst_ctx.put("in_tensor_0", inputs.at(0));
+  dst_ctx.put("in_meta_1", inputs.at(1)->meta());
+  dst_ctx.put("in_tensor_1", inputs.at(1));
+}
+
 void Conv2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                  const OpMeta& op_meta) const {
+                                  const OpMeta& op_meta,
+                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_filter = inputs.at(1)->get_distributed_states();
   int32_t device_num = ds_input.get_device_num();
@@ -158,7 +160,7 @@ void Conv2dOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 }
 
 void Conv2dOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));             
 }
 
@@ -166,32 +168,31 @@ void Conv2dGradientofFilterOpImpl::DoCompute(Operator& op,
                                              const NDArrayList& inputs,
                                              NDArrayList& outputs,
                                              RuntimeContext& ctx) const {
-  std::cout << "Conv2dGradientofFilterOpImpl::DoCompute" << std::endl;
-  std::cout << "inputs.at(0): " << inputs.at(0)->shape() << std::endl;
-  std::cout << "inputs.at(1): " << inputs.at(1)->shape() << std::endl;
-  std::cout << "outputs.at(0): " << outputs.at(0)->shape() << std::endl;
-  std::cout << "get_padding(): " << get_padding() << std::endl;
-  std::cout << "get_stride(): " << get_stride() << std::endl;
   HT_DISPATCH_KERNEL_CPU_AND_CUDA(
     op->instantiation_ctx().placement.type(), type(), hetu::impl::Conv2dGradientofFilter,
     inputs.at(0), inputs.at(1), outputs.at(0), get_padding()[0],
     get_padding()[1], get_stride()[0], get_stride()[1], op->instantiation_ctx().stream());
   op->instantiation_ctx().stream().Sync();
-  std::cout << "Conv2dGradientofFilterOpImpl::DoCompute done" << std::endl;
 }
 
 HTShapeList
 Conv2dGradientofFilterOpImpl::DoInferShape(Operator&op,
                                            const HTShapeList& input_shapes,
                                            RuntimeContext& ctx) const {
-  return {input_shapes.at(2)};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
+}
+
+void Conv2dGradientofFilterOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_1", "in_meta");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor_1", "in_tensor");
 }
 
 void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                  const OpMeta& op_meta) const {
+                                                  const OpMeta& op_meta,
+                                                  const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
-  const DistributedStates& ds_filter = inputs.at(2)->get_distributed_states();
+  const DistributedStates& ds_filter = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_grad_output.is_valid() && ds_filter.is_valid()) 
     << "ConcatGradientOpDef: distributed states for input and grad_output and filter must be valid!";  
   HT_ASSERT(ds_input.get_dim(-2) == 1 && ds_grad_output.get_dim(-2) == 1 && ds_filter.get_dim(-2) == 1) 
@@ -199,11 +200,6 @@ void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
   std::unordered_map<int32_t, int32_t> l2res_map = {{-1, 0}, {0, -2}, {1, 1}};
   std::unordered_map<int32_t, int32_t> r2res_map = {{-1, 1}, {0, -2}, {1, 0}};
-  std::cout << "ds filter: " << ds_filter.ds_info() << std::endl;
-  std::cout << "ds grad output: " << ds_grad_output.ds_info() << std::endl;
-  std::cout << "l2res_map: " << l2res_map << std::endl;
-  std::cout << "r2res_map: " << r2res_map << std::endl;
-  std::cout << "ds input: " << ds_input.ds_info() << std::endl;
   auto ds_filter_grad = conv2d_deduce_states(l2res_map, r2res_map, ds_input, ds_grad_output);
   // HT_ASSERT(ds_filter.check_equal(ds_filter_grad)) 
     // << "Distributed states for filter_grad should be equal to filter!";
@@ -212,7 +208,7 @@ void Conv2dGradientofFilterOpImpl::DoDeduceStates(const TensorList& inputs, Tens
 
 
 void Conv2dGradientofFilterOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(-2);
 }
 
@@ -230,14 +226,20 @@ HTShapeList
 Conv2dGradientofDataOpImpl::DoInferShape(Operator&op,
                                          const HTShapeList& input_shapes,
                                          RuntimeContext& ctx) const {
-  return {input_shapes.at(2)};
+  return {ctx.get_or_create(op->id()).get<Tensor>("in_tensor")->temp_shape()};
+}
+
+void Conv2dGradientofDataOpImpl::DoLoadCtxForBackward(ContextStore& src_ctx, ContextStore& dst_ctx) const {
+  dst_ctx.migrate_from<NDArrayMeta>(src_ctx, "in_meta_0", "in_meta");
+  dst_ctx.migrate_from<Tensor>(src_ctx, "in_tensor_0", "in_tensor");
 }
 
 void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                                const OpMeta& op_meta) const {
+                                                const OpMeta& op_meta,
+                                                const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_filter = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad_output = inputs.at(1)->get_distributed_states();  
-  const DistributedStates& ds_input = inputs.at(2)->get_distributed_states();
+  const DistributedStates& ds_input = inst_ctx.get<Tensor>("in_tensor")->get_distributed_states();
   HT_ASSERT(ds_input.is_valid() && ds_grad_output.is_valid() && ds_filter.is_valid()) 
     << "ConcatGradientOpDef: distributed states for input and grad_output and filter must be valid!";  
   HT_ASSERT(ds_input.get_dim(-2) == 1 && ds_grad_output.get_dim(-2) == 1 && ds_filter.get_dim(-2) == 1) 
@@ -245,11 +247,6 @@ void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 
   std::unordered_map<int32_t, int32_t> l2res_map = {{-1, 0}, {0, -2}, {1, 1}};
   std::unordered_map<int32_t, int32_t> r2res_map = {{-1, 1}, {0, 0}, {1, -2}};
-  std::cout << "ds data: " << std::endl;
-  std::cout << "ds_filter: " << ds_filter.ds_info() << std::endl;
-  std::cout << "ds_grad_output: " << ds_grad_output.ds_info() << std::endl;
-  std::cout << "l2res_map: " << l2res_map << std::endl;
-  std::cout << "r2res_map: " << r2res_map << std::endl;
   auto ds_input_grad = conv2d_deduce_states(l2res_map, r2res_map, ds_filter, ds_grad_output);
   HT_ASSERT(ds_input.check_equal(ds_input_grad))
     << "Distributed states for input_grad should be equal to input!";
@@ -257,7 +254,7 @@ void Conv2dGradientofDataOpImpl::DoDeduceStates(const TensorList& inputs, Tensor
 }
 
 void Conv2dGradientofDataOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 
@@ -279,10 +276,10 @@ TensorList Conv2dAddBiasOpImpl::DoGradient(Operator& op,
                                            const TensorList& grad_outputs) const {
   auto g_op_meta = op->grad_op_meta();
   auto grad_input = op->requires_grad(0) ? MakeConv2dGradientofDataOp(
-                                           op->input(1), grad_outputs.at(0), op->input(0), get_padding(),
+                                           op->input(1), grad_outputs.at(0), get_padding(),
                                            get_stride(), g_op_meta.set_name(op->grad_name(0)))
                                           : Tensor();
-  auto grad_filter = op->requires_grad(1) ? MakeConv2dGradientofFilterOp(op->input(0), grad_outputs.at(0), op->input(1),
+  auto grad_filter = op->requires_grad(1) ? MakeConv2dGradientofFilterOp(op->input(0), grad_outputs.at(0),
                                             get_padding(), get_stride(),
                                             g_op_meta.set_name(op->grad_name(1)))
                                           : Tensor();
@@ -309,7 +306,8 @@ HTShapeList Conv2dAddBiasOpImpl::DoInferShape(Operator& op,
 }
 
 void Conv2dAddBiasOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                         const OpMeta& op_meta) const {
+                                         const OpMeta& op_meta,
+                                         const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_filter = inputs.at(1)->get_distributed_states();
   const DistributedStates& ds_bias = inputs.at(2)->get_distributed_states();  
@@ -326,7 +324,7 @@ void Conv2dAddBiasOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& o
 }
 
 void Conv2dAddBiasOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                        TensorList& outputs, const OpMeta& op_meta) const {
+                                        TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 
@@ -339,21 +337,21 @@ Tensor MakeConv2dOp(Tensor input, Tensor filter, int64_t padding, int64_t stride
           std::move(op_meta))->output(0);
 }
 
-Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output, Tensor filter,
+Tensor MakeConv2dGradientofFilterOp(Tensor input, Tensor grad_output,
                                     const HTShape& padding, const HTStride& stride,
                                     OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<Conv2dGradientofFilterOpImpl>(padding, stride),
-          {std::move(input), std::move(grad_output), std::move(filter)},
+          {std::move(input), std::move(grad_output)},
           std::move(op_meta))->output(0);
 }
 
-Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output, Tensor input,
+Tensor MakeConv2dGradientofDataOp(Tensor filter, Tensor grad_output,
                                   const HTShape& padding, const HTStride& stride,
                                   OpMeta op_meta) {
   return Graph::MakeOp(
           std::make_shared<Conv2dGradientofDataOpImpl>(padding, stride),
-          {std::move(filter), std::move(grad_output), std::move(input)},
+          {std::move(filter), std::move(grad_output)},
           std::move(op_meta))->output(0);
 }
 

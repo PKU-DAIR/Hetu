@@ -1,6 +1,26 @@
-import torch
-import numpy as np
-from typing import List
+# TODO: The following implementation is incomplete
+
+import hetu
+from . import Dataset, IterableDataset
+import functools
+from typing import (
+    Callable,
+    Dict,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
+class DataLoader():
+    # dataset: Dataset
+    batch_size: Optional[int]
+    num_workers: int
+    drop_last: bool
+    __initialized = False
 
 def truncate_fn(batch: List[np.ndarray], pad_id: int, global_token_num: int):
     valid_token_num = sum([np.sum(seq != pad_id) for seq in batch])

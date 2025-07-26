@@ -23,7 +23,9 @@ void GeluCuda(const NDArray& input, NDArray& output, const Stream& stream) {
     return;
   HT_DISPATCH_FLOATING_TYPES(
     input->dtype(), spec_t, "GeluCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t>(input, output, size, stream,
+      using InType = std::tuple<spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input}, {output}, size, stream,
                                          [] __device__ (spec_t x) -> spec_t {
                                            return x * 0.5f *
                                               (1.0f + hetu::cuda::cuda_erf(x * SQRT_1_2));
@@ -45,7 +47,9 @@ void GeluGradientCuda(const NDArray& input, const NDArray& output_grad,
     return;
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "GeluGradientCuda", [&]() {
-      launch_loop_kernel<spec_t, spec_t, spec_t>(input, output_grad, input_grad, size, stream,
+      using InType = std::tuple<spec_t, spec_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, output_grad}, {input_grad}, size, stream,
         [] __device__ (spec_t x, spec_t y) -> spec_t {
           return y * (0.5f + 0.5f * hetu::cuda::cuda_erf(x / hetu::cuda::cuda_sqrt(2.0f)) + 
                  0.5f * x * (hetu::cuda::cuda_sqrt(2.0f) * 

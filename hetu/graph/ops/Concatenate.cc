@@ -99,14 +99,14 @@ HTShapeList ConcatenateOpImpl::DoInferShape(Operator& op,
 }
 
 void ConcatenateOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                       const OpMeta& op_meta) const {
+                                       const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   for (const auto& input : inputs) {
     const DistributedStates& ds_input = input->get_distributed_states();
     HT_ASSERT(ds_input.get_dim(get_axis()) == 1)
       << "Concat was not allowed in splited dimension: " << get_axis();
   }
   // 直接调用默认的states copy函数做检查和赋值
-  OpInterface::DoDeduceStates(inputs, outputs, op_meta);
+  OpInterface::DoDeduceStates(inputs, outputs, op_meta, inst_ctx);
 }
 
 void ConcatenateGradientOpImpl::DoCompute(Operator& op,
@@ -126,7 +126,7 @@ ConcatenateGradientOpImpl::DoInferShape(Operator& op,
 }
 
 void ConcatenateGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                               const OpMeta& op_meta) const {
+                                               const OpMeta& op_meta, const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 

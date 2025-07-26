@@ -72,7 +72,6 @@ class NExTQADataset(Dataset):
         Returns:
             dict: 包含文本数据的字典
         """
-        print("get idx data", idx)
         
         # 读取视频数据
         item = self.df.iloc[idx]

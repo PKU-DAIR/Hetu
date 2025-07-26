@@ -68,19 +68,17 @@ DECLARE_KERNEL_CPU_AND_CUDA(BroadcastShapeMul, const NDArray&, double, NDArray&,
 DECLARE_KERNEL_CPU_AND_CUDA(Ceil, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckFinite, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(CheckNumeric, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(Concat, const NDArray&, const NDArray&, NDArray&,
-                            size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ConcatGradient, const NDArray&, NDArray&, size_t,
-                            size_t, const Stream&);
+DECLARE_KERNEL_CUDA(Concat, const NDArrayList&, NDArray&, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(ConcatGradient, const NDArray&, NDArrayList&, size_t, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Contiguous, const NDArray&, NDArray&, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(ContiguousGradient, const NDArray&, NDArray&, const Stream&);
+DECLARE_KERNEL_CUDA(DynamicConcatenate, const NDArray&, NDArray&, size_t,
+                    size_t, const Stream&);
 DECLARE_KERNEL_CPU(Concatenate, const NDArrayList&, NDArray&, size_t, const Stream&);
 DECLARE_KERNEL_CUDA(Concatenate, const NDArray&, NDArray&, size_t,
                     size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(ConcatenateGradient, const NDArray&, NDArray&,
                             size_t, size_t, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(Contiguous, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CPU_AND_CUDA(ContiguousGradient, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CUDA(DynamicConcatenate, const NDArray&, NDArray&, size_t,
-                    size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Conv2d, const NDArray&, const NDArray&, NDArray&,
                             const int, const int, const int, const int,
                             const Stream&);
@@ -313,8 +311,16 @@ DECLARE_KERNEL_CPU_AND_CUDA(Reshape, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Roll, const NDArray&, const HTShape&, const HTAxes&,
                             NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(RollGradient, const NDArray&, NDArray&, const Stream&);
-DECLARE_KERNEL_CUDA(Rotary, const NDArray&, const NDArray&, const NDArray&, 
-                    const NDArray&, NDArray&, NDArray&, bool, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Rotary, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const int, const int, const int, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryGradient, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const int, const int, const int, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryVarlen, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const NDArray&, const int, const int*, const int*,
+                            const int, const Stream&);  
+DECLARE_KERNEL_CPU_AND_CUDA(RotaryVarlenGradient, const NDArray&, const NDArray&, const NDArray&, 
+                            NDArray&, const NDArray&, const int, const int*, const int*,
+                            const int, const Stream&);  
 DECLARE_KERNEL_CPU_AND_CUDA(Round, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(SGDUpdate, const NDArray&, NDArray&, NDArray&,
                             float, float, bool, const Stream&);
@@ -380,7 +386,7 @@ DECLARE_KERNEL_CPU_AND_CUDA(TruncatedNormalInits, NDArray&, double, double,
 
 // Communication kernels
 DECLARE_KERNEL_CPU_AND_CUDA(AllReduce, const NDArray&, NDArray&, ReductionType,
-                            const DeviceGroup&, const Stream&);
+                            const DeviceGroup&, bool, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(P2PSend, const NDArray&, const Device&, 
                             const std::vector<int>&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(P2PRecv, NDArray&, const Device&, 
@@ -392,7 +398,7 @@ DECLARE_KERNEL_CPU_AND_CUDA(BatchedISendIRecv, const NDArrayList&,
 DECLARE_KERNEL_CPU_AND_CUDA(AllGather, const NDArray&, NDArray&,
                             const DeviceGroup&, int32_t gather_dim, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(ReduceScatter, const NDArray&, NDArray&, ReductionType,
-                            const DeviceGroup&, int32_t scatter_dim, const Stream&);
+                            const DeviceGroup&, int32_t scatter_dim, bool, const Stream&);
 
 //other activations
 DECLARE_KERNEL_CUDA(Elu, const NDArray&, double, double, NDArray&,

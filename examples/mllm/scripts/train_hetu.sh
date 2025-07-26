@@ -3,16 +3,16 @@
 MODEL_SIZE='3b'
 # MODEL_SIZE = '7b'
 GLOBAL_BATCH_SIZE=${5:-4}
-TEXT_MAX_SEQ_LEN=${6:-9216}
-VISION_MAX_SEQ_LEN=${7:-8192}
+TEXT_MAX_SEQ_LEN=${6:-2048}
+VISION_MAX_SEQ_LEN=${7:-1024}
 IMAGE_SIZE=${8:-224}
-SERVER_ADDR=${7:-"${IP_1}"} # master-0
+# SERVER_ADDR=${7:-"${IP_1}"} # master-0
 # SERVER_ADDR=${7:-"${IP_2}"} # worker-0
-# SERVER_ADDR=${7:-"127.0.0.1"} # 216
+SERVER_ADDR=${7:-"127.0.0.1"} # 216
 SERVER_PORT=${8:-"23456"}
-HOST_FILE_PATH=${9:-"${ENV_PATH}/host_master.yaml"}
+HOST_FILE_PATH=${9:-"/home/gehao/njw1123/merge_all/examples/mllm/scripts/host.yaml"}
 # HOST_FILE_PATH=${9:-"${ENV_PATH}/host.yaml"}
-ENV_FILE_PATH=${10:-"${ENV_PATH}/env_A100.sh"}
+ENV_FILE_PATH=${10:-"/home/gehao/njw1123/merge_all/examples/mllm/scripts/env_4090.sh"}
 
 NUM_GPUS=6
 VISION_MULTI_TP_PP_LIST="[[(1, 1), (1, 1)],]"
@@ -26,11 +26,11 @@ LOG_FOLDER=logs/case${CASE}/llama${MODEL_SIZE}_gpus${NUM_GPUS}_gbs${GLOBAL_BATCH
 mkdir -p ${LOG_FOLDER}
 echo logs will save to ${LOG_FOLDER}...
 
-ROOT_FOLDER=/home/pkuhetu/njw1123/hetu_mm/python/hetu/engine/data
+ROOT_FOLDER=/home/gehao/njw1123/merge/examples/pretrain/data
 JSON_FILE=${ROOT_FOLDER}/wikipedia_zea-llama_text_document
 JSON_KEY=content
-VOCAB_FILE=${ROOT_FOLDER}/gpt2-vocab.json
-MERGE_FILE=${ROOT_FOLDER}/gpt2-merges.txt
+VOCAB_FILE=${ROOT_FOLDER}/vocab.json
+MERGE_FILE=${ROOT_FOLDER}/merges.txt
 
 if [ ! -d "ds_parallel_config" ]; then
   mkdir "ds_parallel_config"
@@ -108,8 +108,15 @@ CMD="python3 -u train_mllm.py ${DATA_CONFIG} ${VISION_MODEL_CONFIG} ${LLM_MODEL_
 echo CMD: $CMD
 
 source ${ENV_FILE_PATH}
+# python3 ../../python/hetu/rpc/pssh_start.py \
+# 	--hosts ${HOST_FILE_PATH} \
+# 	--command "$CMD" \
+# 	--server_port ${SERVER_PORT} \
+# 	--ngpus ${NUM_GPUS} \
+# 	--envs ${ENV_FILE_PATH} \
+# 	--log_path ${LOG_FOLDER}
+
 python3 ../../python/hetu/rpc/pssh_start.py \
-	--hosts ${HOST_FILE_PATH} \
 	--command "$CMD" \
 	--server_port ${SERVER_PORT} \
 	--ngpus ${NUM_GPUS} \

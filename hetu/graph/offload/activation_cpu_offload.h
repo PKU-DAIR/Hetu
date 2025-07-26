@@ -10,16 +10,16 @@ namespace graph {
 
 class ActivationCPUOffload {
  public:
-  static bool enabled() {
-    return _enabled;
+  static const std::vector<std::vector<bool>>& multi_cpu_offload() {
+    return _multi_cpu_offload_stack.top();
   }
 
-  static void set_cpu_offload_enabled() {
-    _enabled = true;
+  static void push_cpu_offload_enabled(const std::vector<std::vector<bool>>& multi_cpu_offload) {
+    _multi_cpu_offload_stack.push(multi_cpu_offload);
   }
 
-  static void reset_cpu_offload_enabled() {
-    _enabled = false;
+  static void pop_cpu_offload_enabled() {
+    _multi_cpu_offload_stack.pop();
   }
 
   static void OffloadToCPU(const OpRefList& topo_order);
@@ -30,7 +30,7 @@ class ActivationCPUOffload {
 
   static void OffloadTensorToCPU(const OpRefList& topo_order, const Tensor& tensor);
 
-  static bool _enabled;
+  static std::stack<std::vector<std::vector<bool>>> _multi_cpu_offload_stack;
 };
 
 } // namespace graph

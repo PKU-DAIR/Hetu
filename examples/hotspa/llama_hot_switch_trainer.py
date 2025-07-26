@@ -30,7 +30,7 @@ def pretrain(args):
         use_flash_attn=args.use_flash_attn,
     )
     assert llama_config.use_flash_attn == True, "symbolic shape can only used when flash attn is on for now"
-    simple_check_blocks_range(ds_parallel_configs, llama_config, 'llama')
+    simple_check_blocks_range(ds_parallel_configs, llama_config.num_hidden_layers, 'llama')
 
     # 2. wrapper
     model_wrapper = ModelWrapper(LLaMALMHeadModel, llama_config) 

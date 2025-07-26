@@ -66,6 +66,42 @@ class ProvidedInitializer : public Initializer {
   NDArray _provided_data;
 };
 
+class ProvidedListInitializer : public Initializer {
+ public:
+  ProvidedListInitializer(NDArrayList provided_datas)
+  : Initializer(), _provided_datas(std::move(provided_datas)) {}
+
+  void Init(NDArray& data, uint64_t seed = 0, const HTShape& global_shape = HTShape(),
+            StreamIndex stream_id = NDArray::DEFAULT_STREAM) const override {
+    // NDArray::copy(_provided_data, stream_id, data);
+    int64_t total_splits = _provided_datas.size();
+    for (int i = 0; i < _provided_datas.size(); ++i) {
+      NDArrayMeta split_meta = data->meta();
+      HTShape ori_shape = split_meta.shape;
+      ori_shape[0] = ori_shape[0] / total_splits; 
+      split_meta.set_shape(ori_shape);
+      int64_t offset = (data->numel() / total_splits) * i;
+      NDArray split = NDArray(split_meta, data->storage(), data->storage_offset() + offset);
+      NDArray::copy(_provided_datas[i], stream_id, split);
+    }
+  }
+
+  Initializer* copy() const override {
+    return new ProvidedListInitializer(_provided_datas);
+  }
+
+  const NDArrayList& provided_datas() const noexcept {
+    return _provided_datas;
+  }
+
+  NDArrayList& provided_datas() noexcept {
+    return _provided_datas;
+  }
+
+ protected:
+  NDArrayList _provided_datas;
+};
+
 class ConstantInitializer : public Initializer {
  public:
   ConstantInitializer(double value) : Initializer(), _value(value) {}

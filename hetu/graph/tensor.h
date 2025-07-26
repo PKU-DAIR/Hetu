@@ -5,6 +5,7 @@
 #include "hetu/core/symbol.h"
 #include "hetu/graph/common.h"
 #include "hetu/graph/distributed_states.h"
+#include <optional>
 
 
 namespace hetu {
@@ -187,8 +188,24 @@ class TensorDef : public shared_ptr_target {
     return _meta.stride[axis];
   }
 
+  const HTShape& temp_shape() const {
+    HT_ASSERT(has_temp_shape())
+      << _name << " doesn't have temporal shape";
+    return _temp_shape;
+  }
+
+  int64_t temp_shape(size_t axis) const {
+    HT_ASSERT(has_temp_shape())
+      << _name << " doesn't have temporal shape";
+    return _temp_shape[axis];
+  }
+
   bool has_shape() const {
     return _meta.shape.size() > 0;
+  }
+
+  bool has_temp_shape() const {
+    return _temp_shape.size() > 0;
   }
 
   bool has_global_shape() const {
@@ -241,6 +258,8 @@ class TensorDef : public shared_ptr_target {
   }
 
   NDArray get_or_compute();
+
+  void* get_raw_data_ptr();
 
   bool has_cur_ds_union();
 
@@ -317,7 +336,6 @@ class TensorDef : public shared_ptr_target {
   DistributedStates get_local_distributed_states();
 
   void set_distributed_states(const DistributedStates& distributed_states) {
-    std::cout << "set_distributed_states " << name() << " " << distributed_states.ds_info() << std::endl;
     inferred_cur_ds() = distributed_states;
   }
 
@@ -401,6 +419,11 @@ class TensorDef : public shared_ptr_target {
     // no need to set _global_shape
     // since global_shape() method will automatically calc it
   }
+
+  // only used in InferShape
+  void set_temp_shape(const HTShape& temp_shape) {
+    _temp_shape = temp_shape;
+  }
   
   // copy constructor
   // don't know if it is a leaf
@@ -462,7 +485,9 @@ class TensorDef : public shared_ptr_target {
   // deprecated: DistributedStatesList _distributed_states; // for multi ds deduce
   DistributedStatesHierarchy _ds_hierarchy; // for multi ds multi hetero-dp deduce
   DistributedStatesUnion _dummy_ds_union{}; // for deduce_states=False op outputs
-  HTShape _global_shape;
+  DistributedStates _dummy_ds{}; // for deduce_states=False op outputs
+  HTShape _global_shape{}; // almost deprecated (only used in initialization)
+  HTShape _temp_shape{}; // only used in InferShape
   bool _is_grad{false};
   bool _use_compute_suggested_hetero_id{true};
 

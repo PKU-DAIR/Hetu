@@ -89,7 +89,6 @@ CUDACachingMemoryPool::CUDACachingMemoryPool(DeviceIndex device_id, size_t _max_
   _data_ptr_info.reserve(8192);
   _available_for_single_stream.reserve(HT_NUM_STREAMS_PER_DEVICE); 
   _available_for_all_streams.reset(new DataPtrLookupTable());
-  std::cout << "pre_allocate_size: " << pre_allocate_size << std::endl;
   if (pre_allocate_size > 0) {
     void* ptr;
     TIK(pre_allocate);
@@ -116,8 +115,8 @@ CUDACachingMemoryPool::~CUDACachingMemoryPool() {
 // 先会从available table中找
 // 没有匹配项再AllocPtr
 DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
-                                              const Stream& stream) {        
-  std::cout << "start AllocDataSpace" << std::endl;                 
+                                              const Stream& stream,
+                                              bool shared_memory) {                         
   HT_VALUE_ERROR_IF(!stream.device().is_cuda())
     << "Cuda arrays must be allocated on cuda streams. Got " << stream;
   if (num_bytes == 0)
@@ -378,6 +377,17 @@ DataPtr CUDACachingMemoryPool::AllocDataSpace(size_t num_bytes,
   hetu::impl::reportCudaMemoryToProfiler(data_ptr.ptr, data_ptr.size, _allocated, _reserved, device());
   HT_LOG_TRACE << "ptr: " << data_ptr.id << ", alloc: " << data_ptr.size << ", stream: " << stream << ", is new malloc: " << data_ptr.is_new_malloc;
   return data_ptr;
+}
+
+void CUDACachingMemoryPool::AllocShareMemory(size_t num_bytes, 
+                                             const Stream& stream,
+                                             bool realloc) {
+  HT_NOT_IMPLEMENTED << "CUDA MemoryPool doesn't support share memory currently.";
+}
+
+bool CUDACachingMemoryPool::ShareMemoryReady() {
+  // Since GPU currently doesn't support share memory, this is always true; 
+  return true;
 }
 
 // deprecated for now

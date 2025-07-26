@@ -21,7 +21,7 @@ class DeviceClientImpl {
 
   virtual int Connect(const std::string& hostname) {}
 
-  virtual int GetRank(const std::string& user) {}
+  virtual std::pair<int, int> GetRank(const std::string& user) {}
 
   virtual int CommitHostName(const std::string& hostname, int rank) {}
 
@@ -68,6 +68,8 @@ class DeviceClientImpl {
   virtual std::string RemoveJson(const std::string& key) {}
 
   virtual int Barrier(int rank, const std::vector<int>& world_rank) {}
+
+  virtual int Consistent(int rank, int value, const std::vector<int>& world_rank) {}
 
   virtual int HeartBeat(int rank) {}
 

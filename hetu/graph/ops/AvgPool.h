@@ -21,7 +21,8 @@ class AvgPoolOpImpl final : public PoolOpImpl {
 
  protected:
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -60,7 +61,8 @@ class AvgPoolGradientOpImpl final : public PoolGradientOpImpl {
 
  protected:
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& runtime_ctx) const override;

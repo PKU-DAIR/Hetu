@@ -28,13 +28,11 @@ void MaskedSelectCuda(const NDArray& input, const NDArray& mask,
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "MaskedSelectCuda", [&]() {
       auto output_ptr = output->data_ptr<spec_t>();
-      auto output_size = output->numel();
-      launch_loop_kernel<spec_t, int64_t, int64_t, spec_t>(input, mask, maskPrefixSum, output, size, stream,
-                                                  [output_ptr, output_size] __device__ (spec_t in, int64_t mask, int64_t maskPrefixSum) -> spec_t {
-                                                    if(mask){
-                                                      output_ptr[maskPrefixSum] = in;
-                                                    }
-                                                    // return in;
+      using InType = std::tuple<spec_t, int64_t, int64_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, mask, maskPrefixSum}, {output}, size, stream,
+                                                  [output_ptr] __device__ (spec_t in, int64_t mask, int64_t maskPrefixSum) -> spec_t {
+                                                    if(mask) output_ptr[maskPrefixSum] = in;
                                                  });
   });
 

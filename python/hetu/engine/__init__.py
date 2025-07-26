@@ -1,4 +1,5 @@
-from .distributed import *
-from .parallel_config import *
 from .trainer import *
+from .trainer_config import *
+from .sft_trainer import *
+from .sft_config import *
 from .wrapper import *

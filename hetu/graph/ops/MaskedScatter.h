@@ -33,7 +33,7 @@ class MaskedScatterOpImpl : public OpInterface {
   }
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape shape = inputs[0]->shape();
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
                                            .set_shape(shape)
@@ -86,7 +86,7 @@ class MaskedScatterGradientOpImpl : public OpInterface {
   }
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape shape = inputs[2]->shape();
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[2]->dtype())
                                            .set_shape(shape)

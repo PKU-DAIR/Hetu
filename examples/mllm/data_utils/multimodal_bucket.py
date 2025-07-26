@@ -263,7 +263,6 @@ class MultimodalBucket:
             if find_data:
                 for j in range(vision_dp_size):
                     if len(packed_vision_input_mini_batch[j]) == 0:
-                        print("build fake data")
                         vision_hidden_size = self.batch[0].get_vision_input().shape[1]
                         packed_vision_input_mini_batch[j].append(np.zeros((128, vision_hidden_size), dtype=np.float32))
                         packed_vision_cu_seqlens_mini_batch[j] = [0, 128]
@@ -279,13 +278,9 @@ class MultimodalBucket:
                     packed_vision_input_batch.append(np.concatenate(packed_vision_input_mini_batch[j]))
                     packed_vision_cu_seqlens_list.append(np.array(packed_vision_cu_seqlens_mini_batch[j], dtype=np.int32))
 
-                    print("vision_dp_id is ", j)
-                    print("packed_vision_input_batch is ", packed_vision_input_batch[-1].shape)
-                    print("packed_vision_cu_seqlens_list is ", packed_vision_cu_seqlens_list[-1])
 
                 for j in range(llm_dp_size):
                     if len(packed_llm_input_mini_batch[j]) == 0:
-                        print("build fake data")
                         packed_llm_input_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_label_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_cu_seqlens_mini_batch[j] = [0, 128]
@@ -293,7 +288,6 @@ class MultimodalBucket:
                     else:
                         if packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment != 0:
                             pad_seqlen = self._alignment - (packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment)
-                            print("padding to ", pad_seqlen)
                             packed_llm_input_mini_batch[j][-1] = np.concatenate([packed_llm_input_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_label_mini_batch[j][-1] = np.concatenate([packed_llm_label_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_cu_seqlens_mini_batch[j][-1] = packed_llm_cu_seqlens_mini_batch[j][-1] + pad_seqlen
@@ -303,12 +297,6 @@ class MultimodalBucket:
                     packed_llm_label_batch.append(np.concatenate(packed_llm_label_mini_batch[j]))
                     packed_llm_cu_seqlens_list.append(np.array(packed_llm_cu_seqlens_mini_batch[j], dtype=np.int32))
                     packed_llm_input_mask.append(np.concatenate(packed_llm_input_mask_mini_batch[j]))
-
-                    print("llm_dp_id is ", j)
-                    print("packed_llm_input_batch is ", packed_llm_input_batch[-1].shape)
-                    print("packed_llm_label_batch is ", packed_llm_label_batch[-1].shape)
-                    print("packed_llm_input_mask is ", packed_llm_input_mask[-1].shape)
-                    print("packed_llm_cu_seqlens_list is ", packed_llm_cu_seqlens_list[-1])
 
         for i in range(len(self.batch)):
             if i not in is_visited:
@@ -321,13 +309,6 @@ class MultimodalBucket:
         self._packed_vision_cu_seqlens_list = packed_vision_cu_seqlens_list
         self._packed_llm_cu_seqlens_list = packed_llm_cu_seqlens_list
         self.llm_input_mask = packed_llm_input_mask         
-
-        print("self._packed_vision_batch len", len(self._packed_vision_batch))
-        print("self._packed_llm_batch", len(self._packed_llm_batch))
-        print("self._packed_llm_label_batch", len(self._packed_llm_label_batch))
-        print("self._packed_vision_cu_seqlens_list",  len(self._packed_vision_cu_seqlens_list))
-        print("self._packed_llm_cu_seqlens_list", len(self._packed_llm_cu_seqlens_list))
-        print("self.llm_input_mask", len(self.llm_input_mask))
 
 
     def packing_method_3(self, vision_dp_size = 1, llm_dp_size = 1):
@@ -351,8 +332,6 @@ class MultimodalBucket:
             return best_dp_id
 
         def sorted_lista_by_listb(lista, listb):
-            print("lista", lista)
-            print("listb", listb)
             assert len(lista) == len(listb), "lista and listb must have the same length"
             
             # 对于二维列表，对每一行按照listb的顺序排序
@@ -369,7 +348,6 @@ class MultimodalBucket:
             # 初始化cu_seqlens列表，用于记录每个batch中序列的累积长度
             packed_cu_seqlens_mini_batch = [[] for _ in range(dp_size)]
             # 计算累积序列长度
-            print("packed_input_mini_batch", packed_input_mini_batch)
             for j in range(dp_size):
                 if len(packed_input_mini_batch[j]) > 0:
                     # 第一个元素从0开始
@@ -377,7 +355,6 @@ class MultimodalBucket:
                     # 累积每个序列的长度
                     cur_len = 0
                     for input in packed_input_mini_batch[j]:
-                        print("vision_input", input)
                         cur_len += input.shape[0]
                         packed_cu_seqlens_mini_batch[j].append(cur_len)
                 else:
@@ -493,13 +470,7 @@ class MultimodalBucket:
                 packed_llm_input_mask_mini_batch = sorted_lista_by_listb(packed_llm_input_mask_mini_batch, packed_llm_to_vision_llm_postion_mini_batch)
                 packed_vision_cu_seqlens_mini_batch = get_packed_cu_seqlens_mini_batch(packed_vision_input_mini_batch, vision_dp_size)
                 packed_llm_cu_seqlens_mini_batch = get_packed_cu_seqlens_mini_batch(packed_llm_input_mini_batch, llm_dp_size)
-                print("packed_vision_cu_seqlens_mini_batch", packed_vision_cu_seqlens_mini_batch)
-                print("packed_vision_to_llm_postion_min_batch", packed_vision_to_llm_postion_min_batch)
-                print("vision_dp_size", vision_dp_size)
-                print("llm_dp_size", llm_dp_size)
                 vision_packing_slice_mini_batch, llm_packing_slice_mini_batch = get_packed_packing_slice_mini_batch(packed_vision_cu_seqlens_mini_batch, packed_vision_to_llm_postion_min_batch, vision_dp_size, llm_dp_size)
-                print("vision_packing_slice_mini_batch", vision_packing_slice_mini_batch)
-                print("llm_packing_slice_mini_batch", llm_packing_slice_mini_batch)
                 
 
                 for j in range(vision_dp_size):
@@ -520,14 +491,8 @@ class MultimodalBucket:
                     packed_vision_cu_seqlens_list.append(np.array(packed_vision_cu_seqlens_mini_batch[j], dtype=np.int32))
                     vision_packing_slice_list.append(np.array(vision_packing_slice_mini_batch[j], dtype=np.int32))
 
-                    print("vision_dp_id is ", j)
-                    print("packed_vision_input_batch is ", packed_vision_input_batch[-1].shape)
-                    print("packed_vision_cu_seqlens_list is ", packed_vision_cu_seqlens_list[-1])
-                    print("vision_packing_slice_mini_batch", vision_packing_slice_list[-1])
-
                 for j in range(llm_dp_size):
                     if len(packed_llm_input_mini_batch[j]) == 0:
-                        print("build fake data")
                         packed_llm_input_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_label_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_cu_seqlens_mini_batch[j] = [0, 128]
@@ -535,7 +500,6 @@ class MultimodalBucket:
                     else:
                         if packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment != 0:
                             pad_seqlen = self._alignment - (packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment)
-                            print("padding to ", pad_seqlen)
                             packed_llm_input_mini_batch[j][-1] = np.concatenate([packed_llm_input_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_label_mini_batch[j][-1] = np.concatenate([packed_llm_label_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_cu_seqlens_mini_batch[j][-1] = packed_llm_cu_seqlens_mini_batch[j][-1] + pad_seqlen
@@ -546,13 +510,6 @@ class MultimodalBucket:
                     packed_llm_cu_seqlens_list.append(np.array(packed_llm_cu_seqlens_mini_batch[j], dtype=np.int32))
                     packed_llm_input_mask.append(np.concatenate(packed_llm_input_mask_mini_batch[j]))
                     llm_packing_slice_list.append(np.array(llm_packing_slice_mini_batch[j], dtype=np.int32))
-
-                    print("llm_dp_id is ", j)
-                    print("packed_llm_input_batch is ", packed_llm_input_batch[-1].shape)
-                    print("packed_llm_label_batch is ", packed_llm_label_batch[-1].shape)
-                    print("packed_llm_input_mask is ", packed_llm_input_mask[-1].shape)
-                    print("packed_llm_cu_seqlens_list is ", packed_llm_cu_seqlens_list[-1])
-                    print("llm_packing_slice_mini_batch", llm_packing_slice_list[-1])
 
         for i in range(len(self.batch)):
             if i not in is_visited:
@@ -567,15 +524,6 @@ class MultimodalBucket:
         self.llm_input_mask = packed_llm_input_mask         
         self._llm_packing_slice_list = llm_packing_slice_list
         self._vision_packing_slice_list = vision_packing_slice_list
-
-        print("self._packed_vision_batch len", len(self._packed_vision_batch))
-        print("self._packed_llm_batch", len(self._packed_llm_batch))
-        print("self._packed_llm_label_batch", len(self._packed_llm_label_batch))
-        print("self._packed_vision_cu_seqlens_list",  len(self._packed_vision_cu_seqlens_list))
-        print("self._packed_llm_cu_seqlens_list", len(self._packed_llm_cu_seqlens_list))
-        print("self.llm_input_mask", len(self.llm_input_mask))
-        print("self._llm_packing_slice_list", self._llm_packing_slice_list)
-        print("self._vision_packing_slice_list", self._vision_packing_slice_list)
 
 
     def packing_method_4(self, vision_dp_size = 1, llm_dp_size = 1):
@@ -670,7 +618,6 @@ class MultimodalBucket:
             if find_data:
                 for j in range(vision_dp_size):
                     if len(packed_vision_input_mini_batch[j]) == 0:
-                        print("build fake data")
                         vision_hidden_size = self.batch[0].get_vision_input().shape[1]
                         packed_vision_input_mini_batch[j].append(np.zeros((128, vision_hidden_size), dtype=np.float32))
                         packed_vision_cu_seqlens_mini_batch[j] = [0, 128]
@@ -688,7 +635,6 @@ class MultimodalBucket:
 
                 for j in range(llm_dp_size):
                     if len(packed_llm_input_mini_batch[j]) == 0:
-                        print("build fake data")
                         packed_llm_input_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_label_mini_batch[j].append(np.ones((128), dtype=np.int32) * self._pad_token)
                         packed_llm_cu_seqlens_mini_batch[j] = [0, 128]
@@ -696,7 +642,6 @@ class MultimodalBucket:
                     else:
                         if packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment != 0:
                             pad_seqlen = self._alignment - (packed_llm_cu_seqlens_mini_batch[j][-1] % self._alignment)
-                            print("padding to ", pad_seqlen)
                             packed_llm_input_mini_batch[j][-1] = np.concatenate([packed_llm_input_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_label_mini_batch[j][-1] = np.concatenate([packed_llm_label_mini_batch[j][-1], np.array([self._pad_token] * pad_seqlen)])
                             packed_llm_cu_seqlens_mini_batch[j][-1] = packed_llm_cu_seqlens_mini_batch[j][-1] + pad_seqlen
@@ -719,13 +664,6 @@ class MultimodalBucket:
         self._packed_vision_cu_seqlens_list = packed_vision_cu_seqlens_list
         self._packed_llm_cu_seqlens_list = packed_llm_cu_seqlens_list
         self.llm_input_mask = packed_llm_input_mask         
-
-        # print("self._packed_vision_batch len", len(self._packed_vision_batch))
-        # print("self._packed_llm_batch", len(self._packed_llm_batch))
-        # print("self._packed_llm_label_batch", len(self._packed_llm_label_batch))
-        # print("self._packed_vision_cu_seqlens_list",  len(self._packed_vision_cu_seqlens_list))
-        # print("self._packed_llm_cu_seqlens_list", len(self._packed_llm_cu_seqlens_list))
-        # print("self.llm_input_mask", len(self.llm_input_mask))
 
 
     def pack_data(self, packing_method = 1, vision_dp_size = 1, llm_dp_size = 1):
@@ -778,7 +716,6 @@ def get_sorted_by_text_and_video(global_batch: dict, pad_token: int):
     total_len = global_batch_text_len + global_batch_video_len
     # 按总长度排序获取索引
     sorted_indices = np.argsort(total_len)
-    print(f"sorted_indices is {sorted_indices}")
     
     # 对所有字段按照索引重新排序
     sorted_batch = {}
@@ -792,7 +729,6 @@ def get_bucket(global_batch: dict, pad_token: int, vision_max_seqlen: int, text_
     bucket = MultimodalBucket(pad_token, vision_max_seqlen, text_max_seqlen, alignment)
     data_num = len(global_batch["text_len"])
     for idx in range(data_num):
-        print("len", global_batch['text_len'][idx])
         bucket.add_data(global_batch["video"][idx], int(global_batch["video_len"][idx]), global_batch["text"][idx], global_batch["text_label"][idx], int(global_batch["text_len"][idx]), mask_token)
 
     return bucket

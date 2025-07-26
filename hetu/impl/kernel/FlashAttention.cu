@@ -24,7 +24,8 @@ void set_params_fprop(Flash_fwd_params& params,
                       const NDArray& q, const NDArray& k, const NDArray& v,
                       NDArray& out, void* cu_seqlens_q_d, void* cu_seqlens_k_d,
                       void* p_d, void* softmax_lse_d, float p_dropout,
-                      float softmax_scale, bool is_causal) {
+                      float softmax_scale, bool is_causal,
+                      bool seqlenq_ngroups_swapped=false, const bool unpadded_lse=false) {
   // Reset the parameters
   memset(&params, 0, sizeof(params));
 
@@ -92,6 +93,9 @@ void set_params_fprop(Flash_fwd_params& params,
 
   params.is_causal = is_causal;
   params.is_seqlens_k_cumulative = true;
+
+  params.unpadded_lse = unpadded_lse;
+  params.seqlenq_ngroups_swapped = seqlenq_ngroups_swapped;
 }
 
 void set_params_dgrad(Flash_bwd_params& params,
@@ -106,11 +110,13 @@ void set_params_dgrad(Flash_bwd_params& params,
                       NDArray& dv, void* cu_seqlens_q_d, void* cu_seqlens_k_d,
                       void* dq_accum_d, void* dk_accum_d, void* dv_accum_d,
                       void* softmax_lse_d, void* dsoftmax_sum_d,
-                      float p_dropout, float softmax_scale, bool is_causal) {
+                      float p_dropout, float softmax_scale, bool is_causal,
+                      const bool unpadded_lse=false) {
   set_params_fprop(params, b, seqlen_q, seqlen_k, seqlen_q_rounded,
                    seqlen_k_rounded, h, h_k, d, d_rounded, q, k, v, out,
                    cu_seqlens_q_d, cu_seqlens_k_d, nullptr, softmax_lse_d,
-                   p_dropout, softmax_scale, is_causal);
+                   p_dropout, softmax_scale, is_causal, 
+                   false, unpadded_lse);
 
   // Set the pointers and strides.
   params.do_ptr = dout->raw_data_ptr();
@@ -393,7 +399,7 @@ void FlashAttnVarlenCuda(
   NDArray& k_padded, // batch_size x seqlen_k x num_heads_k x head_size_rounded
   NDArray& v_padded, // batch_size x seqlen_k x num_heads_k x head_size_rounded
   NDArray& out_padded, // batch_size x seqlen_q x num_heads x head_size_rounded
-  NDArray& softmax_lse, // batch_size × num_heads × seqlen_q
+  NDArray& softmax_lse, // num_heads × total_q
   NDArray& p, // batch_size × num_heads × seqlen_q_rounded × seqlen_k_rounded
   NDArray& rng_state, // 2  kCUDA  kInt64
   const int max_seqlen_q, const int max_seqlen_k, const float p_dropout,
@@ -519,7 +525,9 @@ void FlashAttnVarlenCuda(
     seqlen_k_rounded, num_heads, num_heads_k, head_size, head_size_rounded,
     q_padded, k_padded, v_padded, out, cu_seqlens_q->raw_data_ptr(),
     cu_seqlens_k->raw_data_ptr(), return_softmax ? p->raw_data_ptr() : nullptr,
-    softmax_lse->raw_data_ptr(), p_dropout, softmax_scale, is_causal);
+    softmax_lse->raw_data_ptr(), p_dropout, softmax_scale, is_causal,
+    /*seqlenq_ngroups_swapped*/false, /*unpadded_lse*/true);
+  params.total_q = total_q;
 
   // number of times random will be generated per thread, to offset philox
   // counter in thc random state We use a custom RNG that increases the offset
@@ -720,7 +728,7 @@ void FlashAttnGradientCuda(
   NDArray dk_accum, dv_accum;
   if (loop) {
     dq_accum = NDArray::empty(
-      {batch_size, num_heads, seqlen_q_rounded, head_size_rounded}, q->device(),
+      {batch_size, seqlen_q_rounded, num_heads, head_size_rounded}, q->device(),
       kFloat, stream.stream_index());
     // dk_accum = NDArray::empty({batch_size, num_heads_k, seqlen_k_rounded,
     // head_size_rounded}, opts->dtype(at::kFloat)); dv_accum =
@@ -808,7 +816,7 @@ void FlashAttnVarlenGradientCuda(
   const NDArray& cu_seqlens_q, // b+1
   const NDArray& cu_seqlens_k, // b+1
   NDArray& out, // total_q x num_heads x head_size
-  NDArray& softmax_lse, // b x h x s   softmax logsumexp
+  NDArray& softmax_lse, // h x total_q   softmax logsumexp
   NDArray& rng_state,
   NDArray& dq_, // total_q x num_heads x head_size, total_q := \sum_{i=0}^{b} s_i
   NDArray& dk_, // total_k x num_heads_k x head_size, total_k := \sum_{i=0}^{b} s_i
@@ -946,12 +954,29 @@ auto q_dtype = q->dtype();
   // TODO: change later, for now set to true for simplicity
   bool loop = true;
 
+  /*
 	auto softmax_d = NDArray::empty({batch_size, num_heads, seqlen_q_rounded},
                                   q->device(), kFloat, stream.stream_index());
+  */
+  // softmax_d is also stored in unpadded format.
+  auto softmax_d = NDArray::empty({num_heads, total_q + 128 * batch_size}, q->device(), kFloat, stream.stream_index());
   NDArray dq_accum;
   if (loop) {
+    /*
     dq_accum = NDArray::empty(
       {batch_size, num_heads, seqlen_q_rounded, head_size_rounded}, q->device(),
+      kFloat, stream.stream_index());
+    */
+    // We don't want to allocate dq_accum of size (batch, seqlen_q_rounded, num_heads, head_size_rounded)
+    // because that would be too large if there is a very long sequence and the rest of the sequences are short.
+    // Instead, we allocate dq_accum of size (total_q + 128 * batch, num_heads, head_size_rounded).
+    // Note that 128 is the max block size on the seqlen_q dimension.
+    // For dQ, the i-th sequence is stored in indices from cu_seqlens[i] + 128 * i to
+    // cu_seqlens[i + 1] * 128 * i - 1. This ensures that the i-th sequence and (i + 1)-th sequence will
+    // be at least 128 apart. It's ok for us to do atomicAdds up to 128 rows beyond what we're normally
+    // allowed to do. So we won't have to do any bound checking, and performance should stay the same.
+    dq_accum = NDArray::empty(
+      {total_q + 128 * batch_size, num_heads, head_size_rounded}, q->device(),
       kFloat, stream.stream_index());
   }
 
@@ -984,7 +1009,9 @@ auto q_dtype = q->dtype();
                    cu_seqlens_k->raw_data_ptr(),
                    loop ? dq_accum->raw_data_ptr() : nullptr, nullptr, nullptr,
                    softmax_lse->raw_data_ptr(), softmax_d->raw_data_ptr(), p_dropout,
-                   softmax_scale, is_causal);
+                   softmax_scale, is_causal,
+                   /*unpadded_lse*/true);
+  params.total_q = total_q;
 
   auto launch = &run_mha_bwd;
 

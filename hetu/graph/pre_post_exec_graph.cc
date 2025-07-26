@@ -51,8 +51,12 @@ NDArray& ExecutableGraph::GetVariableDataInner(const Tensor& tensor) {
   return it->second;
 }
 
-NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
+NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor, bool gpu) {
   // Question: store the data on different devices? For now, store all on CPU and return.
+  // if we use async param, we should get it from cpu_preserved_data.
+  if (_cpu_preserved_data.find(tensor->id()) != _cpu_preserved_data.end()) {
+    return _cpu_preserved_data[tensor->id()];
+  }
   auto it_1 = _preserved_data.find(tensor->id());
   if (it_1 == _preserved_data.end()) {
     auto it_2 = _add_on_inits.find(tensor->id());
@@ -68,6 +72,10 @@ NDArray ExecutableGraph::GetDetachedVariableDataInner(const Tensor& tensor) {
     }
   }
   HT_LOG_TRACE << "Fetch the data from the executable graph.";
+  if (gpu) {
+    // HT_LOG_WARN << "tensor:" << tensor << ", ptr:" << it_1->second->raw_data_ptr();
+    return it_1->second;
+  }
   return NDArray::to(it_1->second, Device(kCPU));
 }
 
@@ -220,6 +228,7 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
                                           _transfer_param_buffer_map[transfer_param->dtype()]->AsStorage(), 
                                           _transfer_param_buffer_map[transfer_param->dtype()]->GetElementOffset(transfer_param));
       // 添加runtime allocation
+      // HT_LOG_INFO << transfer_param << " id is " << transfer_param->id() << ", add runtime allocation";
       for (auto& runtime_ctx : runtime_ctx_list) {
         runtime_ctx.add_runtime_allocation(transfer_param->id(), transfer_param_data);
       }
@@ -294,7 +303,9 @@ void ExecutableGraph::PreRun(std::vector<RuntimeContext>& runtime_ctx_list) {
   // 其余var直接正常compute_
   for (const auto& op_ref : _execute_plan.local_placeholder_variable_ops) {
     auto& op = op_ref.get();
-    if (is_variable_op(op) && _parameter_ops.find(op->id()) == _parameter_ops.end()) {
+    // 如果param不需要做autocast，则正常compute
+    if (is_variable_op(op) && (_parameter_ops.find(op->id()) == _parameter_ops.end() ||
+        _transfer_map.find(op->output(0)->id()) == _transfer_map.end())) {
       // alloc阶段只分配param
       if (_run_level == RunLevel::ALLOC) {
         continue;
@@ -372,8 +383,10 @@ void ExecutableGraph::PostRun(std::vector<RuntimeContext>& runtime_ctx_list, Ten
                       [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
     // HT_LOG_INFO << cur_subgraph->global_name() << " run end";
   }
-  _terminate_subgraph->run(tensor2data, _preserved_data, runtime_ctx_list[micro_batch_id], micro_batch_id, SubGraphOpType::UPDATE, true,
-                           [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
+  if (_terminate_subgraph != nullptr) {
+    _terminate_subgraph->run(tensor2data, _preserved_data, runtime_ctx_list[micro_batch_id], micro_batch_id, SubGraphOpType::UPDATE, true,
+                            [this](Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) { return PostOpHandler(op, tensor2data, micro_batch_id); });
+  }
 }
 
 OpHandlerStatus ExecutableGraph::PostOpHandler(Operator& op, Tensor2NDArrayMap& tensor2data, size_t micro_batch_id) {
@@ -462,6 +475,12 @@ OpHandlerStatus ExecutableGraph::PostOpHandler(Operator& op, Tensor2NDArrayMap& 
                      accumulate_grad_data, 
                      grad_stream.stream_index(),
                      current_grad_data);
+        if (num_tokens() > 0) {
+          NDArray::div(current_grad_data,
+                      num_tokens(),
+                      grad_stream.stream_index(),
+                      current_grad_data);
+        }
         // 需要重新设置grad op的stop event来保证update算子的输入是sync的
         grad->producer()->instantiation_ctx().stop[micro_batch_id]->Record(grad_stream);
       }
@@ -726,7 +745,6 @@ MemoryPlan ExecutableGraph::GenerateMemoryPlan(size_t& memory_size, std::vector<
           FreeMemory(memory_plan, temporary_free_memory[op->stream_index()], {micro_batch_id, tensor_id});
           storage_use_count[memory_plan[{ micro_batch_id, tensor_id}]] = 0;
           storage_use_count.erase(memory_plan[{ micro_batch_id, tensor_id}]);
-          // if (op->placement().index() == 0) std::cout << "tensor " << tensor_id << ' ' << "free" << ' ' << memory_plan[{micro_batch_id, tensor_id}].first << ' ' << memory_plan[{micro_batch_id, tensor_id}].second << std::endl;
         }
       }
 
@@ -757,7 +775,6 @@ MemoryPlan ExecutableGraph::GenerateMemoryPlan(size_t& memory_size, std::vector<
             FreeMemory(memory_plan, temporary_free_memory[op->stream_index()], {micro_batch_id, input->id()});
             storage_use_count[memory_plan[{micro_batch_id, input->id()}]] = 0;
             storage_use_count.erase(memory_plan[{micro_batch_id, input->id()}]);
-            // if (op->placement().index() == 0) std::cout << "tensor " << input->id() << ' ' << "free" << ' ' << memory_plan[{micro_batch_id, input->id()}].first << ' ' << memory_plan[{micro_batch_id, input->id()}].second << std::endl;
           }
           // multi-stream的memory plan暂时无法处理
           // 只能是下一个block再去全部free

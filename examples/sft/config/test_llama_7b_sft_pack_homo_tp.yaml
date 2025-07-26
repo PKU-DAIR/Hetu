@@ -1,0 +1,25 @@
+defaults:  
+  - ../../pretrain/config/test_pretrain_pack_homo_tp@_here_
+  - _self_  
+
+rpc:
+  log_path: logs/test_llama_7b_sft_pack_homo_tp
+
+ds_parallel:
+  ds_parallel_config_name: test_llama_7b_sft_pack_homo_tp_config.json
+
+trainer:
+  train_dataset_path: data/alpaca/alpaca_en_demo.json
+  dataset_text_field: null
+
+model:
+  architecture: null
+  config_type: null
+  pretrained_model_name_or_path: /path/to/llama-7b/model
+  num_hidden_layers: 32
+
+  tokenizer:
+    type: null
+    vocab_file: null
+    merge_file: null
+    pretrained_model_name_or_path: /path/to/llama-7b/tokenizer

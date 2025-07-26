@@ -957,6 +957,152 @@ class TestPoolOps(unittest.TestCase):
                                     times += item[2]
                     print("Hetu AvgpoolGradient with shape ", shape, ":", times / TEST_STEP)
 
+class TestTransformOps(unittest.TestCase):
+    _test_shapes = [
+        (8192, 256),
+    ]
+    
+    _test_dims = [
+        1,
+    ]
+    
+    def test_concat_op(self):
+        for shape in TestTransformOps._test_shapes:
+            for dim in TestTransformOps._test_dims:
+                x_np = np.random.randn(*shape).astype(np.float32)
+                y_np = np.random.randn(*shape).astype(np.float32)
+                x = hetu.from_numpy(x_np).to(dtype = hetu.bfloat16)
+                y = hetu.from_numpy(y_np).to(dtype = hetu.bfloat16)
+                x_t = torch.from_numpy(x_np).to("cuda:0").to(torch.bfloat16)
+                y_t = torch.from_numpy(y_np).to("cuda:0").to(torch.bfloat16)
+                times = 0
+                if TORCH_TEST:
+                    for i in range(WARM_STEP):
+                        gt = torch.cat([x_t, y_t], dim=dim)
+                    for i in range(TEST_STEP):
+                        start = timepoint()
+                        gt = torch.cat([x_t, y_t], dim=dim)
+                        end = timepoint()
+                        times += (end - start)
+                    print("Torch Concat with shape ", shape, ", dim ", dim, ":", times / TEST_STEP)
+                times = 0
+                if HETU_TEST:
+                    for i in range(WARM_STEP):
+                        gt = hetu.concat([x, y], axis=dim)
+                    for i in range(TEST_STEP):
+                        with hetu.profiler(enabled = True, record_shapes = True) as profiler:
+                            gt = hetu.concat([x, y], axis=dim)
+                            for item in profiler.summary()['optype_with_inputs_view']:
+                                if item[0] == 'ConcatOp':
+                                    times += item[2]
+                    print("Hetu Concat with shape ", shape, ", dim ", dim, ":", times / TEST_STEP)
+
+                if GRAD_TEST:
+                    torch_in = torch.tensor(x_np, requires_grad=True, device="cuda:0")
+                    torch_yin = torch.tensor(y_np, requires_grad=True, device="cuda:0")
+                    torch_optimizer = optim.SGD([torch_in, torch_yin], lr = 1e-5)
+                    times = 0
+                    if TORCH_TEST:
+                        for i in range(WARM_STEP):
+                            torch_out = torch.cat([torch_in, torch_yin], dim)
+                            torch_loss = torch_out.sum()
+                            torch_loss.backward()
+                            torch_optimizer.step()
+                        for i in range(TEST_STEP):
+                            torch_out = torch.cat([torch_in, torch_yin], dim)
+                            torch_loss = torch_out.sum()
+                            start = timepoint()
+                            torch_loss.backward()
+                            end = timepoint()
+                            torch_optimizer.step()
+                            times += (end - start)
+                        print("Torch ConcatGradient with shape ", shape, ", dim ", dim, ":", times / TEST_STEP)
+                    hetu_in = hetu.Tensor(x_np, requires_grad=True, dtype=hetu.bfloat16)
+                    hetu_yin = hetu.Tensor(y_np, requires_grad=True, dtype=hetu.bfloat16)
+                    hetu_out = hetu.concat([hetu_in, hetu_yin], dim)
+                    hetu_loss = hetu_out.sum()
+                    hetu_optimizer = hetu.SGDOptimizer([hetu_in, hetu_yin], lr = 1e-5)
+                    times = 0
+                    if HETU_TEST:
+                        for i in range(WARM_STEP):
+                            hetu_optimizer.minimize(hetu_loss)
+                        for i in range(TEST_STEP):
+                            with hetu.profiler(enabled = True, record_shapes = True) as profiler:
+                                hetu_optimizer.minimize(hetu_loss)
+                                for item in profiler.summary()['optype_with_inputs_view']:
+                                    if item[0] == 'ConcatGradientOp':
+                                        times += item[2]
+                        print("Hetu ConcatGradient with shape ", shape, ", dim ", dim, ":", times / TEST_STEP)
+
+class TestDropoutOps(unittest.TestCase):
+    _test_shapes = [
+        (64, 32),
+        (8, 16, 64),
+        (16, 3, 128, 128),
+    ]
+    
+    def test_dropout_op(self):
+        for shape in TestDropoutOps._test_shapes:
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np).to(dtype = hetu.bfloat16)
+            x_t = torch.from_numpy(x_np).to("cuda:0").to(torch.bfloat16)
+            
+            p = 0.5
+            times = 0
+            if TORCH_TEST:
+                for i in range(WARM_STEP):
+                    gt = torch.nn.functional.dropout(x_t, p=p)
+                for i in range(TEST_STEP):
+                    start = timepoint()
+                    gt = torch.nn.functional.dropout(x_t, p=p)
+                    end = timepoint()
+                    times += (end - start)
+                print("Torch Dropout with shape ", shape, ":", times / TEST_STEP)
+            times = 0
+            if HETU_TEST:
+                for i in range(WARM_STEP):
+                    gt = hetu.dropout(x, p)
+                for i in range(TEST_STEP):
+                    with hetu.profiler(enabled = True, record_shapes = True) as profiler:
+                        gt = hetu.dropout(x, p)
+                        for item in profiler.summary()['optype_with_inputs_view']:
+                            if item[0] == 'DropoutOp':
+                                times += item[2]
+                print("Hetu Dropout with shape ", shape, ":", times / TEST_STEP)
+            if GRAD_TEST:
+                torch_in = torch.tensor(x_np, requires_grad=True, device="cuda:0")
+                torch_optimizer = optim.SGD([torch_in], lr = 0.5)
+                times = 0
+                if TORCH_TEST:
+                    for i in range(WARM_STEP):
+                        torch_out = torch.nn.functional.dropout(torch_in, p=p)
+                        torch_loss = torch_out.sum()
+                        torch_loss.backward()
+                        torch_optimizer.step()
+                    for i in range(TEST_STEP):
+                        torch_out = torch.nn.functional.dropout(torch_in, p=p)
+                        torch_loss = torch_out.sum()
+                        start = timepoint()
+                        torch_loss.backward()
+                        end = timepoint()
+                        torch_optimizer.step()
+                        times += (end - start)
+                    print("Torch DropoutGradient with shape ", shape, ":", times / TEST_STEP)
+                hetu_in = hetu.Tensor(x_np, requires_grad=True, dtype=hetu.bfloat16)
+                hetu_loss = hetu.dropout(hetu_in, p)
+                hetu_optimizer = hetu.SGDOptimizer([hetu_in], lr = 0.5)
+                times = 0
+                if HETU_TEST:
+                    for i in range(WARM_STEP):
+                        hetu_optimizer.minimize(hetu_loss)
+                    for i in range(TEST_STEP):
+                        with hetu.profiler(enabled = True, record_shapes = True) as profiler:
+                            hetu_optimizer.minimize(hetu_loss)
+                            for item in profiler.summary()['optype_with_inputs_view']:
+                                if item[0] == 'DropoutGradientOp':
+                                    times += item[2]
+                    print("Hetu DropoutGradient with shape ", shape, ":", times / TEST_STEP)
+
 class TestNormOps(unittest.TestCase):
 
     _test_shapes = [

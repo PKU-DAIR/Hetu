@@ -102,6 +102,10 @@ NDArray TensorDef::get_or_compute() {
   return graph().GetOrCompute(get_self());
 }
 
+void* TensorDef::get_raw_data_ptr() {
+  return get_or_compute()->raw_data_ptr();
+}
+
 void TensorDef::merge_strategy(Tensor& tensor) {
   for (const auto& ds_union : tensor->ds_hierarchy().raw_data()) {
     _ds_hierarchy.add(ds_union);
@@ -130,7 +134,10 @@ bool TensorDef::has_cur_ds_union() {
       << "ExecutableGraph only has at most one single strategy"
       << ", but found " << name() << " has " << _ds_hierarchy.size() << " strategy";
     return _ds_hierarchy.size() == 1;
-  } 
+  } else if (graph().type() == GraphType::EAGER) {
+    // workaround for unit test
+    return true;
+  }
   return cur_strategy_id() < _ds_hierarchy.size();
 }
 
@@ -167,7 +174,6 @@ DistributedStatesUnion& TensorDef::cur_ds_union() {
 }
 
 void TensorDef::set_cur_ds_union(const DistributedStatesUnion& ds_union) {
-  std::cout << "set_cur_ds_union " << name() << " " << ds_union.ds_union_info() << std::endl;
   // 2024.9.25 Update
   // 限制executable graph只有一个strategy
   if (graph().type() == GraphType::EXECUTABLE) {
@@ -261,6 +267,10 @@ DistributedStates& TensorDef::inferred_cur_ds() {
     else {
       return ds_union.get(inferred_local_placement_group_idx());
     }
+  }
+  else if (graph().type() == GraphType::EAGER) {
+    // workaround for unit tests
+    return _dummy_ds;
   }
   // 其他graph类型暂不支持
   else {

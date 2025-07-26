@@ -97,7 +97,8 @@ class DefineAndRunGraph : public Graph {
   NDArrayList Run(const Tensor& loss, const TensorList& fetches, 
                   const FeedDict& feed_dict = {}, const IntSymbolDict& int_symbol_dict = {}, const int num_micro_batches = 1,
                   const int compute_strategy_id = 0, const int optimize_strategy_id = 0, RunLevel run_level = RunLevel::UPDATE,
-                  bool save_checkpoint = false, const double grad_scale = 1);
+                  bool save_checkpoint = false, const double grad_scale = 1,
+                  const RuntimeContext& ctx = RuntimeContext());
 
 
   GraphType type() const {
@@ -138,7 +139,7 @@ class DefineAndRunGraph : public Graph {
   void ResetVariableDataInner(const Tensor& tensor,
                               const Initializer& init) override;
 
-  NDArray GetDetachedVariableDataInner(const Tensor& tensor) override;
+  NDArray GetDetachedVariableDataInner(const Tensor& tensor, bool gpu = false) override;
 
   DeviceGroupUnion GetVariableDeviceGroupUnionInner(const Tensor& tensor) override;
 

@@ -21,7 +21,8 @@ TensorList MaxPoolOpImpl::DoGradient(Operator& op,
 }
 
 void MaxPoolOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                   const OpMeta& op_meta) const {
+                                   const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds = inputs.at(0)->get_distributed_states();
   HT_ASSERT(ds.is_valid()) 
     << "MaxPoolOpDef: distributed states for input tensor must be valid!";
@@ -44,7 +45,8 @@ void MaxPoolGradientOpImpl::DoCompute(Operator& op,
 }
 
 void MaxPoolGradientOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                           const OpMeta& op_meta) const {
+                                           const OpMeta& op_meta,
+                                           const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(2)->get_distributed_states());
 }
 

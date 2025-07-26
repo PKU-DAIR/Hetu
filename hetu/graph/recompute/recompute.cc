@@ -131,7 +131,8 @@ Operator& Recompute::DuplicateRecomputedOp(const Operator& origin_op, const Op2O
                              .set_multi_recompute({{false}})
                              .set_name(origin_op->name() + "_recompute")
                              .set_is_deduce_states(false)
-                             .set_origin_op_id(origin_op->id());
+                             .set_origin_op_id(origin_op->id())
+                             .set_is_recompute(true);
   // add the execution dependency
   // 即对于输入op全都不在recompute subgraph中的
   // 需要添加一条之前grad op到该op的依赖边

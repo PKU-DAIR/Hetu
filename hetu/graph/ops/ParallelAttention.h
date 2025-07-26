@@ -16,6 +16,8 @@ namespace graph {
  ---------------------- Parallel Attn Impl ----------------------
 *****************************************************************/
 
+std::ostream& operator<<(std::ostream& os, const std::vector<std::pair<int32_t, int32_t>>& vec);
+
 enum class AttnSplitPattern {
   NORMAL = 0,
   STRIPE,
@@ -32,29 +34,76 @@ enum class AttnMask {
 
 class AttnInfo {
  public:
-  AttnInfo(AttnMask attn_mask, int64_t valid_len, 
-           int64_t q_len, int64_t kv_len)
-  : _attn_mask(attn_mask), _valid_len(valid_len),
-    _q_len(q_len), _kv_len(kv_len) {
+  AttnInfo(const Device& local_device, AttnMask attn_mask, int32_t valid_len)
+  : _local_device(local_device), _attn_mask_list({attn_mask}), _valid_len_list({valid_len}) {
   }
 
-  bool is_causal() const {
-    return _attn_mask == AttnMask::CAUSAL;
+  AttnInfo(const Device& local_device, const std::vector<AttnMask>& attn_mask_list, const std::vector<int32_t>& valid_len_list, 
+           const std::vector<int32_t>& cu_seqlens_q_vec, const std::vector<int32_t>& cu_seqlens_k_vec)
+  : _local_device(local_device), _attn_mask_list(attn_mask_list), _valid_len_list(valid_len_list),
+    _cu_seqlens_q_vec(cu_seqlens_q_vec), _cu_seqlens_k_vec(cu_seqlens_k_vec) {
+    HT_ASSERT(_cu_seqlens_q_vec.size() == _cu_seqlens_k_vec.size()
+              && _cu_seqlens_q_vec.size() == _valid_len_list.size() + 1)
+      << "sizes mismatch";
+    /*
+    if (valid_cu_seqlens_q == nullptr || valid_cu_seqlens_k == nullptr) {
+      // TODO: support build valid_cu_seqlens from attn_mask_list + valid_len_list + cu_seqlens_vec,
+      HT_NOT_IMPLEMENTED << "valid_cu_seqlens can be simply obtained by /2 from cu_seqlens"
+        << ", no need to support more complicated settings for now";
+    }
+    */
+    generate_valid_cu_seqlens_and_indices();
   }
 
-  const AttnMask get_mask() const {
-    return _attn_mask;
+  bool is_causal(size_t i = 0) const {
+    return _attn_mask_list.at(i) == AttnMask::CAUSAL;
   }
 
-  int64_t get_valid_len() const {
-    return _valid_len;
+  const AttnMask get_mask(size_t i = 0) const {
+    return _attn_mask_list.at(i);
+  }
+
+  int32_t get_valid_len(size_t i = 0) const {
+    return _valid_len_list.at(i);
+  }
+
+  const std::vector<int32_t>& get_cu_seqlens_q_vec() const {
+    return _cu_seqlens_q_vec;
+  }
+
+  const std::vector<int32_t>& get_cu_seqlens_k_vec() const {
+    return _cu_seqlens_k_vec;
+  }
+
+  const NDArray& get_valid_cu_seqlens_q() const {
+    return _valid_cu_seqlens_q;
+  }
+
+  const NDArray& get_valid_cu_seqlens_k() const {
+    return _valid_cu_seqlens_k;
+  }
+
+  const std::vector<std::pair<int32_t, int32_t>>& get_valid_indices_q() const {
+    return _valid_indices_q;
+  }
+
+  const std::vector<std::pair<int32_t, int32_t>>& get_valid_indices_k() const {
+    return _valid_indices_k;
   }
 
  protected:
-  AttnMask _attn_mask;
-  int64_t _valid_len;
-  int64_t _q_len;
-  int64_t _kv_len;
+
+  // valid_cu_seqlens is on GPU, valid_indices is on CPU
+  // valid_cu_seqlens用于flash attn中的运算
+  // valid_indices用于flash attn运算前对qkv去slice
+  void generate_valid_cu_seqlens_and_indices();
+
+  Device _local_device;
+  std::vector<AttnMask> _attn_mask_list;
+  std::vector<int32_t> _valid_len_list;
+  std::vector<int32_t> _cu_seqlens_q_vec, _cu_seqlens_k_vec;
+  NDArray _valid_cu_seqlens_q, _valid_cu_seqlens_k;
+  std::vector<std::pair<int32_t, int32_t>> _valid_indices_q, _valid_indices_k;
 };
 
 // NDarrayStorage + comm & comp event
@@ -343,8 +392,9 @@ class AttnCommRing {
  public:
   AttnCommRing(const Operator& op, const hetu::impl::comm::NCCLCommunicationGroup& nccl_comm_group, StreamIndex stream_idx, 
                int64_t ring_idx, const DeviceGroupList& tp_group_list, const std::vector<int64_t>& seq_len_list,
-               int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim,
-               double softmax_scale, double p_dropout, size_t kv_storage_size = 2);
+               int64_t batch_size, int64_t q_num_heads, int64_t kv_num_heads, int64_t head_dim, double softmax_scale, double p_dropout, 
+               bool packing, int64_t packing_num, const NDArray& cu_seqlens_q, const NDArray& cu_seqlens_k, int64_t max_seqlen_q, int64_t max_seqlen_k,
+               size_t kv_storage_size = 2);
 
   void GenerateAttnInfo();
 
@@ -391,6 +441,12 @@ class AttnCommRing {
   double _softmax_scale;
   double _p_dropout;
 
+  // packing settings
+  bool _packing;
+  int64_t _packing_num;
+  NDArray _cu_seqlens_q, _cu_seqlens_k; 
+  int64_t _max_seqlen_q, _max_seqlen_k;
+
   // alg-related settings
   AttnSplitPattern _attn_split_pattern;
   std::vector<std::shared_ptr<AttnInfo>> _attn_info_list; // ring的两两rank间有一个info
@@ -421,8 +477,12 @@ class ParallelAttentionOpImpl;
 class ParallelAttentionOp;
 class ParallelAttentionGradientOpImpl;
 class ParallelAttentionGradientOp;
+class FlashAttentionOpImpl;
+class FlashAttentionOp;
+class FlashAttentionGradientOpImpl;
+class FlashAttentionGradientOp;
 
-class ParallelAttentionOpImpl final : public OpInterface {
+class ParallelAttentionOpImpl : public OpInterface {
  private:
   friend class ParallelAttentionOp;
   struct constructor_access_key {};
@@ -441,6 +501,227 @@ class ParallelAttentionOpImpl final : public OpInterface {
     for (size_t i = 0; i < HT_MAX_NUM_MICRO_BATCHES; i++) {
       _attn_ctx_list.emplace_back(std::make_shared<AttnCtx>());
     }
+  }
+
+  uint64_t op_indicator() const noexcept override {
+    return PARALLEL_ATTN_OP;
+  } 
+
+  inline const std::shared_ptr<AttnCtx>& attn_ctx() const {
+    return _attn_ctx_list.at(_attn_ctx_num);
+  }
+  
+  inline int64_t get_max_seqlen_q() const {
+    HT_ASSERT(_max_seqlen_q)
+      << "get_max_seqlen_q() can only be called when packing";
+    return _max_seqlen_q->get_val();
+  }
+
+  inline int64_t get_max_seqlen_k() const {
+    HT_ASSERT(_max_seqlen_k)
+      << "get_max_seqlen_k() can only be called when packing";
+    return _max_seqlen_k->get_val();
+  }
+
+  inline int64_t head_dim() const {
+    return _head_dim;
+  }
+
+  inline int64_t group_query_ratio() const {
+    return _group_query_ratio;
+  }
+
+  inline double p_dropout() const {
+    return _p_dropout;
+  }
+
+  inline double softmax_scale() const {
+    return _softmax_scale;
+  }
+
+  inline bool is_causal() const {
+    return _is_causal;
+  }
+
+  inline bool return_softmax() const {
+    return _return_softmax;
+  }
+
+ protected:
+  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs,
+                                       const InstantiationContext& inst_ctx) const override;
+
+  void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
+
+  void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
+                 RuntimeContext& ctx) const override;
+
+  TensorList DoGradient(Operator& op, const TensorList& grad_outputs) const override;
+
+  HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  mutable size_t _attn_ctx_num{0};
+  std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list;
+  int64_t _head_dim;
+  int64_t _group_query_ratio;
+  SyShapeList _multi_seq_lens_symbol;
+  SyShapeList _multi_cp_group_symbol;
+  bool _packing;
+  IntSymbol _max_seqlen_q;
+  IntSymbol _max_seqlen_k;
+  double _p_dropout;
+  double _softmax_scale;
+  bool _is_causal;
+  bool _return_softmax;
+
+ public:
+  inline bool require_contig_inputs() const override {
+    return false;
+  }
+
+  bool operator==(const OpInterface& rhs) const override {
+    if (OpInterface::operator==(rhs)) {
+      const auto& rhs_ = reinterpret_cast<const ParallelAttentionOpImpl&>(rhs);
+      return _head_dim == rhs_.head_dim() 
+             && _group_query_ratio == rhs_.group_query_ratio() 
+             && p_dropout() == rhs_.p_dropout() 
+             && softmax_scale() == rhs_.softmax_scale() 
+             && is_causal() == rhs_.is_causal() 
+             && return_softmax() == rhs_.return_softmax();
+    } 
+    else
+      return false;
+  }
+};
+
+TensorList MakeParallelAttentionOp(Tensor qkv, int64_t head_dim, int64_t group_query_ratio,
+                                   SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
+                                   bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                                   double p_dropout = 0.0, double softmax_scale = -1.0, 
+                                   bool is_causal = false, bool return_softmax = false, OpMeta op_meta = OpMeta());
+
+class ParallelAttentionGradientOpImpl: public OpInterface {
+
+ public:
+  ParallelAttentionGradientOpImpl(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, int64_t head_dim, int64_t group_query_ratio,
+                                  SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol,
+                                  bool packing, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                                  double p_dropout, double softmax_scale, bool is_causal)
+  : OpInterface(quote(ParallelAttentionGradientOp)), 
+    _attn_ctx_list(attn_ctx_list), _head_dim(head_dim), _group_query_ratio(group_query_ratio), 
+    _multi_seq_lens_symbol(std::move(multi_seq_lens_symbol)), _multi_cp_group_symbol(std::move(multi_cp_group_symbol)),
+    _packing(packing), _max_seqlen_q(std::move(max_seqlen_q)), _max_seqlen_k(std::move(max_seqlen_k)),
+    _p_dropout(p_dropout), _softmax_scale(softmax_scale), _is_causal(is_causal) {
+  }
+
+  uint64_t op_indicator() const noexcept override {
+    return PARALLEL_ATTN_GRAD_OP;
+  } 
+
+  inline const std::shared_ptr<AttnCtx>& attn_ctx() const {
+    return _attn_ctx_list.at(_attn_ctx_num);
+  }
+
+  inline int64_t get_max_seqlen_q() const {
+    HT_ASSERT(_max_seqlen_q)
+      << "get_max_seqlen_q() can only be called when packing";
+    return _max_seqlen_q->get_val();
+  }
+
+  inline int64_t get_max_seqlen_k() const {
+    HT_ASSERT(_max_seqlen_k)
+      << "get_max_seqlen_k() can only be called when packing";
+    return _max_seqlen_k->get_val();
+  }
+
+  inline int64_t head_dim() const {
+    return _head_dim;
+  }
+
+  inline int64_t group_query_ratio() const {
+    return _group_query_ratio;
+  }
+
+  inline double p_dropout() const {
+    return _p_dropout;
+  }
+
+  inline double softmax_scale() const {
+    return _softmax_scale;
+  }
+
+  inline bool is_causal() const {
+    return _is_causal;
+  }
+
+ protected:
+  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs,
+                                       const InstantiationContext& inst_ctx) const override;
+
+  void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
+
+  void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
+                 RuntimeContext& ctx) const override;
+
+  HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
+
+  mutable size_t _attn_ctx_num{0};
+  std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list; // for different micro batches
+  int64_t _head_dim;
+  int64_t _group_query_ratio;
+  SyShapeList _multi_seq_lens_symbol;
+  SyShapeList _multi_cp_group_symbol;
+  bool _packing;
+  IntSymbol _max_seqlen_q;
+  IntSymbol _max_seqlen_k;
+  double _p_dropout;
+  double _softmax_scale;
+  bool _is_causal;
+
+ public:
+  inline bool require_contig_inputs() const override {
+    return false;
+  }
+
+  bool operator==(const OpInterface& rhs) const override {
+    if (OpInterface::operator==(rhs)) {
+      const auto& rhs_ = reinterpret_cast<const ParallelAttentionGradientOpImpl&>(rhs);
+      return _head_dim == rhs_.head_dim()
+             && _group_query_ratio == rhs_.group_query_ratio()
+             && p_dropout() == rhs_.p_dropout()
+             && softmax_scale() == rhs_.softmax_scale()
+             && is_causal() == rhs_.is_causal();
+    } 
+    else
+      return false;
+  }
+};
+
+TensorList MakeParallelAttentionGradientOp(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, 
+                                           Tensor grad_out, int64_t head_dim, int64_t group_query_ratio,
+                                           SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
+                                           bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                                           double p_dropout = 0.0, double softmax_scale = -1.0,
+                                           bool is_causal = false, OpMeta op_meta = OpMeta());
+
+class FlashAttentionOpImpl final : public ParallelAttentionOpImpl {
+ private:
+  friend class FlashAttentionOp;
+  struct constructor_access_key {};
+
+ public:
+  FlashAttentionOpImpl(int64_t head_dim, int64_t group_query_ratio,
+                       SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol,
+                       bool packing, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                       double p_dropout, double softmax_scale, 
+                       bool is_causal, bool return_softmax)
+  : ParallelAttentionOpImpl(head_dim, group_query_ratio, multi_seq_lens_symbol, 
+                            multi_cp_group_symbol, packing, max_seqlen_q, max_seqlen_k,
+                            p_dropout, softmax_scale, is_causal, return_softmax){
   }
 
   uint64_t op_indicator() const noexcept override {
@@ -488,10 +769,12 @@ class ParallelAttentionOpImpl final : public OpInterface {
   }
 
  protected:
-  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs) const override;
+  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs,
+                                       const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -500,19 +783,19 @@ class ParallelAttentionOpImpl final : public OpInterface {
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  size_t _attn_ctx_num{0};
-  std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list;
-  int64_t _head_dim;
-  int64_t _group_query_ratio;
-  SyShapeList _multi_seq_lens_symbol;
-  SyShapeList _multi_cp_group_symbol;
-  bool _packing;
-  IntSymbol _max_seqlen_q;
-  IntSymbol _max_seqlen_k;
-  double _p_dropout;
-  double _softmax_scale;
-  bool _is_causal;
-  bool _return_softmax;
+  // size_t _attn_ctx_num{0};
+  // std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list;
+  // int64_t _head_dim;
+  // int64_t _group_query_ratio;
+  // SyShapeList _multi_seq_lens_symbol;
+  // SyShapeList _multi_cp_group_symbol;
+  // bool _packing;
+  // IntSymbol _max_seqlen_q;
+  // IntSymbol _max_seqlen_k;
+  // double _p_dropout;
+  // double _softmax_scale;
+  // bool _is_causal;
+  // bool _return_softmax;
 
  public:
   inline bool require_contig_inputs() const override {
@@ -521,7 +804,7 @@ class ParallelAttentionOpImpl final : public OpInterface {
 
   bool operator==(const OpInterface& rhs) const override {
     if (OpInterface::operator==(rhs)) {
-      const auto& rhs_ = reinterpret_cast<const ParallelAttentionOpImpl&>(rhs);
+      const auto& rhs_ = reinterpret_cast<const FlashAttentionOpImpl&>(rhs);
       return _head_dim == rhs_.head_dim() 
              && _group_query_ratio == rhs_.group_query_ratio() 
              && p_dropout() == rhs_.p_dropout() 
@@ -534,24 +817,24 @@ class ParallelAttentionOpImpl final : public OpInterface {
   }
 };
 
-TensorList MakeParallelAttentionOp(Tensor qkv, int64_t head_dim, int64_t group_query_ratio,
-                                   SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
-                                   bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
-                                   double p_dropout = 0.0, double softmax_scale = -1.0, 
-                                   bool is_causal = false, bool return_softmax = false, OpMeta op_meta = OpMeta());
+TensorList MakeFlashAttentionOp(Tensor q, Tensor k, Tensor v,
+                                int64_t head_dim, int64_t group_query_ratio,
+                                SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
+                                bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                                double p_dropout = 0.0, double softmax_scale = -1.0, 
+                                bool is_causal = false, bool return_softmax = false, OpMeta op_meta = OpMeta());
 
-class ParallelAttentionGradientOpImpl final : public OpInterface {
+class FlashAttentionGradientOpImpl final : public ParallelAttentionGradientOpImpl {
 
  public:
-  ParallelAttentionGradientOpImpl(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, int64_t head_dim, int64_t group_query_ratio,
-                                  SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol,
-                                  bool packing, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
-                                  double p_dropout, double softmax_scale, bool is_causal)
-  : OpInterface(quote(ParallelAttentionGradientOp)), 
-    _attn_ctx_list(attn_ctx_list), _head_dim(head_dim), _group_query_ratio(group_query_ratio), 
-    _multi_seq_lens_symbol(std::move(multi_seq_lens_symbol)), _multi_cp_group_symbol(std::move(multi_cp_group_symbol)),
-    _packing(packing), _max_seqlen_q(std::move(max_seqlen_q)), _max_seqlen_k(std::move(max_seqlen_k)),
-    _p_dropout(p_dropout), _softmax_scale(softmax_scale), _is_causal(is_causal) {
+  FlashAttentionGradientOpImpl(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, int64_t head_dim, int64_t group_query_ratio,
+                               SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol,
+                               bool packing, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                               double p_dropout, double softmax_scale, bool is_causal)
+  : ParallelAttentionGradientOpImpl(attn_ctx_list, head_dim, group_query_ratio, 
+                                    multi_seq_lens_symbol, multi_cp_group_symbol, 
+                                    packing, max_seqlen_q, max_seqlen_k, p_dropout, 
+                                    softmax_scale, is_causal) {
   }
 
   uint64_t op_indicator() const noexcept override {
@@ -595,28 +878,30 @@ class ParallelAttentionGradientOpImpl final : public OpInterface {
   }
 
  protected:
-  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs) const override;
+  std::vector<NDArrayMeta> DoInferMeta(const TensorList& inputs,
+                                       const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes, RuntimeContext& ctx) const override;
 
-  size_t _attn_ctx_num{0};
-  std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list; // for different micro batches
-  int64_t _head_dim;
-  int64_t _group_query_ratio;
-  SyShapeList _multi_seq_lens_symbol;
-  SyShapeList _multi_cp_group_symbol;
-  bool _packing;
-  IntSymbol _max_seqlen_q;
-  IntSymbol _max_seqlen_k;
-  double _p_dropout;
-  double _softmax_scale;
-  bool _is_causal;
+  // size_t _attn_ctx_num{0};
+  // std::vector<std::shared_ptr<AttnCtx>> _attn_ctx_list; // for different micro batches
+  // int64_t _head_dim;
+  // int64_t _group_query_ratio;
+  // SyShapeList _multi_seq_lens_symbol;
+  // SyShapeList _multi_cp_group_symbol;
+  // bool _packing;
+  // IntSymbol _max_seqlen_q;
+  // IntSymbol _max_seqlen_k;
+  // double _p_dropout;
+  // double _softmax_scale;
+  // bool _is_causal;
 
  public:
   inline bool require_contig_inputs() const override {
@@ -625,7 +910,7 @@ class ParallelAttentionGradientOpImpl final : public OpInterface {
 
   bool operator==(const OpInterface& rhs) const override {
     if (OpInterface::operator==(rhs)) {
-      const auto& rhs_ = reinterpret_cast<const ParallelAttentionGradientOpImpl&>(rhs);
+      const auto& rhs_ = reinterpret_cast<const FlashAttentionGradientOpImpl&>(rhs);
       return _head_dim == rhs_.head_dim()
              && _group_query_ratio == rhs_.group_query_ratio()
              && p_dropout() == rhs_.p_dropout()
@@ -637,12 +922,12 @@ class ParallelAttentionGradientOpImpl final : public OpInterface {
   }
 };
 
-TensorList MakeParallelAttentionGradientOp(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, 
-                                           Tensor grad_out, int64_t head_dim, int64_t group_query_ratio,
-                                           SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
-                                           bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
-                                           double p_dropout = 0.0, double softmax_scale = -1.0,
-                                           bool is_causal = false, OpMeta op_meta = OpMeta());
+TensorList MakeFlashAttentionGradientOp(const std::vector<std::shared_ptr<AttnCtx>>& attn_ctx_list, 
+                                        Tensor grad_out, int64_t head_dim, int64_t group_query_ratio,
+                                        SyShapeList multi_seq_lens_symbol, SyShapeList multi_cp_group_symbol, 
+                                        bool packing, Tensor cu_seqlens_q, Tensor cu_seqlens_k, IntSymbol max_seqlen_q, IntSymbol max_seqlen_k,
+                                        double p_dropout = 0.0, double softmax_scale = -1.0,
+                                        bool is_causal = false, OpMeta op_meta = OpMeta());
 
 } // namespace graph
 } // namespace hetu

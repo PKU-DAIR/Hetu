@@ -10,8 +10,8 @@ import time
 from data_utils import HetuMLLMProcessor, HetuImageProcessor, build_tokenizer
 
 class NExTQADataset(Dataset):
-    def __init__(self, tokenizer, text_path = "/home/pkuhetu/njw1123/hetu_mm/python/hetu/engine/data/multimodal_data/NExTQA/MC/test-00000-of-00001.parquet",
-        vision_path = "/home/pkuhetu/njw1123/hetu_mm/python/hetu/engine/data/multimodal_data/NExTQA/NExTVideo", args = None):
+    def __init__(self, tokenizer, text_path = "/home/gehao/njw1123/merge_all/python/hetu/data/multimodal_data/NExTQA/MC/test-00000-of-00001.parquet",
+        vision_path = "/home/gehao/njw1123/merge_all/python/hetu/data/multimodal_data/NExTQA/NExTVideo", args = None):
         """
         初始化NExTQA数据集
         Args:
@@ -191,7 +191,7 @@ class NExTQADataset(Dataset):
         video_len_data = []
         
         with ThreadPoolExecutor(max_workers=32) as executor:
-            futures = [executor.submit(process_single_item, idx) for idx in range(600)]
+            futures = [executor.submit(process_single_item, idx) for idx in range(100)]
             for future in futures:
                 text, text_label, text_len, video, video_len = future.result()
                 text_data.append(text)
@@ -213,7 +213,6 @@ class NExTQADataset(Dataset):
         Returns:
             dict: 包含文本数据的字典
         """
-        print("get idx data", idx)
         text = self.text_data[idx]
         text_label = self.text_label_data[idx]
         text_len = self.text_len_data[idx] 

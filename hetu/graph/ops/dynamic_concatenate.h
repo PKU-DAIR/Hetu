@@ -25,7 +25,7 @@ class DynamicConcatenateOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     int len = inputs.size();
     bool flag = true;
@@ -65,7 +65,8 @@ class DynamicConcatenateOpImpl final : public OpInterface {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;

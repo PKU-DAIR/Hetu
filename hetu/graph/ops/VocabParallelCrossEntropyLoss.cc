@@ -64,6 +64,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, reduce_max_partial,
                                     reduce_max, kMAX, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     NDArray vocab_parallel_logits = preds - reduce_max; // cuda malloc
     NDArray::MarkUsedBy({preds, labels, reduce_max_partial, vocab_parallel_logits}, op->instantiation_ctx().stream());
@@ -75,12 +76,13 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, sum_exp_logits_partial,
                                     sum_exp_logits, kSUM, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     // store softmax for backward compute
     // NDArray softmax = exp_logits / sum_exp_logits;
     NDArray softmax = NDArray::div(exp_logits, sum_exp_logits, op->instantiation_ctx().stream_index, exp_logits); // inplace
     OpRuntimeContext& op_ctx = ctx.get_or_create(op->id());
-    op_ctx.put_ndarray("softmax", softmax);
+    op_ctx.put("softmax", softmax);
     NDArray log_sum_exp_logits = NDArray::log(sum_exp_logits, op->instantiation_ctx().stream_index, sum_exp_logits); // inplace
     NDArray::MarkUsedBy({exp_logits, sum_exp_logits_partial, softmax}, op->instantiation_ctx().stream());
 
@@ -101,6 +103,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
                                     hetu::impl::AllReduce, predict_logits_partial,
                                     predict_logits, kSUM, _comm_group,
+                                    std::any_cast<bool>(ctx.get_param("fp32_comm_reduce")),
                                     op->instantiation_ctx().stream());
     NDArray::MarkUsedBy({predict_logits_partial}, op->instantiation_ctx().stream());
 
@@ -140,7 +143,8 @@ HTShapeList VocabParallelCrossEntropyOpImpl::DoInferShape(
 }
 
 void VocabParallelCrossEntropyOpImpl::DoDeduceStates(
-  const TensorList& inputs, TensorList& outputs, const OpMeta& op_meta) const {
+  const TensorList& inputs, TensorList& outputs, const OpMeta& op_meta,
+  const InstantiationContext& inst_ctx) const {
   const Tensor& preds = inputs.at(0);
   const Tensor& labels = inputs.at(1);                                
   const DistributedStates& ds_preds = preds->get_distributed_states();
@@ -153,7 +157,8 @@ void VocabParallelCrossEntropyOpImpl::DoDeduceStates(
 }
 
 void VocabParallelCrossEntropyOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-  TensorList& outputs, const OpMeta& op_meta) const {
+                                                        TensorList& outputs, const OpMeta& op_meta,
+                                                        const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(1));
 }
 
@@ -203,7 +208,7 @@ void VocabParallelCrossEntropyGradientOpImpl::DoCompute(
     auto vocab_range_index = op->input(0)->get_local_distributed_states().map_device_to_state_index(local_device_index)[1];
     auto vocab_start_index = vocab_size_per_partition * vocab_range_index;
     auto vocab_end_index = vocab_start_index + vocab_size_per_partition;
-    NDArray softmax = ctx.get_or_create(op->fw_op_id()).pop_ndarray("softmax");
+    NDArray softmax = ctx.get_or_create(op->fw_op_id()).pop<NDArray>("softmax");
 
     HT_DISPATCH_KERNEL_CUDA_ONLY(op->instantiation_ctx().placement.type(), type(),
                                 hetu::impl::VocabParallelCrossEntropyGradient, softmax,
@@ -221,12 +226,14 @@ HTShapeList VocabParallelCrossEntropyGradientOpImpl::DoInferShape(
 }
 
 void VocabParallelCrossEntropyGradientOpImpl::DoDeduceStates(
-  const TensorList& inputs, TensorList& outputs, const OpMeta& op_meta) const {
+  const TensorList& inputs, TensorList& outputs, const OpMeta& op_meta,
+  const InstantiationContext& inst_ctx) const {
   outputs.at(0)->set_distributed_states(inputs.at(0)->get_distributed_states());
 }
 
 void VocabParallelCrossEntropyGradientOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-  TensorList& outputs, const OpMeta& op_meta) const {
+                                                                TensorList& outputs, const OpMeta& op_meta,
+                                                                const InstantiationContext& inst_ctx) const {
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }
 

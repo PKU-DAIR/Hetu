@@ -101,7 +101,7 @@ class CommOpImpl final: public OpInterface {
   }  
 
   void DeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                       TensorList& outputs, const OpMeta& op_meta) const;
+                      TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const;
 
  protected:
 
@@ -116,17 +116,19 @@ class CommOpImpl final: public OpInterface {
                      StreamIndex stream_index) const override;                              
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
 
-  inline void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;  
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+      TensorList& outputs, const OpMeta& op_meta,
+      const InstantiationContext& inst_ctx) const override;  
 
   void DoDeduceStatesHierarchy(const TensorList& inputs, TensorList& outputs, 
-                                        const OpMeta& op_meta, Graph& graph) const override;
+                        const OpMeta& op_meta, const InstantiationContext& inst_ctx, Graph& graph) const override;
 
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
@@ -297,7 +299,7 @@ class AllReduceOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
@@ -349,7 +351,7 @@ class P2PSendOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;  
@@ -416,7 +418,7 @@ class P2PRecvOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
@@ -545,7 +547,7 @@ class BatchedISendIRecvOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
                     
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override; 
@@ -603,7 +605,7 @@ class AllGatherOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;  
@@ -669,7 +671,7 @@ class ReduceScatterOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
                                                     
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;  
@@ -727,7 +729,7 @@ class SplitAllGatherOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
@@ -790,7 +792,7 @@ class SplitAllReduceOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
@@ -857,7 +859,7 @@ class SplitReduceScatterOpImpl final : public OpInterface {
                      StreamIndex stream_index) const override;
 
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override;
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override;
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;

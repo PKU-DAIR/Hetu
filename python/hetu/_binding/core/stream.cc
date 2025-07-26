@@ -5,6 +5,7 @@
 #include "hetu/_binding/utils/except.h"
 #include "hetu/_binding/utils/decl_utils.h"
 #include "hetu/_binding/utils/arg_parser.h"
+#include "hetu/impl/stream/CUDAStream.h"
 
 namespace hetu {
 
@@ -113,6 +114,12 @@ Py_ssize_t PyStream_hash(PyStream* self) {
   HT_PY_FUNC_RETURN(-1)
 }
 
+PyObject* PyStream_ptr(PyStream* self) {
+  HT_PY_FUNC_BEGIN
+  return PyLong_FromInteger(int64_t((void*)(impl::CUDAStream(self->stream).cuda_stream())));
+  HT_PY_FUNC_END
+}
+
 PyObject* PyStream_reduce(PyStream* self) {
   HT_PY_FUNC_BEGIN
   const auto& stream = self->stream;
@@ -142,6 +149,7 @@ PyGetSetDef PyStream_properties[] = {
   {PY_GET_SET_DEF_NAME("device_index"), (getter) PyStream_device_index, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("stream_index"), (getter) PyStream_stream_index, nullptr, nullptr, nullptr}, 
   {PY_GET_SET_DEF_NAME("is_define"), (getter) PyStream_is_define, nullptr, nullptr, nullptr}, 
+  {PY_GET_SET_DEF_NAME("ptr"), (getter) PyStream_ptr, nullptr, nullptr, nullptr}, 
   {nullptr}
 };
 

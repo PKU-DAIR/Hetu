@@ -1,12 +1,20 @@
-import os
-import json
-import pickle
-import time
-import numpy as np
-from tqdm import tqdm
-from types import SimpleNamespace
-from torch.utils.data import Dataset
-from .tokenizer import build_tokenizer
+# TODO: The following implementation is incomplete
+
+import functools
+from typing import (
+    Callable,
+    Dict,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
+class Dataset():
+    functions: Dict[str, Callable] = {}
 
 class Encoder(object):
     def __init__(self, args):

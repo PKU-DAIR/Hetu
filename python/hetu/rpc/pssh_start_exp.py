@@ -46,7 +46,7 @@ def pssh(args):
         # 请注意log编号目前并不等于rank编号
         # log编号是进程编号
         # 但不能保证分配到同样编号的rank
-        log_path = args.log_path + "/log_" + f"{i}" + ".txt"
+        log_path = args.log_path + "/log_" + f"{i}" + ".log"
         log = open(log_path, 'w')
         log.close()
         log_list.append(log_path)

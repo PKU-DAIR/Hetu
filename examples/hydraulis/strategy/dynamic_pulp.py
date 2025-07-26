@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List
 from .cost_model import dynamic_strategy_time_cost
 
-MAX_WORKERS = 16
+MAX_WORKERS = 1
 TRIAL_WORKERS = 1
 MINI_TRIAL_NUM = 50
 

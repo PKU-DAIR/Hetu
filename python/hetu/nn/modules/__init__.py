@@ -39,5 +39,7 @@ __all__ = [
     # deprecated
     'HtParallelRMSNorm', 'HtParallelLayerNorm', 'HtParallelEmbedding', 'HtVocabParallelEmbedding', 'HtColumnParallelLinear', 'HtRowParallelLinear',
     # parallel_multi_ds
-    'HtMultiParallelRMSNorm', 'HtMultiParallelLayerNorm', 'HtMultiParallelEmbedding', 'HtMultiVocabParallelEmbedding', 'HtMultiColumnParallelLinear', 'HtMultiRowParallelLinear', 'HtParallelConv2d', 'HtParallelConv3d'
+    'HtMultiParallelRMSNorm', 'HtMultiParallelLayerNorm', 'HtMultiParallelEmbedding', 
+    'HtMultiVocabParallelEmbedding', 'HtMultiColumnParallelLinear', 'HtMultiRowParallelLinear',
+    'HtMultiQKVColumnParallelLinear', 'HtParallelConv2d', 'HtParallelConv3d',
 ]

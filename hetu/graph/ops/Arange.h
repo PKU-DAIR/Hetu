@@ -32,7 +32,7 @@ class ArangeOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_DTYPE(inputs);
     int64_t length = (end() - start()) / step();
     HT_ASSERT(length > 0)

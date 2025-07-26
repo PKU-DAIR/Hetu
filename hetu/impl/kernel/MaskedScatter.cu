@@ -26,17 +26,15 @@ void MaskedScatterCuda(const NDArray& input, const NDArray& mask, const NDArray&
   auto mask_data = mask->data_ptr<int64_t>();
   exclusive_scan(mask_data, maskPrefixSum_data, cub::Sum(), (int64_t)0, input->numel(), stream); 
   size_t size = input->numel();
+
   HT_DISPATCH_INTEGER_AND_FLOATING_TYPES(
     input->dtype(), spec_t, "MaskedScatterCuda", [&]() {
       auto source_ptr = source->data_ptr<spec_t>();
-      launch_loop_kernel<spec_t, int64_t, int64_t, spec_t>(input, mask, maskPrefixSum, output, size, stream,
-                                                  [source_ptr, size] __device__ (spec_t in, int64_t mask, int64_t maskPrefixSum) -> spec_t {
-                                                    if(mask){
-                                                      if(maskPrefixSum >= size || maskPrefixSum < 0){
-                                                        printf("errrrror %lld %lld]\n", (int64_t)size, (int64_t)maskPrefixSum);
-                                                      }
-                                                      return static_cast<spec_t>(source_ptr[maskPrefixSum]);
-                                                    }
+      using InType = std::tuple<spec_t, int64_t, int64_t>;
+      using OutType = thrust::tuple<spec_t>;
+      launch_loop_kernel<InType, OutType>({input, mask, maskPrefixSum}, {output}, size, stream,
+                                                  [source_ptr] __device__ (spec_t in, int64_t mask, int64_t maskPrefixSum) -> spec_t {
+                                                    if(mask) return static_cast<spec_t>(source_ptr[maskPrefixSum]);
                                                     else return in;
                                                  });
   });

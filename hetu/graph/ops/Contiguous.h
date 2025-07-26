@@ -23,7 +23,7 @@ class ContiguousOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
                                            .set_shape(inputs[0]->shape())
                                            .set_device(inputs[0]->device());
@@ -31,7 +31,8 @@ class ContiguousOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   NDArrayList DoCompute(Operator& op,
                         const NDArrayList& inputs,
@@ -68,7 +69,7 @@ class ContiguousGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta output_meta = NDArrayMeta().set_dtype(inputs[0]->dtype())
                                            .set_shape(inputs[0]->shape())
                                            .set_stride(fwd_stride())
@@ -77,7 +78,8 @@ class ContiguousGradientOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
   
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;

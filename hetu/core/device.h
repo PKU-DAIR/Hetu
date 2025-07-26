@@ -59,8 +59,9 @@ class Device {
   static constexpr char COLON = ':';
 
   Device(DeviceType type = kUndeterminedDevice, DeviceIndex index = 0U,
-         const std::string& hostname = "", uint8_t multiplex = 0U) {
-    _init(type, index, hostname, multiplex);
+         const std::string& hostname = "", uint8_t multiplex = 0U,
+         DeviceIndex global_index = 0U) {
+    _init(type, index, hostname, multiplex, global_index);
   }
 
   Device(const std::string& device, uint8_t multiplex = 0U);
@@ -101,6 +102,10 @@ class Device {
 
   inline DeviceIndex index() const noexcept {
     return _index;
+  }
+
+  inline DeviceIndex global_index() const noexcept {
+    return _global_index;
   }
 
   inline bool is_cpu() const noexcept {
@@ -182,9 +187,10 @@ class Device {
 
  private:
   void _init(DeviceType type, DeviceIndex index, const std::string& hostname,
-             uint8_t multiplex) {
+             uint8_t multiplex, DeviceIndex global_index = 0U) {
     _type = type;
     _index = _type == kCUDA ? index : 0U;
+    _global_index = _type == kCUDA ? global_index : 0U;
     HT_ASSERT(_index < HT_MAX_DEVICE_INDEX)
       << "Device index " << _index << " exceeds maximum allowed value "
       << HT_MAX_DEVICE_INDEX;
@@ -211,6 +217,7 @@ class Device {
   DeviceIndex _index;
   std::string _hostname;
   uint8_t _multiplex;
+  DeviceIndex _global_index;
 };
 
 std::ostream& operator<<(std::ostream&, const Device&);

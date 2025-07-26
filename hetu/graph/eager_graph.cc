@@ -51,6 +51,7 @@ Operator& EagerGraph::MakeOpInner(std::shared_ptr<OpInterface> body,
   }
 
   HT_LOG_DEBUG << op << " inputs: " << input_arrays;
+  op->LoadAndSaveCtxForBackward(_runtime_ctxs);
   auto output_arrays = op->Compute(input_arrays, _runtime_ctxs);
   auto profiler_optional = hetu::impl::Profile::get_cur_profile();
   if (profiler_optional) {

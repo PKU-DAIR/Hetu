@@ -23,7 +23,7 @@ class CheckFiniteOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta out_meta = inputs[0]->meta();
     out_meta.set_shape({1}).set_dtype(DataType::FLOAT32);
     return {out_meta};
@@ -60,7 +60,7 @@ class CheckNumericOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     NDArrayMeta out_meta = inputs[0]->meta();
     out_meta.set_shape({3}).set_dtype(DataType::FLOAT32);
     return {out_meta};

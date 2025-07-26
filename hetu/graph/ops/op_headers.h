@@ -13,7 +13,6 @@
 #include "hetu/graph/ops/CheckFinite.h"
 #include "hetu/graph/ops/Communication.h"
 #include "hetu/graph/ops/Concat.h"
-#include "hetu/graph/ops/Concatenate.h"
 #include "hetu/graph/ops/Contiguous.h"
 #include "hetu/graph/ops/dynamic_concatenate.h"
 #include "hetu/graph/ops/Conv2d.h"

@@ -37,7 +37,8 @@ HTShapeList PadOpImpl::DoInferShape(Operator& op,
 }
 
 void PadOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                               const OpMeta& op_meta) const {
+                               const OpMeta& op_meta,
+                               const InstantiationContext& inst_ctx) const {
   const DistributedStates& ds_input = inputs.at(0)->get_distributed_states();
   size_t input_shape_len = inputs.at(0)->shape().size();
   size_t padding_len = get_paddings().size();

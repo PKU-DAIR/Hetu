@@ -7,7 +7,7 @@
 #include "hetu/graph/operator.h"
 #include "hetu/graph/ops/Split.h"
 #include "hetu/graph/ops/Slice.h"
-#include "hetu/graph/ops/Concatenate.h"
+#include "hetu/graph/ops/Concat.h"
 #include "hetu/graph/ops/Contiguous.h"
 #include "hetu/graph/ops/placeholder.h"
 #include "hetu/graph/ops/Communication.h"
@@ -19,6 +19,7 @@
 #include "hetu/core/ndarray_meta.h"
 #include "hetu/core/stream.h"
 #include "hetu/common/timing.h"
+#include "hetu/graph/ops/Concatenate.h"
 #include <nccl.h>
 #include <iostream>
 #include <fstream>
@@ -280,20 +281,9 @@ void ParamBuffer::Bind(const std::shared_ptr<NDArrayStorage>& storage) {
 size_t ParamBuckets::GetSuggestedBucketId(const Tensor& tensor) {
   // workaround
   // 目前通过name来判断是python端的哪个layer
+  // 只要没有block的都放到0号bucket
   // 后续要通过subgraph判断
-
-  if (tensor->name().find("lm_head") != std::string::npos
-      || tensor->name().find("wte") != std::string::npos
-      || tensor->name().find("wpe") != std::string::npos
-      || tensor->name().find("final") != std::string::npos
-      || tensor->name().find("patch") != std::string::npos
-      || tensor->name().find("proj") != std::string::npos
-      || tensor->name().find("adaLN") != std::string::npos
-      || tensor->name().find("timestep_embedder") != std::string::npos
-      || tensor->name().find("conv1") != std::string::npos
-      || tensor->name().find("conv2") != std::string::npos 
-      || tensor->name().find("conv_in") != std::string::npos
-      || tensor->name().find("conv_shortcut") != std::string::npos){
+  if (tensor->name().find("block") == std::string::npos) {
     return 0;
   }
   std::string sub_str = "block";
@@ -363,13 +353,10 @@ void ParamSlice::AddNeededSliceInst(const Device& device, const Tensor& tensor) 
 // TODO: 修改greedy算法
 void ParamSlice::ParamSliceComm(Device2DTListPairMap& send_mapping,
                                 Device2DTListPairMap& recv_mapping) {
-  std::cout << "param slice comm " << name() << std::endl;
   auto needed_len = _needed_slice_instances.size();
   auto owned_len = _owned_slice_instances.size();
   HT_ASSERT(needed_len == _needed_devices.size() && owned_len == _owned_devices.size())
     << "something wrong with the size";
-  std::cout << "_needed_devices " << _needed_devices << std::endl;
-  std::cout << "_owned_devices " << _owned_devices << std::endl;
   if (owned_len == 0) {
     // 该slice无法进行热切换
     // 需要从CPU/SSD中加载
@@ -394,7 +381,7 @@ void ParamSlice::ParamSliceComm(Device2DTListPairMap& send_mapping,
       auto& old_tensor = _needed_slice_instances[i];
       auto& new_tensor = _owned_slice_instances[already_owned_slice_instance_num];
       HT_ASSERT(old_tensor->num_consumers() == 1)
-        << "the slice instance should only used once (by a single concatenate op)";
+        << "the slice instance should only used once (by a single concat op)";
       auto& consumer = old_tensor->consumer(0);
       for (size_t j = 0; j < consumer->num_inputs(); ++j) {
         if (consumer->input(j)->id() == old_tensor->id()) {
@@ -697,8 +684,8 @@ Tensor SwitchExecGraph::MergeAllParamSlices(const Tensor& param, ParamBlock& blo
     }  
   }
   auto concatenate_name = "concat_" + param->name() + "_at_dim_" + std::to_string(dim);
-  auto concatenate_output = MakeConcatenateOp(std::move(merged_slices), dim, 
-                                              OpMeta().set_name(concatenate_name).set_is_deduce_states(false));         
+  auto concatenate_output = MakeConcatOp(std::move(merged_slices), dim, 
+                                         OpMeta().set_name(concatenate_name).set_is_deduce_states(false));
   auto& concatenate_op = concatenate_output->producer();
   // 其他device上生成的不需要map placement_group和placement
   if (hetu::impl::comm::GetLocalDevice() == device) { 
@@ -957,17 +944,11 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
   HT_LOG_DEBUG << local_device << ": make an abstract block for " << param_block_name
     << ", whose mesh shape is " << block_shape;
 
-  for(int i = 0; i < dp_before_inter_pipeline; i++) {
-    for(int j = 0; j < dp_after_inter_pipeline + 1; j++) {
-      std::cout << "i = " << i << ", j = " << j << ", slice_shape = " <<  ' ' << packing_slice[i][j]->get_val() << std::endl;
-    }
-  }
   
   SyShapeList sy_slice_shape_list;
   for(int i = 0; i < dp_before_inter_pipeline; i++) {
     for(int j = 1; j < dp_after_inter_pipeline + 1; j++) {
       sy_slice_shape_list.push_back({packing_slice[i][j] - packing_slice[i][j - 1], IntSymbol(comm_input_shape.at(1))});
-      std::cout << "i = " << i << ", j = " << j << ", slice_shape = " <<  ' ' << sy_slice_shape_list.back()[0]->get_val() << std::endl;
     }
   }
 
@@ -988,7 +969,6 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
   // HTShape input_local_shape(comm_input->shape());
 
 
-  std::cout << "comm_input shape = " << comm_input->shape() << std::endl;
 
   HT_ASSERT(comm_input->shape().size() == 2)
     << "comm_input should be a 2D tensor, but its shape is " << comm_input->shape();
@@ -1004,7 +984,6 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
       }
       for(int k = 0; k < dp_after_inter_pipeline; k++) {
         auto& param_slice = (*param_block_ptr).GetParamSlice({i * dp_after_inter_pipeline + k});
-        std::cout << "slice_output shape = " << packing_slice[i][k]->get_val() << " " << packing_slice[i][k + 1]->get_val() - packing_slice[i][k]->get_val() << std::endl;
         auto slice_output = MakeSliceOp(comm_input, 
                                          {packing_slice[i][k], IntSymbol(0)},
                                          {packing_slice[i][k + 1] - packing_slice[i][k], IntSymbol(comm_input->shape().at(1))},
@@ -1014,12 +993,7 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
           slice_op->MapToParallelDevices(src_group_union);
           slice_op->Instantiate(device, comp_stream_idx);
           dynamic_cast<ExecutableGraph&>(slice_op->graph()).RecordExecTensor(slice_output);
-          std::cout << "add owned slice " << device << ' ' << slice_output << std::endl;
         }
-        std::cout << "slice_output = " << slice_output << std::endl;
-        std::cout << "src_group_union " << src_group_union << std::endl;
-        // std::cout << "slice_output ds = " << slice_output  << " " << slice_output->get_distributed_states().ds_info() << std::endl;
-        // std::cout << "slice output device group = " << slice_output->placement_group_union() << std::endl;
         if(comm_input->symbolic()) {
           slice_output->copy_symbolic_shape(dynamic_cast<SliceOpImpl&>(slice_op->body()).get_symbolic_output_shape());
         }
@@ -1055,9 +1029,6 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
       auto concatenate_output = MakeConcatenateOp(std::move(merged_slices), 0, 
                                                 OpMeta().set_name(concatenate_name).set_is_deduce_states(false));
       auto& concatenate_op = concatenate_output->producer();
-      std::cout << "concatenate_output = " << concatenate_output << std::endl;
-      std::cout << " dst_group_union " << dst_group_union.get(i) << std::endl;
-      // std::cout << "concatenate_output ds = " << concatenate_output->get_distributed_states().ds_info() << std::endl;
       
       // 其他device上生成的不需要map placement_group和placement
       if (hetu::impl::comm::GetLocalDevice() == device) { 
@@ -1067,21 +1038,17 @@ void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
         _comm_results_mapping.insert(std::make_pair(concatenate_output->id(), after_param));
         _comm_results.push_back(std::move(concatenate_output));
       }
-      // std::cout << "concatenate output device group = " << concatenate_output->placement_group_union() << std::endl;
     }
   }
 
   for(int i = 0; i < dp_before_inter_pipeline; i++) {
     for(int j = 0; j < dp_after_inter_pipeline; j++) {
       auto& param_slice = (*param_block_ptr).GetParamSlice({i * dp_after_inter_pipeline + j});
-      std::cout << "param_slice = " << param_slice->name() << std::endl;
       for(int k = 0; k < param_slice->OwnedSliceInstList().size(); k++){
         auto& owned_slice_inst = param_slice->OwnedSliceInstList()[k];
-        std::cout <<"device " << param_slice->OwnedDevices().at(k) << " owned_slice_inst = " << owned_slice_inst->shape() << std::endl;
       }
       for(int k = 0; k < param_slice->NeededSliceInstList().size(); k++){
         auto& needed_slice_inst = param_slice->NeededSliceInstList()[k];
-        std::cout <<"device " << param_slice->NeededDevices().at(k) << " needed_slice_inst = " << needed_slice_inst->shape() << std::endl;
       }
     }
   }
@@ -1412,7 +1379,7 @@ void SwitchExecGraph::MakeCommGraph(SWITCH_MODE switch_mode, SWITCH_LEVEL switch
     auto& old_tensor = _recv_mapping[local_device].second[i];
     auto& new_tensor = recv_tensors[i];
     HT_ASSERT(old_tensor->num_consumers() == 1)
-      << "the slice instance should only used once (by a single concatenate op)";
+      << "the slice instance should only used once (by a single concat op)";
     auto it = _info_mapping.find(old_tensor->id());
     HT_ASSERT(it != _info_mapping.end())
       << "the info of the old tensor is not recorded";
@@ -1729,7 +1696,7 @@ void SwitchExecGraph::SwitchParams(SWITCH_MODE switch_mode,
     get_local_topo(topo, _comm_topo);
     HT_LOG_DEBUG << local_device << ": local topo of the comm graph is " << _comm_topo;
     // 计算运行时shape
-    // 该图中只存在placeholder、split、batchedisendirecv和concatenate
+    // 该图中只存在placeholder、split、batchedisendirecv和concat
     // 不需要symbolic方法（甚至不需要DoInferShape）
     // 直接用tensor的shape即可
     // Question: 是否正确？
@@ -2228,18 +2195,6 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   const auto& comm_output = _comm_op->output(0);
   const auto& dtype = comm_input->dtype();
   
-  std::cout << "local_device = " << local_device << std::endl;
-  std::cout << "src_hetero_dim = " << src_hetero_dim << std::endl;
-  std::cout << "dst_hetero_dim = " << dst_hetero_dim << std::endl;
-  std::cout << "src_hetero_size = " << src_hetero_size << std::endl;
-  std::cout << "dst_hetero_size = " << dst_hetero_size << std::endl;
-  std::cout << "src_ds = " << src_ds.ds_info() << std::endl;
-  std::cout << "src_group = " << src_group << std::endl;
-  std::cout << "dst_ds = " << dst_ds.ds_info() << std::endl;
-  std::cout << "dst_group = " << dst_group << std::endl;
-  std::cout << "comm_input = " << comm_input->name() << ", shape = " << comm_input->shape() << std::endl;
-  std::cout << "comm_output = " << comm_output->name() << ", shape = " << comm_output->shape() << std::endl;
-  std::cout << "dtype = " << dtype << std::endl;
   
   HT_ASSERT(src_group.contains(local_device) || dst_group.contains(local_device))
     << "local device is not in the comm group";
@@ -2326,12 +2281,9 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   }
   else if(subgraph->subgraph_type() == SubGraphType::CROSS_MODAL_COMM_OP) {
     comm_stream_idx = kP2PStream;
-    for (auto& device : _comm_info.src_group.devices()) {
-      if (_comm_set.find(device) == _comm_set.end()) {
-        _comm_set.insert(device);
-      }
-    }
-    for (auto& device : _comm_info.dst_group.devices()) {
+
+    auto global_device_group = hetu::impl::comm::GetGlobalDeviceGroup();
+    for (auto& device : global_device_group.devices()) {
       if (_comm_set.find(device) == _comm_set.end()) {
         _comm_set.insert(device);
       }
@@ -2361,6 +2313,7 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
         _comm_set.insert(device);
       }
     }
+
     /*
     HT_LOG_INFO << "bridge op " << _comm_op << " with global shape " << get_HTShape_from_SyShape(sy_global_shape)
       << ", src ds union = " << _comm_info.src_ds_union.ds_union_info()
@@ -2377,12 +2330,10 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   HT_ASSERT(_param_blocks.size() == 1)
     << "size wrong";
 
-  std::cout << "start to comm" << std::endl;
   for (auto& param_block_ptr : _param_blocks) {
     param_block_ptr->ParamBlockComm(_send_mapping, _recv_mapping);
   }
 
-  std::cout << "comm done" << std::endl;
   // 通信组
   std::vector<Device> comm_devices(_comm_set.begin(), _comm_set.end());
   // HT_LOG_INFO << "comm devices are " << comm_devices;
@@ -2415,18 +2366,9 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
       << "wrong size";
     return _comm_results[0];
   }
-  // HT_LOG_INFO << "MakeBatchedISendIRecvOp devices are " << comm_devices;
-  std::cout << "start to make batched isend irecv op" << std::endl;
+  HT_LOG_INFO << "MakeBatchedISendIRecvOp devices are " << comm_devices;
 
   // 输出参数信息
-
-  for(int i = 0; i < send_tensors.size(); i++) {
-    std::cout << "send tensor " << send_tensors[i]->name() << " shape = " << send_tensors[i]->shape() << " to " << send_to_devices[i] << std::endl;
-  }
-
-  for(int i = 0; i < recv_tensor_shapes.size(); i++) {
-    std::cout << "recv tensor shape = " << recv_tensor_shapes.at(i) << " from " << recv_from_devices[i] << std::endl;
-  }
 
 
   auto batched_isend_irecv_output = MakeBatchedISendIRecvOp(send_tensors, send_to_devices, 
@@ -2434,17 +2376,10 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
                                                             comm_devices, dtype, 
                                                             OpMeta().set_is_deduce_states(false)
                                                                     .set_name("BatchedISendIRecvOp_for_" + _comm_op->output(0)->consumer(0)->name()));
-  std::cout << "batched isend irecv op made" << std::endl;
 
   auto& batched_isend_irecv_op = batched_isend_irecv_output->producer();
   TensorList recv_tensors = batched_isend_irecv_op->outputs();
 
-  for(auto& output : recv_tensors) {
-    std::cout << "output shape = " << output->shape() << std::endl;
-  }
-  for(int i = 0; i < recv_len; ++i) {
-    std::cout << "recv tensor shape = " << get_HTShape_from_SyShape(recv_tensor_shapes[i]) << std::endl;
-  }
 
   for (const auto& recv_tensor : recv_tensors) {
     dynamic_cast<ExecutableGraph&>(batched_isend_irecv_op->graph()).RecordExecTensor(recv_tensor);
@@ -2454,25 +2389,19 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   // 将原先的placeholder替换为recv_tensor
   HT_ASSERT(recv_len == recv_tensors.size())
     << "something wrong with the recv len";
-  std::cout << "start to replace tensor" << std::endl;
   for (size_t i = 0; i < recv_len; ++i) {
     auto& old_tensor = _recv_mapping[local_device].second[i];
     auto& new_tensor = recv_tensors[i];
     HT_ASSERT(old_tensor->num_consumers() == 1)
-      << "the slice instance should only used once (by a single concatenate op)";
+      << "the slice instance should only used once (by a single concat op)";
     auto& consumer = old_tensor->consumer(0);
     for (size_t j = 0; j < consumer->num_inputs(); ++j) {
       if (consumer->input(j)->id() == old_tensor->id()) {
-        std::cout << "old tensor " << old_tensor->shape() << std::endl;
-        std::cout << "new tensor " << new_tensor->shape() << std::endl;
-        std::cout << "consumer " << consumer->name() << std::endl;
-        std::cout << "consumer input " << consumer->input(j)->shape() << std::endl;
         Graph::ReplaceInput(consumer, j, new_tensor);
       }
     }
     dynamic_cast<ExecutableGraph&>(old_tensor->graph()).DeleteExecOp(old_tensor->producer());
   }
-  std::cout << "replace tensor done" << std::endl;
   // add dummy link for topo sort
   // connect comm_op->input producer with batchISendIRecvOp when needn't send
   // 类似exec graph中替换成p2p recv算子时所做的对topo的操作

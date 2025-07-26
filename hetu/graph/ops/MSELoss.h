@@ -19,7 +19,7 @@ class MSELossOpImpl final : public LossOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT_TENSORS_SAME_SHAPE(inputs[0], inputs[1]);
     NDArrayMeta output_meta;
     if (_reduction != kNONE)
@@ -57,7 +57,7 @@ class MSELossGradientOpImpl final : public LossGradientOpImpl {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HT_ASSERT(_reduction == kSUM || _reduction == kMEAN || _reduction == kNONE)
     << "Unsupported reduction type \'" << _reduction << "\' for " << type()
     << " operators. Expected: [\'mean\', \'sum\', \'none\']";

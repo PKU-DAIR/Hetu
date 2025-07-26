@@ -56,4 +56,18 @@ std::ostream& operator<<(std::ostream& os, const DataType& data_type) {
   return os;
 }
 
+bool IsFloatingPoint(const DataType& t) {
+  switch (t) {
+    case DataType::FLOAT16:
+    case DataType::FLOAT32:
+    case DataType::FLOAT64:
+    case DataType::BFLOAT16:
+    case DataType::FLOAT4:
+    case DataType::NFLOAT4:
+      return true;
+    default:
+      return false;
+  }
+}
+
 } // namespace hetu

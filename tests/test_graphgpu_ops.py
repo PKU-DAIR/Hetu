@@ -830,7 +830,8 @@ class TestTransformOps(unittest.TestCase):
 
     _test_shapes = [
         (64, 256),
-        (128, 128)
+        (128, 128),
+        (64, 64, 256)
     ]
 
     _pad_shapes = [
@@ -899,18 +900,38 @@ class TestTransformOps(unittest.TestCase):
     def test_concat_op(self):
         print(sys._getframe().f_code.co_name)
         for shape in TestTransformOps._test_shapes:
-            x_np = np.random.randn(*shape).astype(np.float32)
-            y_np = np.random.randn(*shape).astype(np.float32)
-            z_np = np.random.randn(*shape).astype(np.float32)
-            gt = np.concatenate((x_np, y_np), 0)
-            x = hetu.from_numpy(x_np)
-            y = hetu.from_numpy(y_np)
-            z = hetu.from_numpy(z_np)
-            self.assertTrue(allclose(hetu.concat(x, y, 0), gt))
-            self.assertTrue(allclose(x.concat(y, 0), gt))
-            self.assertTrue(allclose(hetu.concat([x, y], 0), gt))
-            gt = np.concatenate((x_np, y_np, z_np), 0)
-            self.assertTrue(allclose(hetu.concat([x, y, z], 0), gt))
+            dims = range(len(shape))
+            for dim in dims:
+                shape_1 = list(shape)
+                shape_1[dim] = shape_1[dim] // 2
+                shape_2 = list(shape)
+                shape_2[dim] = shape_2[dim] * 2
+                x_np = np.random.randn(*shape_1).astype(np.float32)
+                y_np = np.random.randn(*shape_2).astype(np.float32)
+                z_np = np.random.randn(*shape).astype(np.float32)
+                gt = np.concatenate((x_np, y_np), dim)
+                x = hetu.from_numpy(x_np)
+                y = hetu.from_numpy(y_np)
+                z = hetu.from_numpy(z_np)
+                self.assertTrue(allclose(hetu.concat([x, y], axis=dim), gt))
+                gt = np.concatenate((x_np, y_np, z_np), dim)
+                self.assertTrue(allclose(hetu.concat([x, y, z], axis=dim), gt))
+                gt = np.concatenate((x_np,), dim)
+                self.assertTrue(allclose(hetu.concat([x], axis=dim), gt))
+                
+                if GRAD_TEST:
+                    torch_in = torch.tensor(x_np, requires_grad=True)
+                    torch_out = torch.cat([torch_in, torch.from_numpy(y_np), torch.from_numpy(z_np)], dim)
+                    torch_loss = torch_out.sum()
+                    torch_optimizer = optim.SGD([torch_in], lr = 0.5)
+                    hetu_in = hetu.Tensor(x_np, requires_grad=True)
+                    hetu_out = hetu.concat([hetu_in, y, z], dim)
+                    hetu_loss = hetu_out.sum()
+                    hetu_optimizer = hetu.SGDOptimizer([hetu_in], lr = 0.5)
+                    torch_loss.backward()
+                    torch_optimizer.step()
+                    hetu_optimizer.minimize(hetu_loss)
+                    self.assertTrue(allclose(hetu_in, torch_in.detach().numpy()))
         print(sys._getframe().f_code.co_name)
     
     def test_pad_op(self):
@@ -1588,6 +1609,46 @@ class TestLossOps(unittest.TestCase):
 #                 #     self.assertTrue(allclose(inputs_hetu[i], inputs_tensor[i].detach().numpy()))
 #         print(sys._getframe().f_code.co_name)
 
+class TestDropoutOps(unittest.TestCase):
+
+    _test_shapes = [
+        (64, 32),
+        (16, 8, 32, 32),
+        (8, 16, 64)
+    ]
+
+    def test_dropout_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+
+            p = 0.5
+            hetu_out = hetu.dropout(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_scale = np.mean(np.abs(hetu_out_numpy[hetu_out_numpy != 0] / x_np[hetu_out_numpy != 0]))
+            self.assertTrue(abs(nonzero_scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
+
+    def test_dropout2d_op(self):
+        print(sys._getframe().f_code.co_name)
+        for shape in TestDropoutOps._test_shapes:
+            if len(shape) != 4:
+                continue
+            x_np = np.random.randn(*shape).astype(np.float32)
+            x = hetu.from_numpy(x_np)
+            
+            p = 0.5
+            hetu_out = hetu.dropout2d(x, p)
+
+            hetu_out_numpy = hetu_out.numpy(force=True)
+            nonzero_channels = hetu_out_numpy[~np.all(hetu_out_numpy == 0, axis=(2,3))]
+            if nonzero_channels.size > 0:
+                scale = np.mean(np.abs(nonzero_channels / x_np[~np.all(hetu_out_numpy == 0, axis=(2,3))]))
+                self.assertTrue(abs(scale - 1/(1-p)) < 0.1)
+        print(sys._getframe().f_code.co_name)
+
 class TestOtherOps(unittest.TestCase):
 
     _asstrided_test_shapes = [
@@ -1946,37 +2007,143 @@ class TestOtherOps(unittest.TestCase):
     #         print(attn_output2.numpy(force=True).flatten()[:10])
             
     #     print(sys._getframe().f_code.co_name)
-    _rotary_test_shapes = [((16, 16, 4, 64), (16, 16))]
+    
+    _rotary_test_shapes = [((16 * 16, 3 * 4 * 64), (16, 64)),
+                           ((8 * 32, 3 * 32 * 128), (32, 128))]
+    _rotary_test_packinig_shapes = [((16, 3 * 4 * 64), (16, 64), (0, 4, 16)),
+                                    ((1024, 3 * 32 * 256), (1024, 256), (0, 128, 512, 1024))]
     def test_rotaryop(self):
         print(sys._getframe().f_code.co_name)
-        for shape_x, shape_cos in TestOtherOps._rotary_test_shapes:
-            x_np = np.random.randn(*shape_x)
+
+        def rotary_torch(qkv_np: np.ndarray, cos_np: np.ndarray, sin_np: np.ndarray):
+            # qkv: (batch_size * seq_len, 3 * num_heads * head_dim)
+            # cos, sin: (seq_len, head_dim)
+            # packing情况下，qkv batch_size = 1, cos,sin 的seq_len应为当前的cur_seq_len
+            s, d = cos_np.shape
+            b = qkv_np.shape[0] // s
+            h = qkv_np.shape[1] // d // 3
+            qkv_t_ori = torch.tensor(qkv_np, requires_grad=GRAD_TEST)
+            qkv_t = qkv_t_ori.reshape(b, s, 3 * h, d).transpose(0, 1)
+            cos_t = torch.tensor(cos_np).reshape(s, 1, 1, d)
+            sin_t = torch.tensor(sin_np).reshape(s, 1, 1, d)
+            def _rotate_half(x):
+                from einops import rearrange
+                x = rearrange(x, '... (j d) -> ... j d', j=2)
+                x1, x2 = x.unbind(dim=-2)
+                return torch.cat((-x2, x1), dim=-1)
+            
+            def apply_rotary_torch(x, cos, sin):
+                # x shape: [seq_len, ..., head_dim]
+                # cos,sin shape: [seq_len, ..., head_dim]
+                return (x * cos) + (_rotate_half(x) * sin)
+            q_t, k_t, v_t = torch.chunk(qkv_t, 3, dim=-2)
+            q_t = apply_rotary_torch(q_t, cos_t, sin_t)
+            k_t = apply_rotary_torch(k_t, cos_t, sin_t)
+            qkv_gt = torch.concat([q_t, k_t, v_t], dim=-2).transpose(0, 1).reshape(*qkv_np.shape)
+            return qkv_t_ori, qkv_gt
+
+        for shape_qkv, shape_cos, cu_seqlens in TestOtherOps._rotary_test_packinig_shapes:
+            qkv_np = np.random.randn(*shape_qkv)
             cos_np = np.random.randn(*shape_cos)
             sin_np = np.random.randn(*shape_cos)
-            x = hetu.from_numpy(x_np)
-            cos = hetu.from_numpy(cos_np)
-            sin = hetu.from_numpy(sin_np)
-            from flash_attn.layers.rotary import apply_rotary_emb_func
-            x_t = torch.from_numpy(x_np).to("cuda")
-            cos_t = torch.from_numpy(cos_np).to("cuda")
-            sin_t = torch.from_numpy(sin_np).to("cuda")
-            gt = apply_rotary_emb_func(x_t, cos_t, sin_t).cpu().detach().numpy()
-            
-            self.assertTrue(allclose(hetu.rotary(x, cos, sin), gt))
+            cu_seqlens_np = np.array(cu_seqlens, dtype=np.int32)  # 注意类型必须是int32
+
+            qkv = hetu.Tensor(qkv_np, requires_grad=GRAD_TEST)
+            cos = hetu.Tensor(cos_np)
+            sin = hetu.Tensor(sin_np)
+            cu_seqlens_q = hetu.Tensor(cu_seqlens_np)
+            cu_seqlens_k = hetu.Tensor(cu_seqlens_np)
+            multi_seq_lens_symbol = [[hetu.IntSymbol(1)]]
+            multi_cp_group_symbol = [[hetu.IntSymbol(1)]]
+            max_seqlen_symbol = hetu.IntSymbol(1)
+            multi_seq_lens_symbol[0][0].set_data(shape_cos[0])
+            multi_cp_group_symbol[0][0].set_data(0)
+            max_seqlen_symbol.set_data(shape_cos[0])
+            qkv_out = hetu.rotary(
+                qkv, cos, sin,
+                shape_cos[1],
+                1,
+                multi_seq_lens_symbol,
+                multi_cp_group_symbol,
+                True,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_symbol,
+                max_seqlen_symbol,
+                inplace=False
+            )
+
+            qkv_t_ori_list = []
+            qkv_gt_list = []
+            for i in range(len(cu_seqlens) - 1):
+                cur_qkv_np = qkv_np[cu_seqlens[i]:cu_seqlens[i+1], :]
+                cur_cos_np = cos_np[:cu_seqlens[i+1]-cu_seqlens[i], :]
+                cur_sin_np = sin_np[:cu_seqlens[i+1]-cu_seqlens[i], :]
+
+                cur_qkv_t_ori, cur_qkv_gt = rotary_torch(cur_qkv_np, cur_cos_np, cur_sin_np)
+                qkv_t_ori_list.append(cur_qkv_t_ori)
+                qkv_gt_list.append(cur_qkv_gt)
+            qkv_t_ori = torch.concat(qkv_t_ori_list, dim=0)
+            qkv_gt = torch.concat(qkv_gt_list, dim=0)
+
+            self.assertTrue(allclose(qkv_out, qkv_gt.detach().numpy()))
 
             if GRAD_TEST:
-                torch_x = torch.tensor(x_np, requires_grad=True, device = "cuda")
-                torch_out = apply_rotary_emb_func(torch_x, cos_t, sin_t)
-                torch_loss = torch_out.sum()
-                torch_optimizer = optim.SGD([torch_x], lr = 0.5)
-                hetu_x = hetu.Tensor(x_np, requires_grad=True)
-                hetu_out = hetu.rotary(hetu_x, cos, sin)
-                hetu_loss = hetu_out.sum()
-                hetu_optimizer = hetu.SGDOptimizer([hetu_x], lr = 0.5)
+                hetu_loss = qkv_out.sum()
+                hetu_optimizer = hetu.SGDOptimizer([qkv], lr = 0.5)
+                hetu_optimizer.minimize(hetu_loss)
+
+                torch_loss = qkv_gt.sum()
+                torch_optimizer = optim.SGD([x for x in qkv_t_ori_list], lr = 0.5)
                 torch_loss.backward()
                 torch_optimizer.step()
+
+                self.assertTrue(allclose(qkv, torch.concat(qkv_t_ori_list, dim=0).detach().numpy()))
+
+
+        for shape_qkv, shape_cos in TestOtherOps._rotary_test_shapes:
+            qkv_np = np.random.randn(*shape_qkv)
+            cos_np = np.random.randn(*shape_cos)
+            sin_np = np.random.randn(*shape_cos)
+
+            qkv = hetu.Tensor(qkv_np, requires_grad=GRAD_TEST)
+            cos = hetu.Tensor(cos_np)
+            sin = hetu.Tensor(sin_np)
+            multi_seq_lens_symbol = [[hetu.IntSymbol(1)]]
+            multi_cp_group_symbol = [[hetu.IntSymbol(1)]]
+            max_seqlen_symbol = hetu.IntSymbol(1)
+            multi_seq_lens_symbol[0][0].set_data(shape_cos[0])
+            multi_cp_group_symbol[0][0].set_data(0)
+            max_seqlen_symbol.set_data(shape_cos[0])
+            qkv_out = hetu.rotary(
+                qkv, cos, sin,
+                shape_cos[1],
+                1,
+                multi_seq_lens_symbol,
+                multi_cp_group_symbol,
+                False,
+                None,
+                None,
+                max_seqlen_symbol,
+                max_seqlen_symbol,
+                inplace=False
+            )
+
+            qkv_t_ori, qkv_gt = rotary_torch(qkv_np, cos_np, sin_np)
+
+            self.assertTrue(allclose(qkv_out, qkv_gt.detach().numpy()))
+
+            if GRAD_TEST:
+                hetu_loss = qkv_out.sum()
+                hetu_optimizer = hetu.SGDOptimizer([qkv], lr = 0.5)
                 hetu_optimizer.minimize(hetu_loss)
-                self.assertTrue(allclose(hetu_x, torch_x.cpu().detach().numpy()))
+
+                torch_loss = qkv_gt.sum()
+                torch_optimizer = optim.SGD([qkv_t_ori], lr = 0.5)
+                torch_loss.backward()
+                torch_optimizer.step()
+
+                self.assertTrue(allclose(qkv, qkv_t_ori.detach().numpy()))
         print(sys._getframe().f_code.co_name)
 
 

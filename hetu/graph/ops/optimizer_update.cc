@@ -220,7 +220,8 @@ void AdamOpImpl::DoCompute(Operator& op, const NDArrayList& inputs,
 // support zero
 // update op needn't deduce states
 void AdamOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                                const OpMeta& op_meta) const {
+                                const OpMeta& op_meta,
+                                const InstantiationContext& inst_ctx) const {
   HT_RUNTIME_ERROR << "optimizer op shouldn't deduce states";
   const DistributedStates& ds_param = inputs.at(0)->get_distributed_states();
   const DistributedStates& ds_grad = inputs.at(1)->get_distributed_states();
@@ -239,7 +240,8 @@ void AdamOpImpl::DoDeduceStates(const TensorList& inputs, TensorList& outputs,
 
 // update op needn't deduce states
 void AdamOpImpl::DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                                   TensorList& outputs, const OpMeta& op_meta) const {
+                                   TensorList& outputs, const OpMeta& op_meta,
+                                   const InstantiationContext& inst_ctx) const {
   HT_RUNTIME_ERROR << "optimizer op shouldn't deduce states";
   outputs.at(0)->cur_ds_union().set_hetero_dim(inputs_hetero_dim.at(0));
 }

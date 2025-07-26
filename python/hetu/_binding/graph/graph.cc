@@ -112,9 +112,9 @@ PyObject* PyGraph_run(PyGraph* self, PyObject* args, PyObject* kwargs) {
     "run(List[Tensor] fetches, FeedDict feed_dict=None)",
     "run(Tensor loss, Tensor fetch, FeedDict feed_dict=None, IntSymbolDict int_symbol_dict=None, int num_micro_batches=1)", 
     "run(Tensor loss, List[Tensor] fetches, FeedDict feed_dict=None, IntSymbolDict int_symbol_dict=None, int num_micro_batches=1, \
-         int cur_strategy_id=0, int run_level=0, bool save_checkpoint=False, double grad_scale=1)",
+         int cur_strategy_id=0, int run_level=0, bool save_checkpoint=False, double grad_scale=1, int num_tokens=0)",
     "run(Tensor loss, List[Tensor] fetches, FeedDict feed_dict=None, IntSymbolDict int_symbol_dict=None, int num_micro_batches=1, \
-         int compute_strategy_id=0, int optimize_strategy_id=0, int run_level=0, bool save_checkpoint=False, double grad_scale=1)"
+         int compute_strategy_id=0, int optimize_strategy_id=0, int run_level=0, bool save_checkpoint=False, double grad_scale=1, int num_tokens=0)"
   });
   auto parsed_args = parser.parse(args, kwargs);
   if (parsed_args.signature_index() == 0) {
@@ -133,7 +133,16 @@ PyObject* PyGraph_run(PyGraph* self, PyObject* args, PyObject* kwargs) {
       parsed_args.get_int_symbol_dict_or_empty(3),
       parsed_args.get_int64_or_default(4)));
   } else if (parsed_args.signature_index() == 3) {
-    return PyNDArrayList_New(Graph::GetGraph(self->graph_id).Run(
+    auto run_level = static_cast<RunLevel>(parsed_args.get_int64_or_default(6));
+    auto acc_num_tokens = Graph::GetGraph(self->graph_id).num_tokens();
+    if (run_level == RunLevel::GRAD || run_level == RunLevel::UPDATE) {
+      auto num_tokens = parsed_args.get_int64_or_default(9);
+      acc_num_tokens += num_tokens;
+      Graph::GetGraph(self->graph_id).set_num_tokens(acc_num_tokens);
+    }
+    auto* ret = PyTuple_New(2);
+    PyTuple_SET_ITEM(ret, 1, PyLong_FromInteger(acc_num_tokens));
+    PyObject* results = PyNDArrayList_New(Graph::GetGraph(self->graph_id).Run(
       parsed_args.get_tensor(0),
       parsed_args.get_tensor_list(1), 
       parsed_args.get_feed_dict_or_empty(2),
@@ -144,8 +153,22 @@ PyObject* PyGraph_run(PyGraph* self, PyObject* args, PyObject* kwargs) {
       static_cast<RunLevel>(parsed_args.get_int64_or_default(6)),
       parsed_args.get_bool_or_default(7),
       parsed_args.get_float64_or_default(8)));
+    if (run_level == RunLevel::UPDATE) {
+      Graph::GetGraph(self->graph_id).set_num_tokens(0);
+    }
+    PyTuple_SET_ITEM(ret, 0, results);
+    return ret;
   } else if (parsed_args.signature_index() == 4) {
-    return PyNDArrayList_New(Graph::GetGraph(self->graph_id).Run(
+    auto run_level = static_cast<RunLevel>(parsed_args.get_int64_or_default(7));
+    auto acc_num_tokens = Graph::GetGraph(self->graph_id).num_tokens();
+    if (run_level == RunLevel::GRAD || run_level == RunLevel::UPDATE) {
+      auto num_tokens = parsed_args.get_int64_or_default(10);
+      acc_num_tokens += num_tokens;
+      Graph::GetGraph(self->graph_id).set_num_tokens(acc_num_tokens);
+    }
+    auto* ret = PyTuple_New(2);
+    PyTuple_SET_ITEM(ret, 1, PyLong_FromInteger(acc_num_tokens));
+    PyObject* results = PyNDArrayList_New(Graph::GetGraph(self->graph_id).Run(
       parsed_args.get_tensor(0),
       parsed_args.get_tensor_list(1), 
       parsed_args.get_feed_dict_or_empty(2),
@@ -156,6 +179,11 @@ PyObject* PyGraph_run(PyGraph* self, PyObject* args, PyObject* kwargs) {
       static_cast<RunLevel>(parsed_args.get_int64_or_default(7)),
       parsed_args.get_bool_or_default(8),
       parsed_args.get_float64_or_default(9)));
+    if (run_level == RunLevel::UPDATE) {
+      Graph::GetGraph(self->graph_id).set_num_tokens(0);
+    }
+    PyTuple_SET_ITEM(ret, 0, results);
+    return ret;
   } else {
     HT_PY_PARSER_INCORRECT_SIGNATURE(parsed_args);
     __builtin_unreachable();

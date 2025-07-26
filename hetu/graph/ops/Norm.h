@@ -36,7 +36,7 @@ class NormOpImpl final : public OpInterface {
   
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape outshape = inputs[0]->shape();
     if (inputs[0]->has_shape()) {
       int64_t axi = dim() >= 0? dim(): dim() + outshape.size();
@@ -55,7 +55,8 @@ class NormOpImpl final : public OpInterface {
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;
@@ -107,12 +108,13 @@ class NormGradientOpImpl final : public OpInterface {
 
  protected:
   std::vector<NDArrayMeta> 
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     return {inputs[0]->meta()};
   };
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
-                      const OpMeta& op_meta) const override;  
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;  
 
   void DoCompute(Operator& op, const NDArrayList& inputs, NDArrayList& outputs,
                  RuntimeContext& ctx) const override;

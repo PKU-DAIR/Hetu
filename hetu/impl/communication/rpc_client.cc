@@ -1,4 +1,5 @@
 #include "hetu/impl/communication/rpc_client.h"
+#include "hetu/common/except.h"
 #include "hetu/common/logging.h"
 
 namespace hetu {
@@ -22,12 +23,12 @@ int DeviceClient::Connect(const std::string& hostname) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
 
-int DeviceClient::GetRank(const std::string& user) {
+std::pair<int, int> DeviceClient::GetRank(const std::string& user) {
   // Data we are sending to the server.
   RankRequest request;
   request.set_name(user);
@@ -44,9 +45,9 @@ int DeviceClient::GetRank(const std::string& user) {
 
   // Act upon its status.
   if (status.ok()) {
-    return reply.rank();
+    return std::pair<int, int>(reply.rank(), reply.local_device());
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -71,7 +72,7 @@ int DeviceClient::CommitHostName(const std::string& hostname, int rank) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -95,7 +96,7 @@ std::string DeviceClient::GetHostName(int rank) {
   if (status.ok()) {
     return reply.hostname();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -122,7 +123,7 @@ int DeviceClient::CommitDeviceInfo(int type, int index, int multiplex, int rank)
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -150,7 +151,7 @@ DeviceInfoReply DeviceClient::GetDeviceInfo(int rank) {
     out.multiplex = reply.multiplex();
     return out;
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -177,7 +178,7 @@ int DeviceClient::CommitNcclId(const std::string& nccl_id, const std::vector<int
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -203,7 +204,7 @@ std::string DeviceClient::GetNcclId(const std::vector<int>& world_rank, int stre
   if (status.ok()) {
     return reply.nccl_id();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -228,7 +229,7 @@ int DeviceClient::Exit(int rank) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -254,7 +255,7 @@ int DeviceClient::PutDouble(const std::string& key, double value) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -280,7 +281,7 @@ double DeviceClient::GetDouble(const std::string& key) {
   if (status.ok()) {
     return reply.value();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -305,7 +306,7 @@ std::string DeviceClient::RemoveDouble(const std::string& key) {
   if (status.ok()) {
     return reply.message();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -331,7 +332,7 @@ int DeviceClient::PutInt(const std::string& key, int64_t value) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -357,7 +358,7 @@ int64_t DeviceClient::GetInt(const std::string& key) {
   if (status.ok()) {
     return reply.value();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -382,7 +383,7 @@ std::string DeviceClient::RemoveInt(const std::string& key) {
   if (status.ok()) {
     return reply.message();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -408,7 +409,7 @@ int DeviceClient::PutString(const std::string& key, const std::string& value) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -460,7 +461,7 @@ std::string DeviceClient::RemoveString(const std::string& key) {
   if (status.ok()) {
     return reply.message();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -486,7 +487,7 @@ int DeviceClient::PutBytes(const std::string& key, const std::string& value) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -512,7 +513,7 @@ std::string DeviceClient::GetBytes(const std::string& key) {
   if (status.ok()) {
     return reply.value();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -537,7 +538,7 @@ std::string DeviceClient::RemoveBytes(const std::string& key) {
   if (status.ok()) {
     return reply.message();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -563,7 +564,7 @@ int DeviceClient::PutJson(const std::string& key, const json& value) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -591,7 +592,7 @@ json DeviceClient::GetJson(const std::string& key) {
     json output = json::parse(output_string);
     return output;
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -616,7 +617,7 @@ std::string DeviceClient::RemoveJson(const std::string& key) {
   if (status.ok()) {
     return reply.message();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -642,7 +643,34 @@ int DeviceClient::Barrier(int rank, const std::vector<int>& world_rank) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
+    __builtin_unreachable();
+  }
+}
+
+int DeviceClient::Consistent(int rank, int value, const std::vector<int>& world_rank) {
+  // Data we are sending to the server.
+  ConsistentRequest request;
+  request.set_rank(rank);
+  request.set_value(value);
+  for (auto rank_: world_rank)
+    request.add_world_rank(rank_);
+
+  // Container for the data we expect from the server.
+  ConsistentReply reply;
+
+  // Context for the client. It could be used to convey extra information to
+  // the server and/or tweak certain RPC behaviors.
+  ClientContext context;
+
+  // The actual RPC.
+  Status status = stub_->Consistent(&context, request, &reply);
+
+  // Act upon its status.
+  if (status.ok()) {
+    return reply.status();
+  } else {
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }
@@ -666,7 +694,7 @@ int DeviceClient::HeartBeat(int rank) {
   if (status.ok()) {
     return reply.status();
   } else {
-    HT_LOG_ERROR << status.error_code() << ": " << status.error_message();
+    HT_RUNTIME_ERROR << status.error_code() << ": " << status.error_message();
     __builtin_unreachable();
   }
 }

@@ -25,7 +25,7 @@ class TransposeOpImpl final : public ViewsOpImpl {
 
  protected:
   std::vector<NDArrayMeta>
-  DoInferMeta(const TensorList& inputs) const override {
+  DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const override {
     HTShape res_shape = {};
     HTShape res_stride = {};
     if (inputs[0]->has_shape()) {
@@ -56,10 +56,12 @@ class TransposeOpImpl final : public ViewsOpImpl {
   }
 
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs,
-                      const OpMeta& op_meta) const override;
+                      const OpMeta& op_meta,
+                      const InstantiationContext& inst_ctx) const override;
 
   void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
-                         TensorList& outputs, const OpMeta& op_meta) const override;
+                         TensorList& outputs, const OpMeta& op_meta,
+                         const InstantiationContext& inst_ctx) const override;
   
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
