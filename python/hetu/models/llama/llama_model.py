@@ -285,17 +285,7 @@ class LlamaAttention(ht.nn.Module):
                 None,
             )[0]
         
-        '''
-        # [mbs, seq_len, num_heads, 3 * head_dim]
-        qkv = qkv.reshape([self.config.mbs_times_dp_symbol, self.config.seq_len_symbol, ht.IntSymbol(self.num_heads), ht.IntSymbol(3 * self.head_dim)])
-        # [mbs, seq_len, num_heads, head_dim]
-        query, key, value = ht.split(qkv, 3, qkv.ndim - 1)
-        attn_output = ht.attn(query, key, value, 0, -1, True)[0]
-        # [mbs * seq_len, num_heads * head_dim]
-        attn_output = attn_output.reshape([self.config.mbs_times_dp_symbol * self.config.seq_len_symbol, ht.IntSymbol(self.num_heads * self.head_dim)])
-        '''
-        
-        # row parallel, shape = [mbs * seq_len, num_heads * head_dim]
+        # row parallel, shape=[micro_batch_size*seq_len, num_heads*head_dim]
         attn_output = self.dense(attn_output)
         return attn_output
 
@@ -371,8 +361,8 @@ class LlamaBlock(ht.nn.Module):
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
         attn_output = self.attn(
-            hidden_states, # [b, seq_len, hidden_size]
-            attention_mask=attention_mask # [b, 1, 1, seq_len]
+            hidden_states, # [b * seq_len, hidden_size]
+            attention_mask=attention_mask, # [b, 1, 1, seq_len]
         )
         # residual connection
         hidden_states = attn_output + residual
@@ -413,6 +403,7 @@ class LlamaModel(LlamaPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
     ):
+        # all seqs in the same micro batch are packed into one seq
         # input_ids: [b * seq_len]        
         # token_type_ids: [b * seq_len]
         if token_type_ids is not None:
@@ -434,11 +425,11 @@ class LlamaModel(LlamaPreTrainedModel):
             else:
                 hidden_states = ht.comm(hidden_states, self.h[0].ln_1.ds_union_map['split0'])
 
-        # 12 x multihead self-attn
+        # multihead self-attn
         for i, block in enumerate(self.h):
             hidden_states = block(
                 hidden_states, # [b * seq_len, embed_dim]
-                attention_mask=attention_mask # [b, 1, 1, seq_len]
+                attention_mask=attention_mask, # [b, 1, 1, seq_len]
             )
             
             # for hetero pipeline
@@ -470,11 +461,10 @@ class LlamaLMHeadModel(LlamaPreTrainedModel):
         )
 
     def forward(
-        self, 
+        self,
         input_ids=None,
         position_ids=None,
         attention_mask=None,
-        loss_mask=None,
         token_type_ids=None,
         labels=None
     ):
@@ -485,13 +475,7 @@ class LlamaLMHeadModel(LlamaPreTrainedModel):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
         )
-        
-        '''
-        # need allgather here: [b * s // tp, h] -> [b * s, h]
-        if not hidden_states.check_ds_hierarchy_equal(self.lm_head.ds_union_map['split0_dup']):
-            hidden_states = ht.comm(hidden_states, self.lm_head.ds_union_map['split0_dup'])
-        '''
-        
+
         # column parallel, [b * seq_len, n_embd] -> [b * seq_len, vocab_size], and splited in vocab dimension
         lm_logits = self.lm_head(hidden_states)
 
