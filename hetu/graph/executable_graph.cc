@@ -1047,10 +1047,6 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
     NDArrayList input_vals;
     input_vals.reserve(op->num_inputs());
     for(int i = 0; i < op->num_inputs(); i++){
-      if(!op->is_need_for_computation(i)) {
-        input_vals.push_back(NDArray());
-        continue;
-      }
       auto& input = op->input(i);
       HT_ASSERT(input.is_defined())
         << op << " has an undefined input, it cannot run";
@@ -1403,14 +1399,9 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
   // get consume times for each tensor
   Tensor2IntMap tensor2degrees;
   for (auto& op_ref : _execute_plan.local_topo) {
-    for(int i = 0; i < op_ref.get()->num_inputs(); i++) {
-      if(op_ref.get()->is_need_for_computation(i)) {
-        tensor2degrees[op_ref.get()->input(i)->id()]++;
-      }
+    for (auto& input : op_ref.get()->inputs()) {
+      tensor2degrees[input->id()]++;
     }
-    // for (auto& input : op_ref.get()->inputs()) {
-    //   tensor2degrees[input->id()]++;
-    // }
   }
   for (int i = 0; i < num_micro_batches; i++) {
     tensor2degrees_list[i] = tensor2degrees;

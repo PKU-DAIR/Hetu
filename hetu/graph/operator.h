@@ -423,10 +423,6 @@ class OpInterface : public shared_ptr_target {
     return _type;
   }
 
-  bool is_need_for_computation(int64_t idx) const { // 第idx个输入是否需要参与computation
-    return _inputs_dont_need_for_computation.find(idx) == _inputs_dont_need_for_computation.end();
-  }
-
   virtual bool require_contig_inputs() const {
     return true;
   }
@@ -602,8 +598,6 @@ class OpInterface : public shared_ptr_target {
   }
 
   // Tracks which inputs are needed for actual computation vs. just infer ds and shape.   
-  // Some inputs are only used for shape/ds inference but not computation, allowing early memory release (e.g., AddElewiseGradientOp)
-  std::unordered_set<int64_t> _inputs_dont_need_for_computation;
   const OpType _type;
 };
 
@@ -777,10 +771,6 @@ class OpDef : public shared_ptr_target {
   OpInterface& body() {
     return *_body;
   }  
-
-  bool is_need_for_computation(int64_t idx) const { // 第idx个输入是否需要参与computation
-    return _body->is_need_for_computation(idx);
-  }
 
   const OpName& name() const noexcept {
     return _op_meta.name;

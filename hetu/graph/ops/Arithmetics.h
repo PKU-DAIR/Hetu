@@ -602,7 +602,6 @@ class AddElewiseGradientOpImpl final : public BinaryGradientOpImpl {
  public:
   AddElewiseGradientOpImpl(HTAxes axe, HTKeepDims keep_dims, int index)
   : BinaryGradientOpImpl(quote(AddElewiseGradientOp), axe, keep_dims, index) {
-    _inputs_dont_need_for_computation.insert(1); // input #1 does not need to participate in computation
   }
 
  protected:
