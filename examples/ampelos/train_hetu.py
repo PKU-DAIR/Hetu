@@ -2,8 +2,8 @@ import os
 import signal
 import math
 import hetu as ht
-from hetu_llama import LLaMALMHeadModel
-from hetu.utils.parallel import config2ds
+from hetu_llama import LLamaLMHeadModel
+from hetu.nn.modules.parallel_multi_ds import config2ds
 from gpt_config import GPTConfig
 from data_utils import GPTJsonDataset, get_mask_and_position_ids, build_pretraining_data_loader
 import numpy as np
@@ -155,7 +155,7 @@ def pretrain(args):
         f'gpt blocks range: {ranges} is conflict with num_hidden_layers: {config.num_hidden_layers}!'
 
     # Hetu model definition
-    model = LLaMALMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
+    model = LLamaLMHeadModel(config=config, ds_parallel_configs=ds_parallel_configs)
     
     input_ds_hierarchy, input_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'input')
     label_ds_hierarchy, label_dg_hierarchy = parse_multi_ds_parallel_config(ds_parallel_configs, 'label')

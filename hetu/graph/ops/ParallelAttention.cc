@@ -9,7 +9,7 @@ namespace hetu {
 namespace graph {
 
 /****************************************************************
- ---------------------- Parallel Attn Impl ---------------------- 
+ ---------------------- Parallel Attn Impl ----------------------
 *****************************************************************/
 
 std::ostream& operator<<(std::ostream& os, const std::vector<std::pair<int32_t, int32_t>>& vec) {
@@ -63,12 +63,7 @@ static int64_t get_local_seq_len(const Tensor& input, const SyShapeList& multi_s
     << "ds union size and seq lens symbol size should be matched";
   auto& seq_lens_symbol = multi_seq_lens_symbol[graph.COMPUTE_STRATEGY_ID];
   if (graph.USE_HETERO_ID) {
-    if(graph.CUR_HETERO_ID < seq_lens_symbol.size()) {
-      return seq_lens_symbol.at(graph.CUR_HETERO_ID)->get_val();
-    }
-    else{
-      return seq_lens_symbol.at(0)->get_val();
-    }
+    return seq_lens_symbol.at(graph.CUR_HETERO_ID)->get_val();
   } else {
     HT_ASSERT(input->has_placement_group())
       << "should guarantee " << input << " has deduced placement group union";

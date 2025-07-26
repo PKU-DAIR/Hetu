@@ -152,15 +152,7 @@ def generate_ds_parallel_config(ngpus, layers_tp_groups, ds_parallel_config_path
 
             },
             'rmsnorm_final': {
-<<<<<<< HEAD
-<<<<<<< HEAD
-                'split': {0: [tp_union_list[-1][i] for i in range(dp)]},
-=======
                 'split': {'0': tp_union_list[-1]},
->>>>>>> lhy/main
-=======
-                'split': {'0': tp_union_list[-1]},
->>>>>>> upstream/main
                 'dup': dp_union,
                 'device_group_union': dg_union_list[-1],
                 'type': 'variable'
@@ -186,15 +178,7 @@ def generate_ds_parallel_config(ngpus, layers_tp_groups, ds_parallel_config_path
             'range': [block_id,],
             'recompute': [False for _ in range(dp)],
             'rmsnorm1': {
-<<<<<<< HEAD
-<<<<<<< HEAD
-                'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},
-=======
                 'split': {'0': tp_union_list[block_id]},
->>>>>>> lhy/main
-=======
-                'split': {'0': tp_union_list[block_id]},
->>>>>>> upstream/main
                 'dup': dp_union,
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
@@ -214,15 +198,7 @@ def generate_ds_parallel_config(ngpus, layers_tp_groups, ds_parallel_config_path
                 }
             },
             'rmsnorm2': {
-<<<<<<< HEAD
-<<<<<<< HEAD
-                'split': {'0': [tp_union_list[block_id][i] for i in range(dp)]},
-=======
                 'split': {'0': tp_union_list[block_id]},
->>>>>>> lhy/main
-=======
-                'split': {'0': tp_union_list[block_id]},
->>>>>>> upstream/main
                 'dup': dp_union,
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
@@ -246,5 +222,3 @@ def generate_ds_parallel_config(ngpus, layers_tp_groups, ds_parallel_config_path
         }
            
     write_with_lock(ds_parallel_config_path, ds_parallel_config)
-
-

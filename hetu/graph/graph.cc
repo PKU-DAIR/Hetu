@@ -464,17 +464,6 @@ TensorList Graph::Gradients(const TensorList& ys, const TensorList& xs,
       } 
       HT_LOG_TRACE << "Gradient op outputs are " << grad_inputs;
 
-      for(auto& grad_output : grad_outputs){
-        if(grad_output.is_defined()){
-          HT_LOG_TRACE << "Gradient op output is " << grad_output << ' ' << grad_output->cur_ds_union().ds_union_info() << std::endl;
-        }
-      }      
-      for(auto& grad_input : grad_inputs){
-        if(grad_input.is_defined()){
-          HT_LOG_TRACE << "Gradient op input is " << grad_input << ' ' << grad_input->cur_ds_union().ds_union_info() << std::endl;
-        }
-      }
-
 
       // states deduce
       // 如出现partial需要自动将其转化为dup或split

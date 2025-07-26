@@ -3,7 +3,7 @@ import json
 import os
 import ast
 
-def generate_gpt_4d_config(recompute_layers, num_layers=32, num_gpus=8, dp=2, cp=1, tp=2, pp=2, zero=True):
+def generate_gpt_3d_config(recompute_layers, num_layers=32, num_gpus=8, dp=2, cp=1, tp=2, pp=2, zero=True):
     if dp == 1:
         zero = False
     num_layers_per_stage = num_layers // pp
@@ -35,15 +35,9 @@ def generate_gpt_4d_config(recompute_layers, num_layers=32, num_gpus=8, dp=2, cp
             'blocks': {
 
             },
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_4d_config.py
-            'layernorm_final': {
-                'split': {'0': [tp]},
-                'dup': [dp * cp],
-========
             'rmsnorm_final': {
                 'split': {},
                 'dup': [dp * cp * tp],
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_3d_config.py
                 'device_group_union': [device_groups[-1]],
                 'type': 'variable'
             }
@@ -70,15 +64,9 @@ def generate_gpt_4d_config(recompute_layers, num_layers=32, num_gpus=8, dp=2, cp
             blocks_json[f'blocks{block_id}'] = {
                 'range': [block_id,],
                 'recompute': [True if block_id in recompute_layers else False],
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_4d_config.py
-                'layernorm1': {
-                    'split': {'0': [tp]},
-                    'dup': [dp * cp],
-========
                 'rmsnorm1': {
                     'split': {},
                     'dup': [dp * cp * tp],
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_3d_config.py
                     'device_group_union': [device_groups[stage_id]],
                     'type': 'variable'
                 },
@@ -96,15 +84,9 @@ def generate_gpt_4d_config(recompute_layers, num_layers=32, num_gpus=8, dp=2, cp
                         'type': 'variable'
                     }
                 },
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_4d_config.py
-                'layernorm2': {
-                    'split': {'0': [tp]},
-                    'dup': [dp * cp],
-========
                 'rmsnorm2': {
                     'split': {},
                     'dup': [dp * cp * tp],
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_3d_config.py
                     'device_group_union': [device_groups[stage_id]],
                     'type': 'variable'
                 },
@@ -149,7 +131,7 @@ if __name__ == '__main__':
         '--zero', action='store_true', help='use zero or not.'
     )
     parser.add_argument(
-        '--recompute_layers', type=str, default="[]", help='layers to recompute.'
+        '--recompute_layers', type=str, default="[]", help='layers to recompute'
     )
     args = parser.parse_args()
     num_layers = args.num_layers
@@ -157,20 +139,14 @@ if __name__ == '__main__':
     assert args.dp * args.cp * args.tp * args.pp == args.num_gpus, \
             f'dp * cp * tp * pp = {args.dp * args.cp * args.tp * args.pp} is not equal to num_gpus {args.num_gpus}!'
     
-    ds_parallel_config = generate_gpt_4d_config(ast.literal_eval(args.recompute_layers), num_layers, args.num_gpus, args.dp, args.cp, args.tp, args.pp, args.zero)
+    ds_parallel_config = generate_gpt_3d_config(ast.literal_eval(args.recompute_layers), num_layers, args.num_gpus, args.dp, args.cp, args.tp, args.pp, args.zero)
     
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_4d_config.py
-    save_folder = './ds_parallel_config/gpt_homo'
-    file_name = f'dp{args.dp}_cp{args.cp}_tp{args.tp}_pp{args.pp}.json'
-========
     # save_folder = './ds_parallel_config/homo'
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     save_folder = cur_dir + "/homo"
     file_name = f'dcp{args.dp * args.cp}_tp{args.tp}_pp{args.pp}.json'
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_3d_config.py
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
     with open(f'{save_folder}/{file_name}', 'w') as f:
         json.dump(ds_parallel_config, f, indent=4)
     print(os.path.abspath(f'{save_folder}/{file_name}'))
-

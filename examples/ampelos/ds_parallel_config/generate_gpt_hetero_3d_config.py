@@ -3,13 +3,9 @@ import json
 import os
 import ast
 
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_hetero_4d_config.py
-def generate_gpt_hetero_4d_config(cp_list, rank_to_device_mapping, unused_rank, hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers=32, num_gpus=8, dp=2, tp=2, zero=True):
-========
 def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank, 
                            hetero_layers, accumulate_hetero_stages, recompute_layers, 
                            num_layers=32, num_gpus=8, dp=2, tp=2, pp=2, zero=True):
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_hetero_3d_config.py
     if dp == 1:
         zero = False
     
@@ -64,18 +60,12 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
             'blocks': {
 
             },
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_hetero_4d_config.py
-            'layernorm_final': {
-                'split': {'0': tp_union_list[-1]},
-                'dup': dp_cp_union,
-========
             'rmsnorm_final': {
                 # 'split': {'0': tp_union_list[-1]},
                 'split': {},
                 'dup': [tp_union_list[-1][i] * dp_cp for i in range(dp_cp)],
                 # 'split': {0: tp_union_list[-1]},
                 # 'dup': dp_cp_union,
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_hetero_3d_config.py
                 'device_group_union': dg_union_list[-1],
                 'type': 'variable'
             }
@@ -99,18 +89,12 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
         blocks_json[f'blocks{block_id}'] = {
             'range': [block_id,],
             'recompute': [(True if block_id in recompute_layers[i] else False) for i in range(dp_cp)],
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_hetero_4d_config.py
-            'layernorm1': {
-                'split': {'0': tp_union_list[block_id]},
-                'dup': dp_cp_union,
-========
             'rmsnorm1': {
                 # 'split': {'0': tp_union_list[block_id]},
                 'split': {},
                 'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 # 'split': {0: tp_union_list[block_id]},
                 # 'dup': dp_cp_union,
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_hetero_3d_config.py
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },
@@ -128,18 +112,12 @@ def generate_gpt_3d_config(cp_list, rank_to_device_mapping, unused_rank,
                     'type': 'variable'
                 }
             },
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_hetero_4d_config.py
-            'layernorm2': {
-                'split': {'0': tp_union_list[block_id]},
-                'dup': dp_cp_union,
-========
             'rmsnorm2': {
                 # 'split': {'0': tp_union_list[block_id]},
                 'split': {},
                 'dup': [tp_union_list[block_id][i] * dp_cp for i in range(dp_cp)],
                 # 'split': {0: tp_union_list[block_id]},
                 # 'dup': dp_cp_union,
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_hetero_3d_config.py
                 'device_group_union': dg_union_list[block_id],
                 'type': 'variable'
             },
@@ -173,10 +151,16 @@ if __name__ == '__main__':
         '--dp', type=int, default=2, help='dp.'
     )
     parser.add_argument(
-        '--cp_list', type=str, default="", help='cp list.'
+        '--cp_list', type=str, default="[]", help='cp list.'
     )
     parser.add_argument(
         '--tp', type=int, default=2, help='tp.'
+    )
+    parser.add_argument(
+        '--pp', type=int, default=2, help='pp.'
+    )
+    parser.add_argument(
+        '--hetero_stages', type=str, default="[]", help='heterogenous stages list.'
     )
     parser.add_argument(
         '--hetero_layers', type=str, help='heterogenous layers list.'
@@ -191,50 +175,54 @@ if __name__ == '__main__':
         '--zero', action='store_true', help='use zero or not.'
     )
     parser.add_argument(
-        '--recompute_layers', type=str, default="", help='layers to recompute.'
+        '--recompute_layers', type=str, default="[]", help='layers to recompute'
     )
     parser.add_argument(
-        '--file_name', type=str, default="", help="file path to save."
+        '--file_name', type=str, default=""
     )
     args = parser.parse_args()
     
-    if args.cp_list == "":
+    if args.cp_list == "[]":
         cp_list = [1 for _ in range(args.dp)]
     else:
         cp_list = ast.literal_eval(args.cp_list)
         assert len(cp_list) == args.dp, "len of cp list should be equal to dp"
     
     num_layers = args.num_layers
-    hetero_layers = ast.literal_eval(args.hetero_layers)
-    assert len(hetero_layers) == sum(cp_list), "number  of pipelines should be equal to dcp"
+    hetero_layers = args.hetero_layers.split(",")
+    # assert len(hetero_layers) == args.dp * args.pp, "size of heterogenous layers list should be equal to dp * pp"
+    if args.hetero_stages == "[]":
+        hetero_stages = [args.pp for _ in range(sum(cp_list))]
+    else:
+        hetero_stages = ast.literal_eval(args.hetero_stages)
+    accumulate_val = 0
     accumulate_hetero_stages = [0,]
+    for val in hetero_stages:
+        accumulate_val += val
+        accumulate_hetero_stages.append(accumulate_val)
+    hetero_layers = [[int(hetero_layers[j]) for j in range(accumulate_hetero_stages[i], accumulate_hetero_stages[i + 1])] for i in range(sum(cp_list))]
     for pipeline in hetero_layers:
         assert sum(pipeline) == num_layers, "sum of heterogenous layers of a single pipeline should be equal to the num of total layers"
-        accumulate_hetero_stages.append(accumulate_hetero_stages[-1] + len(pipeline))
+        
+    assert sum(cp_list) * args.tp * args.pp == args.num_gpus, \
+        f'dcp * tp * pp = {sum(cp_list) * args.tp * args.pp} is not equal to num_gpus {args.num_gpus}!'
      
+    rank_to_device_mapping = {}       
     if args.rank_to_device_mapping == "":
-        rank_to_device_mapping = {}       
         for idx in range(args.num_gpus):
             rank_to_device_mapping[idx] = idx
     else:
         rank_to_device_mapping = ast.literal_eval(args.rank_to_device_mapping)
-     
-    if args.recompute_layers == "":   
-        recompute_layers = [[] for _ in range(sum(cp_list))]
-    else:
-        recompute_layers = ast.literal_eval(args.recompute_layers)
-        assert len(recompute_layers) == sum(cp_list), "recompute layers state should align to dcp num"  
         
-    ds_parallel_config = generate_gpt_hetero_4d_config(cp_list, rank_to_device_mapping, ast.literal_eval(args.unused_rank), hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers, args.num_gpus, args.dp, args.tp, args.zero)
+    recompute_layers = ast.literal_eval(args.recompute_layers)
+    assert len(recompute_layers) == sum(cp_list), "recompute layers state should align to dp&cp num"  
+        
+    ds_parallel_config = generate_gpt_3d_config(cp_list, rank_to_device_mapping, ast.literal_eval(args.unused_rank), hetero_layers, accumulate_hetero_stages, recompute_layers, num_layers, args.num_gpus, args.dp, args.tp, args.pp, args.zero)
     
-<<<<<<<< HEAD:python/hetu/models/gpt/generate_gpt_hetero_4d_config.py
-    save_folder = './ds_parallel_config/gpt_hetero'
-========
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     save_folder = cur_dir + "/hetero"
->>>>>>>> upstream/main:examples/ampelos/ds_parallel_config/generate_gpt_hetero_3d_config.py
     if args.file_name == "":
-        file_name = f'dcp{sum(cp_list)}_tp{args.tp}_pp{[len(pipeline) for pipeline in hetero_layers]}.json'
+        file_name = f'dcp{sum(cp_list)}_tp{args.tp}_pp{args.pp}.json'
     else:
         file_name = args.file_name
     if not os.path.exists(save_folder):
@@ -242,4 +230,3 @@ if __name__ == '__main__':
     with open(f'{save_folder}/{file_name}', 'w') as f:
         json.dump(ds_parallel_config, f, indent=4)
     print(os.path.abspath(f'{save_folder}/{file_name}'))
-
