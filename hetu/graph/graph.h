@@ -72,7 +72,6 @@ class Graph {
   size_t COMPUTE_SUGGESTED_HETERO_ID = 0;
   bool EVENT_TIMING = true;
   size_t CUR_MICRO_BATCH_ID = 0;
-
   // disable copy constructor and move constructor
   Graph(const Graph&) = delete;
   Graph& operator=(const Graph&) = delete;
@@ -782,6 +781,7 @@ class Graph {
       new_input->copy_symbolic_shape(old_input->symbolic_shape());
     }
     old_input->DelConsumer(op);
+    // new_input->DelConsumer(old_input->producer());
     op->_inputs[input_index] = new_input;
     new_input->AddConsumer(op);
   }

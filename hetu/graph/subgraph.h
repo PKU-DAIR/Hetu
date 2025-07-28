@@ -18,12 +18,43 @@ using OpHandler = std::function<OpHandlerStatus(Operator&, Tensor2NDArrayMap&, s
 
 enum class SubGraphType : int8_t {
   MODULE = 0,
+  CROSS_MODAL_COMM_OP,
   PIPELINE,
   OPTIMIZE_COMPUTE_BRIDGE,
   COMPUTE_OPTIMIZE_BRIDGE,
   TERMINATE,
   NUM_SUBGRAPH_TYPES
 };
+
+inline std::ostream& operator<<(std::ostream& os, const SubGraphType& type) {
+  switch (type) {
+    case SubGraphType::MODULE:
+      os << "MODULE";
+      break;
+    case SubGraphType::CROSS_MODAL_COMM_OP:
+      os << "CROSS_MODAL_COMM_OP";
+      break;
+    case SubGraphType::PIPELINE:
+      os << "PIPELINE";
+      break;
+    case SubGraphType::OPTIMIZE_COMPUTE_BRIDGE:
+      os << "OPTIMIZE_COMPUTE_BRIDGE";
+      break;
+    case SubGraphType::COMPUTE_OPTIMIZE_BRIDGE:
+      os << "COMPUTE_OPTIMIZE_BRIDGE";
+      break;
+    case SubGraphType::TERMINATE:
+      os << "TERMINATE";
+      break;
+    case SubGraphType::NUM_SUBGRAPH_TYPES:
+      os << "NUM_SUBGRAPH_TYPES";
+      break;
+    default:
+      os << "UNKNOWN_SUBGRAPH_TYPE";
+      break;
+  }
+  return os;
+}
 
 enum class SubGraphOpType : int8_t {
   FORWARD = 0,

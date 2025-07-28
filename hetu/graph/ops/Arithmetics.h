@@ -388,6 +388,9 @@ public:
                       const OpMeta& op_meta,
                       const InstantiationContext& inst_ctx) const override;
 
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                      TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;
+
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 
@@ -598,7 +601,8 @@ protected:
 class AddElewiseGradientOpImpl final : public BinaryGradientOpImpl {
  public:
   AddElewiseGradientOpImpl(HTAxes axe, HTKeepDims keep_dims, int index)
-  : BinaryGradientOpImpl(quote(AddElewiseGradientOp), axe, keep_dims, index) {}
+  : BinaryGradientOpImpl(quote(AddElewiseGradientOp), axe, keep_dims, index) {
+  }
 
  protected:
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 

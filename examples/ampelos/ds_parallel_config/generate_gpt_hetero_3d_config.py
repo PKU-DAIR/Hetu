@@ -230,4 +230,3 @@ if __name__ == '__main__':
     with open(f'{save_folder}/{file_name}', 'w') as f:
         json.dump(ds_parallel_config, f, indent=4)
     print(os.path.abspath(f'{save_folder}/{file_name}'))
-

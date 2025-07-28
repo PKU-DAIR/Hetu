@@ -159,7 +159,7 @@ using IntSymbol = Symbol<int64_t>;
 using DoubleSymbol = Symbol<double>;
 using SyShape = std::vector<IntSymbol>;
 using SyShapeList = std::vector<SyShape>;
-
+using SyShapeListList = std::vector<SyShapeList>;
 bool is_SyShape_leaf(const SyShape& sy_shape);
 HTShape get_HTShape_from_SyShape(const SyShape& sy_shape);
 void set_HTShape_to_SyShape(const HTShape& ht_shape, SyShape& sy_shape);

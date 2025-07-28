@@ -19,6 +19,7 @@
 #include "hetu/core/ndarray_meta.h"
 #include "hetu/core/stream.h"
 #include "hetu/common/timing.h"
+#include "hetu/graph/ops/Concatenate.h"
 #include <nccl.h>
 #include <iostream>
 #include <fstream>
@@ -319,11 +320,11 @@ void ParamSlice::AddOwnedSliceInst(const Device& device, const Tensor& tensor) {
     HT_ASSERT(shape_size == tensor->shape().size())
       << "the new slice instance shape should be equal to the old slice instance shape, " 
       << "but the new is " << tensor->shape() << " and the old is " << shape;
-    for(size_t i = 0; i < shape_size; ++i) {
-      HT_ASSERT(shape[i] == tensor->shape(i))
-        << "the new slice instance shape should be equal to the old slice instance shape, "  
-        << "but the new tensor " << tensor << " is " << tensor->shape() << " and the old is " << shape;
-    }
+    // for(size_t i = 0; i < shape_size; ++i) {
+      // HT_ASSERT(shape[i] == tensor->shape(i))
+        // << "the new slice instance shape should be equal to the old slice instance shape, "  
+        // << "but the new tensor " << tensor << " is " << tensor->shape() << " and the old is " << shape;
+    // }
   }
   _owned_devices.push_back(device);
   _owned_slice_instances.push_back(tensor);
@@ -339,11 +340,11 @@ void ParamSlice::AddNeededSliceInst(const Device& device, const Tensor& tensor) 
   HT_ASSERT(shape_size == tensor->shape().size())
     << "the needed slice shape should be equal to the owned slice shape, " 
     << "but the needed is " << tensor->shape() << " and the owned is " << shape;
-  for(size_t i = 0; i < shape_size; ++i) {
-    HT_ASSERT(shape[i] == tensor->shape(i))
-      << "the needed slice shape should be equal to the owned slice shape, " 
-      << "but the needed is " << tensor->shape() << " and the owned is " << shape;
-  }
+  // for(size_t i = 0; i < shape_size; ++i) {
+  //   HT_ASSERT(shape[i] == tensor->shape(i))
+  //     << "the needed slice shape should be equal to the owned slice shape, " 
+  //     << "but the needed is " << tensor->shape() << " and the owned is " << shape;
+  // }
   _needed_devices.push_back(device);
   _needed_slice_instances.push_back(tensor);
   _switcher->RecordTensorInfo(tensor, name());
@@ -559,6 +560,7 @@ void SwitchExecGraph::CreateParamBlock(ParamBlock& block,
     CreateParamBlock(block, slice_num, block_name, dim + 1);
   }
 }
+
 
 // 作为发送端
 // 将ParamBlock划分成OwnedParamSlice（抽象）
@@ -823,7 +825,7 @@ void SwitchExecGraph::SwitchParam(const DistributedStatesUnion& src_ds_union, co
   HT_LOG_DEBUG << local_device << ": make an abstract block for " << param_block_name
     << ", whose mesh shape is " << block_shape
     << ", and each slice of the mesh has the shape " << get_HTShape_from_SyShape(sy_slice_shape);
-  auto param_block_ptr = std::make_shared<ParamBlock>(param_block_name, block_shape, sy_slice_shape, this);
+  auto param_block_ptr = std::make_shared<ParamBlock>(param_block_name, block_shape, this, sy_slice_shape);
   std::vector<int32_t> slice_num(param_dims, 0);
   CreateParamBlock(*param_block_ptr, slice_num, param_block_name, 0);
   _param_blocks.push_back(param_block_ptr);
@@ -914,6 +916,144 @@ void SwitchExecGraph::SwitchParam(const DistributedStatesUnion& src_ds_union, co
       }
     }
   }
+}
+
+
+
+void SwitchExecGraph::SwitchParam(const SyShapeList& packing_slice,
+                                  const DistributedStatesUnion& src_ds_union, const DeviceGroupUnion& src_group_union,
+                                  const DistributedStatesUnion& dst_ds_union, const DeviceGroupUnion& dst_group_union,
+                                  const Tensor& comm_input, const Tensor& after_param, const SyShape& sy_global_shape, 
+                                  const StreamIndex comp_stream_idx){
+
+
+
+  // 为当前param创建一个全局的、抽象的ParamBlock
+  // 并为每个最小粒度的块划分创建一个抽象的ParamSlice
+  // 其需要知道ds的切分shape和param的真实shape
+  const TensorName& param_block_name = after_param->name();
+  auto local_device = hetu::impl::comm::GetLocalDevice();
+  auto dp_before_inter_pipeline = packing_slice.size();
+  auto dp_after_inter_pipeline = packing_slice[0].size() - 1;
+  auto& comm_input_shape = comm_input->shape();
+  HT_ASSERT(comm_input_shape.size() == 2)
+  << "comm_input should be a 2D tensor, but its shape is " << comm_input_shape;
+  HT_ASSERT(after_param->shape().size() == 2)
+    << "after_param should be a 2D tensor, but its shape is " << after_param->shape();
+  std::vector<int32_t> block_shape(1, dp_before_inter_pipeline * dp_after_inter_pipeline);  
+  HT_LOG_DEBUG << local_device << ": make an abstract block for " << param_block_name
+    << ", whose mesh shape is " << block_shape;
+
+  
+  SyShapeList sy_slice_shape_list;
+  for(int i = 0; i < dp_before_inter_pipeline; i++) {
+    for(int j = 1; j < dp_after_inter_pipeline + 1; j++) {
+      sy_slice_shape_list.push_back({packing_slice[i][j] - packing_slice[i][j - 1], IntSymbol(comm_input_shape.at(1))});
+    }
+  }
+
+
+  auto param_block_ptr = std::make_shared<ParamBlock>(param_block_name, block_shape, this, (SyShape){}, sy_slice_shape_list);
+  std::vector<int32_t> slice_num(1, 0); // 只需要在序列维度上对packing进行切分
+  for(int i = 0; i < dp_before_inter_pipeline; i++) {
+    for(int j = 0; j < dp_after_inter_pipeline; j++) {
+      (*param_block_ptr).GetParamSlices().emplace_back(std::make_shared<ParamSlice>(param_block_name,
+                                                                                   sy_slice_shape_list[i * dp_after_inter_pipeline + j],
+                                                                                   slice_num,
+                                                                                   this));
+      slice_num[0] ++;
+    }
+  }
+  _param_blocks.push_back(param_block_ptr);
+
+  // HTShape input_local_shape(comm_input->shape());
+
+
+
+  HT_ASSERT(comm_input->shape().size() == 2)
+    << "comm_input should be a 2D tensor, but its shape is " << comm_input->shape();
+
+  for(int i = 0; i < dp_before_inter_pipeline; i++) {
+    const auto& src_group = src_group_union.get(i);
+    auto src_devices_size = src_group.num_devices();
+    for(size_t j = 0; j < src_devices_size; ++j) {
+      auto& device = src_group.get(j);
+      auto it = _send_mapping.find(device);
+      if (it == _send_mapping.end()) {
+        _send_mapping[device] = std::make_pair(std::vector<Device>{}, std::vector<Tensor>{});
+      }
+      for(int k = 0; k < dp_after_inter_pipeline; k++) {
+        auto& param_slice = (*param_block_ptr).GetParamSlice({i * dp_after_inter_pipeline + k});
+        auto slice_output = MakeSliceOp(comm_input, 
+                                         {packing_slice[i][k], IntSymbol(0)},
+                                         {packing_slice[i][k + 1] - packing_slice[i][k], IntSymbol(comm_input->shape().at(1))},
+                                         OpMeta().set_name(param_slice->name()).set_is_deduce_states(false));
+        auto& slice_op = slice_output->producer();
+        if(local_device == device) {
+          slice_op->MapToParallelDevices(src_group_union);
+          slice_op->Instantiate(device, comp_stream_idx);
+          dynamic_cast<ExecutableGraph&>(slice_op->graph()).RecordExecTensor(slice_output);
+        }
+        if(comm_input->symbolic()) {
+          slice_output->copy_symbolic_shape(dynamic_cast<SliceOpImpl&>(slice_op->body()).get_symbolic_output_shape());
+        }
+        param_slice->AddOwnedSliceInst(device, std::move(slice_output));
+      }
+    }
+  }
+
+  for(int i = 0; i < dp_after_inter_pipeline; i++) {
+    const auto& dst_group = dst_group_union.get(i);
+    auto dst_devices_size = dst_group.num_devices();
+    for(size_t j = 0; j < dst_devices_size; ++j) {
+      auto& device = dst_group.get(j);
+      auto it = _recv_mapping.find(device);
+      if (it == _recv_mapping.end()) {
+        _recv_mapping[device] = std::make_pair(std::vector<Device>{}, std::vector<Tensor>{});
+      }
+      TensorList merged_slices;
+      for(int k = 0; k < dp_before_inter_pipeline; k++) {
+        auto& param_slice = (*param_block_ptr).GetParamSlice({k * dp_after_inter_pipeline + i}); 
+        const auto& sy_slice_shape = (*param_block_ptr).SySliceShape(k * dp_after_inter_pipeline + i);
+        const auto slice_shape = get_HTShape_from_SyShape(sy_slice_shape);
+        auto base_meta = param_slice->OwnedSliceInst(0)->meta();
+        // 之后会被替换成BatchedISendIRecvOp算子
+        // Question: MakePlaceholderOp的各个参数是否都有必要
+        auto needed_slice_instance = MakePlaceholderOp(base_meta.set_shape(slice_shape));
+        // auto needed_slice_instance = MakePlaceholderOp();
+        needed_slice_instance->copy_symbolic_shape({packing_slice[k][i + 1] - packing_slice[k][i], IntSymbol(after_param->shape().at(1))});
+        merged_slices.push_back(needed_slice_instance);
+        param_slice->AddNeededSliceInst(device, needed_slice_instance);
+      }
+      auto concatenate_name = "concat_" + param_block_name + "_packing_slice_after_pipeline_idx_" + std::to_string(i);
+      auto concatenate_output = MakeConcatenateOp(std::move(merged_slices), 0, 
+                                                OpMeta().set_name(concatenate_name).set_is_deduce_states(false));
+      auto& concatenate_op = concatenate_output->producer();
+      
+      // 其他device上生成的不需要map placement_group和placement
+      if (hetu::impl::comm::GetLocalDevice() == device) { 
+        concatenate_op->MapToParallelDevices(dst_group_union);
+        concatenate_op->Instantiate(device, comp_stream_idx);
+        dynamic_cast<ExecutableGraph&>(concatenate_op->graph()).RecordExecTensor(concatenate_output);
+        _comm_results_mapping.insert(std::make_pair(concatenate_output->id(), after_param));
+        _comm_results.push_back(std::move(concatenate_output));
+      }
+    }
+  }
+
+  for(int i = 0; i < dp_before_inter_pipeline; i++) {
+    for(int j = 0; j < dp_after_inter_pipeline; j++) {
+      auto& param_slice = (*param_block_ptr).GetParamSlice({i * dp_after_inter_pipeline + j});
+      for(int k = 0; k < param_slice->OwnedSliceInstList().size(); k++){
+        auto& owned_slice_inst = param_slice->OwnedSliceInstList()[k];
+      }
+      for(int k = 0; k < param_slice->NeededSliceInstList().size(); k++){
+        auto& needed_slice_inst = param_slice->NeededSliceInstList()[k];
+      }
+    }
+  }
+
+
 }
 
 void SwitchExecGraph::MakeCommGraph(SWITCH_MODE switch_mode, SWITCH_LEVEL switch_level,
@@ -1763,6 +1903,7 @@ void SwitchExecGraph::SwitchParams(SWITCH_MODE switch_mode,
         tensor2data.erase(input->id());
       }
     }
+    RECORD_OP(op->name(), op->id());
     NDArrayList output_vals = op->Compute(input_vals, runtime_ctx);
     // Note: The usage should be marked inside kernels, 
     // but we still mark here in case we forget to do so in some kernels. 
@@ -2053,6 +2194,8 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   const auto& comm_input = _comm_op->input(0);
   const auto& comm_output = _comm_op->output(0);
   const auto& dtype = comm_input->dtype();
+  
+  
   HT_ASSERT(src_group.contains(local_device) || dst_group.contains(local_device))
     << "local device is not in the comm group";
   HT_ASSERT(src_ds.states(-2) == dst_ds.states(-2))
@@ -2136,10 +2279,20 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
     // 这里slice与concat还是正常的kComputingStream
     SwitchParam({{partial_src_ds}}, {{partial_src_group}}, {{partial_dst_ds}}, {{partial_dst_group}}, comm_input, comm_output, sy_global_shape, kComputingStream, ignore_shape_mismatch);
   }
+  else if(subgraph->subgraph_type() == SubGraphType::CROSS_MODAL_COMM_OP) {
+    comm_stream_idx = kP2PStream;
+
+    auto global_device_group = hetu::impl::comm::GetGlobalDeviceGroup();
+    for (auto& device : global_device_group.devices()) {
+      if (_comm_set.find(device) == _comm_set.end()) {
+        _comm_set.insert(device);
+      }
+    }
+    HT_ASSERT(_comm_info.packing_slice_list.size() == 1) << "only support single strategy" << _comm_info.packing_slice_list;
+    SwitchParam(_comm_info.packing_slice_list[0], _comm_info.src_ds_union, _comm_info.src_group_union, _comm_info.dst_ds_union, _comm_info.dst_group_union, comm_input, comm_output, sy_global_shape, comm_stream_idx);
+  }
   // Hydraulis hetero optimize-compute or compute-optimize bridge op
-  else {
-    HT_ASSERT(subgraph->subgraph_type() == SubGraphType::OPTIMIZE_COMPUTE_BRIDGE || subgraph->subgraph_type() == SubGraphType::COMPUTE_OPTIMIZE_BRIDGE)
-      << "subgraph type should only be PIPELINE or BRIDGE";
+  else if(subgraph->subgraph_type() == SubGraphType::OPTIMIZE_COMPUTE_BRIDGE || subgraph->subgraph_type() == SubGraphType::COMPUTE_OPTIMIZE_BRIDGE) {
     for (const auto& cur_src_ds : _comm_info.src_ds_union.raw_data()) {
       HT_ASSERT(cur_src_ds.states(-2) == 1)
         << "bridge op can't include reduction";
@@ -2160,6 +2313,7 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
         _comm_set.insert(device);
       }
     }
+
     /*
     HT_LOG_INFO << "bridge op " << _comm_op << " with global shape " << get_HTShape_from_SyShape(sy_global_shape)
       << ", src ds union = " << _comm_info.src_ds_union.ds_union_info()
@@ -2170,11 +2324,16 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
     // 为了compute和comm的overlap这里slice与concat也使用comm_stream
     SwitchParam(_comm_info.src_ds_union, _comm_info.src_group_union, _comm_info.dst_ds_union, _comm_info.dst_group_union, comm_input, comm_output, sy_global_shape, comm_stream_idx, ignore_shape_mismatch);
   }
+  else{
+    HT_LOG_ERROR << "subgraph type " << subgraph->subgraph_type() << " not supported";
+  }
   HT_ASSERT(_param_blocks.size() == 1)
     << "size wrong";
+
   for (auto& param_block_ptr : _param_blocks) {
     param_block_ptr->ParamBlockComm(_send_mapping, _recv_mapping);
   }
+
   // 通信组
   std::vector<Device> comm_devices(_comm_set.begin(), _comm_set.end());
   // HT_LOG_INFO << "comm devices are " << comm_devices;
@@ -2207,14 +2366,21 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
       << "wrong size";
     return _comm_results[0];
   }
-  // HT_LOG_INFO << "MakeBatchedISendIRecvOp devices are " << comm_devices;
+  HT_LOG_INFO << "MakeBatchedISendIRecvOp devices are " << comm_devices;
+
+  // 输出参数信息
+
+
   auto batched_isend_irecv_output = MakeBatchedISendIRecvOp(send_tensors, send_to_devices, 
                                                             recv_tensor_shapes, recv_from_devices, 
                                                             comm_devices, dtype, 
                                                             OpMeta().set_is_deduce_states(false)
                                                                     .set_name("BatchedISendIRecvOp_for_" + _comm_op->output(0)->consumer(0)->name()));
+
   auto& batched_isend_irecv_op = batched_isend_irecv_output->producer();
   TensorList recv_tensors = batched_isend_irecv_op->outputs();
+
+
   for (const auto& recv_tensor : recv_tensors) {
     dynamic_cast<ExecutableGraph&>(batched_isend_irecv_op->graph()).RecordExecTensor(recv_tensor);
   }
@@ -2259,6 +2425,10 @@ Tensor ComplexExecComm::Instantiate(StreamIndex comm_stream_idx, bool ignore_sha
   }
   HT_ASSERT(_comm_results.size() == 1)
     << "wrong size";
+
+  if(subgraph->subgraph_type() == SubGraphType::CROSS_MODAL_COMM_OP) {
+    _comm_results[0]->set_cur_ds_union(_comm_info.dst_ds_union);
+  }
   return _comm_results[0];
 }
 

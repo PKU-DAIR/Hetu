@@ -8,7 +8,7 @@
 #include "hetu/utils/robin_hood_hashing.h"
 #include <deque>
 #include <map>
-
+#include "hetu/impl/profiler/profiler.h"
 
 namespace hetu {
 namespace impl {

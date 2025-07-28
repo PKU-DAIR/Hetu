@@ -3,6 +3,7 @@
 #include "hetu/graph/subgraph.h"
 #include "hetu/graph/ops/Concat.h"
 #include "hetu/graph/ops/ParallelAttention.h"
+// #include "hetu/impl/profiler/profiler.h"
 #include <queue>
 
 namespace hetu {
@@ -214,9 +215,10 @@ void SubGraph::run(Tensor2NDArrayMap& tensor2data, const Tensor2NDArrayMap& pres
     }
     // 调用op计算
     // debug stuck bug use
-    // HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " begin";
+    HT_LOG_INFO << "subgraph " << _global_name << " execute " << op << " begin";
+    RECORD_OP(op->name(), op->id());
     NDArrayList output_vals = op->Compute(input_vals, runtime_ctx, micro_batch_id);
-    checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
+    // checkOutputsMemory(op, micro_batch_id, input_vals, output_vals);
     // op->instantiation_ctx().stream().Sync();
     /*
     TensorIdList output_ids;

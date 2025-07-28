@@ -44,6 +44,7 @@ static void InitDevice(int32_t device_id) {
   device_initialized[device_id] = 1;
 }
 
+
 inline static void InitDeviceOnce(int32_t device_id) {
   std::call_once(device_init_flags[device_id], InitDevice, device_id);
 }

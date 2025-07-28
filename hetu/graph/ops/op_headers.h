@@ -88,3 +88,5 @@
 #include "hetu/graph/ops/Mish.h"
 #include "hetu/graph/ops/Softplus.h"
 #include "hetu/graph/ops/Softshrink.h"
+#include "hetu/graph/ops/MaskedScatter.h"
+#include "hetu/graph/ops/Conv3d.h"

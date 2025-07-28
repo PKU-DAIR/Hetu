@@ -362,9 +362,10 @@ class RuntimeContext {
   }
 
   std::any get_param(std::string key) const {
-    HT_ASSERT(any_param_dict.find(key) != any_param_dict.end())
-    << "Key:" << key << " must in dict.";
-    return any_param_dict.find(key)->second;
+    // HT_ASSERT(any_param_dict.find(key) != any_param_dict.end())
+    // << "Key:" << key << " must in dict.";
+    // return any_param_dict.find(key)->second;
+    return false;
   }
 
   std::unordered_map<std::string, std::any> get_param_dict() const {
@@ -529,6 +530,7 @@ class OpInterface : public shared_ptr_target {
   }
 
  protected:
+
   virtual std::vector<NDArrayMeta>
   DoInferMeta(const TensorList& inputs, const InstantiationContext& inst_ctx) const = 0;
 
@@ -595,6 +597,7 @@ class OpInterface : public shared_ptr_target {
     return outputs;
   }
 
+  // Tracks which inputs are needed for actual computation vs. just infer ds and shape.   
   const OpType _type;
 };
 
@@ -697,14 +700,14 @@ class OpDef : public shared_ptr_target {
     instantiation_ctx().stop[micro_batch_id]->Record(stream());
     // stream().Sync();
     // precision debug
-    /*
-    NDArrayList ret_sums;
-    for (auto& ret : rets) {
-      ret_sums.push_back(NDArray::sum(ret));
-    }
-    HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
-      << ", the result is " << ret_sums;
-    */
+    
+    // NDArrayList ret_sums;
+    // for (auto& ret : rets) {
+    //   ret_sums.push_back(NDArray::sum(ret));
+    // }
+    // HT_LOG_TRACE << hetu::impl::comm::GetLocalDevice() << " micro batch: " << micro_batch_id << ", compute op: " << name()
+      // << ", the result is " << ret_sums;
+    
     // correctness debug
     /*
     HTShapeList ret_shapes, ret_strides;
@@ -1004,7 +1007,6 @@ class OpDef : public shared_ptr_target {
   OpId _fw_op_id{OpId(-1)}; // only used for bw op
   OpMeta _op_meta;
   OpInstantiationContext _inst_ctx;
-
   size_t _suggested_hetero_id{0}; // suggest which hetero id should use for non-local op
 };
 

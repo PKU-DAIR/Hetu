@@ -70,6 +70,9 @@ protected:
                       const OpMeta& op_meta,
                       const InstantiationContext& inst_ctx) const override;
 
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+    TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;  
+
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 
@@ -130,6 +133,9 @@ protected:
                       const OpMeta& op_meta,
                       const InstantiationContext& inst_ctx) const override;
 
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                         TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;  
+
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
 
@@ -187,6 +193,9 @@ protected:
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                       const OpMeta& op_meta,
                       const InstantiationContext& inst_ctx) const override;  
+
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+                         TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;  
 
   HTShapeList DoInferShape(Operator& op, const HTShapeList& input_shapes,
                            RuntimeContext& runtime_ctx) const override;
@@ -260,7 +269,10 @@ protected:
   void DoDeduceStates(const TensorList& inputs, TensorList& outputs, 
                       const OpMeta& op_meta,
                       const InstantiationContext& inst_ctx) const override;
-  
+
+  void DoDeduceHeterProp(const std::vector<int32_t>& inputs_hetero_dim,
+    TensorList& outputs, const OpMeta& op_meta, const InstantiationContext& inst_ctx) const override;  
+
   TensorList DoGradient(Operator& op,
                         const TensorList& grad_outputs) const override;
 

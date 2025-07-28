@@ -74,6 +74,11 @@ DECLARE_KERNEL_CPU_AND_CUDA(Contiguous, const NDArray&, NDArray&, const Stream&)
 DECLARE_KERNEL_CPU_AND_CUDA(ContiguousGradient, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CUDA(DynamicConcatenate, const NDArray&, NDArray&, size_t,
                     size_t, const Stream&);
+DECLARE_KERNEL_CPU(Concatenate, const NDArrayList&, NDArray&, size_t, const Stream&);
+DECLARE_KERNEL_CUDA(Concatenate, const NDArray&, NDArray&, size_t,
+                    size_t, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(ConcatenateGradient, const NDArray&, NDArray&,
+                            size_t, size_t, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Conv2d, const NDArray&, const NDArray&, NDArray&,
                             const int, const int, const int, const int,
                             const Stream&);
@@ -102,6 +107,15 @@ DECLARE_KERNEL_CPU_AND_CUDA(Conv2dBroadcast, const NDArray&, NDArray&,
                             const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Conv2dReduceSum, const NDArray&, NDArray&,
                             const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Conv3d, const NDArray&, const NDArray&, NDArray&,
+                            const int, const int, const int, const int, const int, const int,
+                            const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Conv3dGradientofFilter, const NDArray&,
+                            const NDArray&, NDArray&, const int, const int, const int,
+                            const int, const int, const int, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(Conv3dGradientofData, const NDArray&,
+                            const NDArray&, NDArray&, const int, const int, const int,
+                            const int, const int, const int, const Stream&);                            
 DECLARE_KERNEL_CPU_AND_CUDA(DataTransfer, const NDArray& from, NDArray& to,
                             const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(DeQuantization, const NDArray&, NDArray&, const NDArray&, NDArray&, 
@@ -226,6 +240,10 @@ DECLARE_KERNEL_CPU_AND_CUDA(Linear, const NDArray& a, bool trans_a, const NDArra
 DECLARE_KERNEL_CPU_AND_CUDA(Log, const NDArray&, NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(Maskedfill, const NDArray&, const NDArray&,
                             double, NDArray&, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(MaskedScatter, const NDArray&, const NDArray&,
+                            const NDArray&, NDArray&, const Stream&);
+DECLARE_KERNEL_CPU_AND_CUDA(MaskedSelect, const NDArray&, const NDArray&,
+                            NDArray&, const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(MatDot, const NDArray&, const NDArray&, NDArray&,
                             const Stream&);
 DECLARE_KERNEL_CPU_AND_CUDA(MatMul, const NDArray& a, bool trans_a, const NDArray& b,

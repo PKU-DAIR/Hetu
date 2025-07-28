@@ -100,6 +100,7 @@ class DefineAndRunGraph : public Graph {
                   bool save_checkpoint = false, const double grad_scale = 1,
                   const RuntimeContext& ctx = RuntimeContext());
 
+
   GraphType type() const {
     return GraphType::DEFINE_AND_RUN;
   }

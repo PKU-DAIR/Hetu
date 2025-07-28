@@ -1,4 +1,4 @@
-#pragma oncehalf
+#pragma once
 
 #include "hetu/impl/utils/cuda_utils.h"
 #include <cublas_v2.h>

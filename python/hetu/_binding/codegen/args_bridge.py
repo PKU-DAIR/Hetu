@@ -32,6 +32,9 @@ class ArgType:
     SYMBOLIC_SHAPE = 26; SYMBOLIC_SHAPE_STR = ("List[hetu.IntSymbol]", "List[IntSymbol]", "SyShape")
     SYMBOLIC_SHAPE_LIST = 27; SYMBOLIC_SHAPE_LIST_STR = ("List[List[[hetu.IntSymbol]]", "List[List[IntSymbol]]", "List[SyShape]")
     INITIALIZER = 28; INITIALIZER_STR = ("hetu.Initializer", "Initializer")
+    SYMBOLIC_SHAPE_LIST_LIST = 29; SYMBOLIC_SHAPE_LIST_LIST_STR = ("List[List[List[[hetu.IntSymbol]]]", "List[List[List[IntSymbol]]]", "List[List[SyShape]]")
+
+    
 
     # None is for returning type rather than argument type. 
     # We slightly abuse the notation here.
@@ -73,7 +76,7 @@ class ArgType:
         ArgType.type_to_type_str_mapping[ArgType.SYMBOLIC_SHAPE] = ArgType.SYMBOLIC_SHAPE_STR
         ArgType.type_to_type_str_mapping[ArgType.SYMBOLIC_SHAPE_LIST] = ArgType.SYMBOLIC_SHAPE_LIST_STR
         ArgType.type_to_type_str_mapping[ArgType.INITIALIZER] = ArgType.INITIALIZER_STR
-        
+        ArgType.type_to_type_str_mapping[ArgType.SYMBOLIC_SHAPE_LIST_LIST] = ArgType.SYMBOLIC_SHAPE_LIST_LIST_STR
         for t, ss in ArgType.type_to_type_str_mapping.items():
             for s in ss:
                 ArgType.type_str_to_type_mapping[s] = t
@@ -384,6 +387,12 @@ def get_arg_getter_fn(arg_type, default_str, has_default, type_str, args):
             return "get_symbolic_shape_list"
     elif arg_type == ArgType.INITIALIZER:
         return "get_initializer"
+    elif arg_type == ArgType.SYMBOLIC_SHAPE_LIST_LIST:
+        if has_default:
+            assert_default_is_none(type_str, default_str)
+            return "get_symbolic_shape_list_list_or_empty"
+        else:
+            return "get_symbolic_shape_list_list"
     else:
         raise Exception(
             f"Invalid args \"{args}\": type {type_str} is invalid")

@@ -126,8 +126,6 @@ class AdamOptimizer : public Optimizer {
   : Optimizer(init_lr, max_lr, min_lr,
         lr_warmup_steps, lr_decay_steps, lr_decay_style,
         start_wd, end_wd, wd_incr_steps,  wd_incr_style)   {
-    std::cout << " wd_incr_style " <<  wd_incr_style << std::endl;
-    std::cout << "lr " <<  init_lr << ' ' << max_lr << ' ' << min_lr << ' ' << lr_warmup_steps << ' ' << lr_decay_steps << ' ' << lr_decay_style << std::endl;
     _init(beta1, beta2, eps);
   }
 

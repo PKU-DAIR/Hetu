@@ -65,7 +65,7 @@ static bool is_comm_without_reduce_op(const uint64_t comm_type) {
 }
 
 bool ExecutableGraph::is_pipeline_stage_send_op(Operator& op) {
-  if (op->graph().GetSubGraph(op) == nullptr || op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::PIPELINE) {
+  if (op->graph().GetSubGraph(op) == nullptr || (op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::PIPELINE && op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::CROSS_MODAL_COMM_OP)) {
     return false;
   }
   if (is_peer_to_peer_send_op(op)) {
@@ -84,7 +84,7 @@ bool ExecutableGraph::is_pipeline_stage_send_op(Operator& op) {
 }
 
 bool ExecutableGraph::is_pipeline_stage_recv_op(Operator& op) {
-  if (op->graph().GetSubGraph(op) == nullptr || op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::PIPELINE) {
+  if (op->graph().GetSubGraph(op) == nullptr || (op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::PIPELINE && op->graph().GetSubGraph(op)->subgraph_type() != SubGraphType::CROSS_MODAL_COMM_OP)) {
     return false;
   }
   if (is_peer_to_peer_recv_op(op)) {
@@ -150,12 +150,13 @@ bool ExecutableGraph::Instantiate(const TensorList& fetches,
       continue;
     // 处理1
     // handle unused or redundant comm ops
-    if (is_comm_op(op) && op->placement_group().contains(preferred_device)) {
+    // if (is_comm_op(op) && op->placement_group().contains(preferred_device)) {
+    if (is_comm_op(op)) {
       auto& comm_op_impl = dynamic_cast<CommOpImpl&>(op->body());
       // 1. remove unused comm ops
-      // HT_LOG_INFO << preferred_device << ": " << op << " comm info is " << comm_op_impl.get_comm_info(op, preferred_device);
+      HT_LOG_INFO << preferred_device << ": " << op << " comm info is " << comm_op_impl.get_comm_info(op, preferred_device);
       if (comm_op_impl.get_comm_type(op, preferred_device) == UNUSED_OP) {
-        // HT_LOG_INFO << op << " is an unused comm op and will be removed";
+        HT_LOG_INFO << op << " is an unused comm op and will be removed";
         // 将op从exec graph中删除
         DeleteExecOp(op);
         // the former op of the unused comm op should have the same recompute setting
@@ -171,9 +172,11 @@ bool ExecutableGraph::Instantiate(const TensorList& fetches,
           for (int j = 0; j < consumer_i->num_in_dep_linkers(); j++) {
             if (consumer_i->in_dep_linker(j)->id() == op->output(0)->id()) {
               Graph::ReplaceInDepLinker(consumer_i, j, op->input(0));
+              consumer_i->in_dep_linker(j)->DelConsumer(op);
             }
           }
         }
+        op->input(0)->DelConsumer(op);
         continue;
       }
       // 2. fuse redundant comm ops
@@ -395,6 +398,9 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         case SubGraphType::PIPELINE:
           suggested_comm_stream_idx = kP2PStream;
           break;
+        case SubGraphType::CROSS_MODAL_COMM_OP:
+          suggested_comm_stream_idx = kP2PStream;
+          break;
         case SubGraphType::OPTIMIZE_COMPUTE_BRIDGE:
         case SubGraphType::COMPUTE_OPTIMIZE_BRIDGE:
           suggested_comm_stream_idx = kBridgeStream;
@@ -413,7 +419,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         input->init_symbolic_shape();
         AddLeafSymbolicTensor(input);
       }
-      bool ignore_flag = false, local_comm_flag = false, determine_flag = false;
+      bool ignore_flag = false, local_comm_flag = false, determine_flag = false, pipeline_inter_diff_model_flag = false;
       Tensor result = input;
       // TODO: may use input to replace output if it is a no-recv comm op, this is not a good idea
 
@@ -435,9 +441,16 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         if (_shape_mismatch_flag > 0 && (comm_subgraph->subgraph_type() == SubGraphType::OPTIMIZE_COMPUTE_BRIDGE || comm_subgraph->subgraph_type() == SubGraphType::COMPUTE_OPTIMIZE_BRIDGE)) {
           ignore_flag = true;
         }
+
+        if(comm_subgraph->subgraph_type() == SubGraphType::CROSS_MODAL_COMM_OP){
+          pipeline_inter_diff_model_flag = true;
+          ignore_flag = true;
+        }
+
+
         // HT_LOG_INFO << comm_op << " ignore shape mismatch flag is " << ignore_flag;
         result = complex_exec_comm.Instantiate(suggested_comm_stream_idx, ignore_flag);
-        result->set_cur_ds_union(info.dst_ds_union); 
+        if(!pipeline_inter_diff_model_flag) result->set_cur_ds_union(info.dst_ds_union); 
         HT_LOG_DEBUG << local_device << ": substitute " << comm_op << " to batched_isend_irecv_op";
         determine_flag = true;
       }
@@ -533,7 +546,7 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         determine_flag = true;
         local_comm_flag = true;
       }
-      if ((comm_type & SCATTER_OP) != 0) {
+     if ((comm_type & SCATTER_OP) != 0) {
         HT_ASSERT(info.src_group == info.dst_group)
           << "wrong src and dst group relationship!";
         auto local_device_index = info.src_group.get_index(local_device);
@@ -733,20 +746,28 @@ void ExecutableGraph::SubstituteCommOp(const OpRefList& topo_order) {
         ignore_flag = true;
       }
       // assign distributed states union for result tensor
-      if (!ignore_flag) {
+      if (!ignore_flag && !pipeline_inter_diff_model_flag) {
         result->set_cur_ds_union(info.dst_ds_union); 
       }
       // find all comm_op->output consumers, and replace the correspond input tensor with result tensor
       for (int i = comm_op->output(0)->num_consumers() - 1; i >= 0; i--) {
         auto& consumer_i = comm_op->output(0)->consumer(i);
+        // if(is_comm_op(consumer_i)) {
+        //   // continue;
+        //   auto& comm_impl = dynamic_cast<CommOpImpl&>(consumer_i->body());
+        //   auto comm_type = comm_impl.get_comm_type(consumer_i, local_device);
+        //   if ((comm_type & UNUSED_OP) != 0) {
+        //     continue;
+        //   }
+        // }
         for (int j = 0; j < consumer_i->num_inputs(); j++) {
           if (consumer_i->input(j)->id() == comm_op->output(0)->id()) {
-            Graph::ReplaceInput(consumer_i, j, result, ignore_flag);
+            Graph::ReplaceInput(consumer_i, j, result, ignore_flag || pipeline_inter_diff_model_flag);
           }
         }
         for (int j = 0; j < consumer_i->num_in_dep_linkers(); j++) {
           if (consumer_i->in_dep_linker(j)->id() == comm_op->output(0)->id()) {
-            Graph::ReplaceInDepLinker(consumer_i, j, result, ignore_flag);
+            Graph::ReplaceInDepLinker(consumer_i, j, result, ignore_flag || pipeline_inter_diff_model_flag);
           }
         }
       }
@@ -1025,7 +1046,8 @@ void ExecutableGraph::ComputeFunc(size_t& micro_batch_id, const OpRefList& topo,
     // AMP data transfer can be directly fetched, needn't save in tensor2data
     NDArrayList input_vals;
     input_vals.reserve(op->num_inputs());
-    for (const auto& input : op->inputs()) {
+    for(int i = 0; i < op->num_inputs(); i++){
+      auto& input = op->input(i);
       HT_ASSERT(input.is_defined())
         << op << " has an undefined input, it cannot run";
       NDArray input_val;
@@ -1333,8 +1355,6 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
     HT_LOG_INFO << local_device << ": params_size = " << params_size;
   }
 
-  HT_LOG_DEBUG << local_device << ": 0. Create Execution Plan [end]";
-
   // ********************** Run Level Check Point **********************
   if (_run_level == RunLevel::TOPO) {
     return {};
@@ -1484,6 +1504,7 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
     // int_symbol_dict now consists of seqlens needed in parallel attn op
     SetMicroBatchCtx(micro_batch_id, int_symbol_dict);
     // set arithmetic shape
+    SetMicroBatchCtx(micro_batch_id, int_symbol_dict);
     SetShapePlan(_active_shape_plan_list[micro_batch_id]);
     // set symbolic shape
     // extra shape deduction in UpdateExecShapePlan() may need it
@@ -1532,12 +1553,14 @@ NDArrayList ExecutableGraph::CrucialRun(const TensorList& fetches,
     // micro batch i: execute fw/bw
     if (is_forward) {
       // HT_LOG_INFO << "fw topo: " << _execute_plan.local_fw_topo;
+      RECORD_CUSTOM_SCOPE("forward_step")
       ComputeFunc(micro_batch_id, _execute_plan.local_fw_topo, runtime_ctx,
                   tensor2data, tensor2degrees, grad_accumulation, false, 
                   feed_dict, fetches, fetch_indices, is_continuous_p2p);
     } else {
       bool grad_accumulation_finished = (i == tasks.size() - 1);
       // HT_LOG_INFO << "bw topo: " << _execute_plan.local_bw_topo;
+      RECORD_CUSTOM_SCOPE("backward_step")
       ComputeFunc(micro_batch_id, _execute_plan.local_bw_topo, runtime_ctx, 
                   tensor2data, tensor2degrees, grad_accumulation, grad_accumulation_finished, 
                   feed_dict, fetches, fetch_indices, is_continuous_p2p);
@@ -1784,12 +1807,8 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       << "fetch " << fetch << " must have placement group";
     // HT_LOG_INFO << fetch << " placement group union is " << fetch->placement_group_union();
     if (fetch->placement_group_union().has(local_device) && fetch->placement().is_undetermined()) {
-      /*
-      // topo
-      OpRefList topo_before_instantiate = Graph::TopoSort(fetches, num_ops(), is_op_computed);
-      HT_LOG_DEBUG << local_device << ": global topo before instantiate: " << topo_before_instantiate;
-      */
-     
+      
+      SetMicroBatchCtx(0, int_symbol_dict);
       // instantiate ops
       HT_LOG_DEBUG << local_device << ": [Execution Plan] Instantiate begin...";
       Instantiate(fetches, local_device);
@@ -2070,20 +2089,6 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       const auto& update_topo = _compute_optimize_bridge_subgraph_map[param->producer()->id()]->update_ops_topo();
       // HT_LOG_INFO << param << " corresponding transfer subgraph " << _optimize_compute_bridge_subgraph_map[param->producer()->id()]->global_name() << " topo is " << transfer_topo;
       // HT_LOG_INFO << param << " corresponding update subgraph " << _compute_optimize_bridge_subgraph_map[param->producer()->id()]->global_name() << " topo is " << update_topo;
-      /*
-      if (_dp_overlap) {
-        auto parent_transfer_subgraph = _optimize_compute_bridge_subgraph_map[param->producer()->id()]->parent_graph();
-        auto parent_update_subgraph = _compute_optimize_bridge_subgraph_map[param->producer()->id()]->parent_graph();
-        HT_ASSERT(parent_transfer_subgraph != nullptr && parent_transfer_subgraph->subgraph_type() == SubGraphType::MODULE
-                  && parent_update_subgraph != nullptr && parent_update_subgraph->subgraph_type() == SubGraphType::MODULE
-                  && parent_transfer_subgraph == parent_update_subgraph)
-          << "the parent subgraph shoud be exactly the same";
-        auto parent_module = parent_transfer_subgraph;
-        parent_module->topo_sort();
-        HT_LOG_INFO << parent_module->global_name() << " fwd topo is " << parent_module->ops_topo();
-        HT_LOG_INFO << parent_module->global_name() << " bwd topo is " << parent_module->bwd_ops_topo();
-      }
-      */
       // 把每个grad reduce算子的上一个算子取出来
       if (_overlap_grad_reduce) {
         if (update_topo.size() >= 1) {
@@ -2274,6 +2279,11 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
   // ****核心的exec graph执行部分****
   auto results = CrucialRun(fetches, feed_dict, int_symbol_dict, num_micro_batches, ctx);
   auto profiler_optional = hetu::impl::Profile::get_cur_profile();
+
+  if(profiler_optional && (*profiler_optional)->profile_memory()){
+    (*profiler_optional)->update_subgraph_memory(GetAllSubGraphs());
+  }
+
   bool is_analysis_perf = false;
   if (is_analysis_perf || _straggler_flag || profiler_optional) {
     if (_used_ranks.size() >= 2) {
@@ -2281,7 +2291,7 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       comm_group->Barrier(true);
     }
   }
-  TOK(crucial_run);
+  // TOK(crucial_run);
   HT_LOG_DEBUG << local_device << ": crucial run time = " << COST_MSEC(crucial_run) << " ms";
   if (_run_level == RunLevel::TOPO) {
     return results;
@@ -2312,6 +2322,9 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
   // get op execute time, sort and analysis
   if (is_analysis_perf || _straggler_flag) {
     std::vector<std::pair<int64_t, int64_t>> op_execute_time;
+    std::unordered_map<int64_t, int64_t> is_forward;
+    std::unordered_map<std::string, double> summarized_time;
+    bool current_forward = true;
     for (auto& op_ref : _execute_plan.local_topo) {
       auto& op = op_ref.get();
       if (is_placeholder_op(op) || is_variable_op(op)) {
@@ -2326,6 +2339,10 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
         time_cost += op->TimeCost(i);
       }
       op_execute_time.push_back({op->id(), time_cost});
+      is_forward[op->id()] = current_forward;
+      if (op->id() == loss->producer_id() || op->is_bw_op()) {
+        current_forward = false;
+      }
     }
     // p2p events
     for (int i = 0; i < _p2p_events.size() / 2; i++) {
@@ -2338,6 +2355,8 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
       std::pair<int64_t, int64_t>& op_t1, std::pair<int64_t, int64_t>& op_t2) {
         return op_t1.second > op_t2.second;
       });
+    double total_fw_time = 0;
+    double total_bw_time = 0;
     double attn_fwd_time = 0;
     double attn_bwd_time = 0;
     double optimizer_time = 0;
@@ -2372,6 +2391,12 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
           out << "; inputs = " << op->inputs();
         }
         if (op->stream_index() == kComputingStream) {
+          if (is_forward[op->id()] == 1) {
+            total_fw_time += op_time.second * 1.0 / 1e6;
+          } else {
+            total_bw_time += op_time.second * 1.0 / 1e6;
+          }
+
           if (is_optimizer_update_op(op)) {
             optimizer_time += op_time.second * 1.0 / 1e6;
           } else if (is_parallel_attn_op(op)) {
@@ -2417,6 +2442,8 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
     if (is_analysis_perf) {
       HT_LOG_INFO << local_device << ": " 
                   << "\ntotal run time: " << COST_MSEC(crucial_run) << " ms, "
+                  << "total fw time: " << total_fw_time << " ms, "
+                  << "total bw time: " << total_bw_time << " ms, "
                   << "attn fwd time: " << attn_fwd_time << " ms, "
                   << "attn bwd time: " << attn_bwd_time << " ms, "
                   << "optimizer time: " << optimizer_time << " ms, "
@@ -2438,6 +2465,8 @@ NDArrayList ExecutableGraph::Run(const Tensor& loss, const TensorList& fetches,
     if (_straggler_flag) {
       HT_LOG_WARN << local_device << ": " 
                   << "\ntotal run time: " << COST_MSEC(crucial_run) << " ms, "
+                  << "total fw time: " << total_fw_time << " ms, "
+                  << "total bw time: " << total_bw_time << " ms, "
                   << "attn fwd time: " << attn_fwd_time << " ms, "
                   << "attn bwd time: " << attn_bwd_time << " ms, "
                   << "optimizer time: " << optimizer_time << " ms, "

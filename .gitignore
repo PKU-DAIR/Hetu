@@ -93,3 +93,5 @@ python/hetu/_binding/graph/generated
 **/env_4090.sh
 **/env_A100.sh
 **/host.yaml
+examples/vit/data/
+python/hetu/data/

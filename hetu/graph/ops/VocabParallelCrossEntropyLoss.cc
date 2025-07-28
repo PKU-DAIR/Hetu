@@ -49,10 +49,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     return;
   }
   if (op->input(0)->get_local_distributed_states().get_dim(1) == 1) {
-    // no tp vocab parallel, just pure dp
-    // illegal memory access may occur
-    HT_LOG_WARN << "sceloss will cause illegal memory access, need to fix it";
-    NDArray::sceloss(preds, labels, ignored_index(), reduction(), op->instantiation_ctx().stream_index, outputs.at(0));    
+    NDArray::sceloss(preds, labels, ignored_index(), reduction(), op->instantiation_ctx().stream_index, outputs.at(0));   
   } else { 
     // tp vocab parallel loss
     DeviceGroup _comm_group = get_devices_by_dim(op->input(0), 1);
@@ -61,6 +58,7 @@ void VocabParallelCrossEntropyOpImpl::DoCompute(
     // HT_LOG_INFO << hetu::impl::comm::GetLocalDevice() << ": VocabParallelCrossEntropyOp: comm_group: " << _comm_group;
     // loss per token = - log(e^x / sum(e^x)) = log(sum(e^x) / e^x)=log(sum(e^x)) - x; where x = x_ori - x_max
     // 1. x = x_ori - x_max
+
     NDArray reduce_max_partial = NDArray::reduce(preds, kMAX, {-1}, true, op->instantiation_ctx().stream_index); // split1 -> partial, cuda malloc
     NDArray reduce_max = reduce_max_partial;
     HT_DISPATCH_KERNEL_CPU_AND_CUDA(op->instantiation_ctx().placement.type(), type(), // partial -> dup, inplace
